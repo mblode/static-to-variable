@@ -1,6 +1,6 @@
 {
   "name": "static-to-variable",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Convert a family of static fonts into a single variable font, guided by a config and an audited pipeline.",
   "keywords": [
     "cli",
