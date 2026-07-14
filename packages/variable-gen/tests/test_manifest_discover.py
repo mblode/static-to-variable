@@ -21,6 +21,20 @@ from variable_gen.pipeline import build_pipeline_status
 MANIFEST_PATH = PACKAGE_ROOT / "manifests" / "circular-sources.v2.json"
 
 
+def _donors_present() -> bool:
+    """The Circular donor fonts are licensed and gitignored: present locally,
+    absent in CI. Donor-file assertions skip when they are missing."""
+    try:
+        manifest = load_manifest(MANIFEST_PATH)
+        first = next(iter(manifest.families.values())).donors[0]
+        return first.path.exists()
+    except Exception:
+        return False
+
+
+DONORS_PRESENT = _donors_present()
+
+
 class ManifestDiscoveryTests(unittest.TestCase):
     def test_loads_circular_manifest(self) -> None:
         manifest = load_manifest(MANIFEST_PATH)
@@ -41,6 +55,7 @@ class ManifestDiscoveryTests(unittest.TestCase):
             "generated_repair_target",
         )
 
+    @unittest.skipUnless(DONORS_PRESENT, "requires the licensed donor fonts (absent in CI)")
     def test_inventory_report_is_deterministic_and_read_only(self) -> None:
         manifest = load_manifest(MANIFEST_PATH)
         report = build_inventory_report(manifest)
