@@ -29,7 +29,9 @@ jobs:
       - run: npm run check
       - run: npm run typecheck
       - run: npm run test
-      - run: npm run build
+      # Build the published package. The studio app is a repo-only dev tool
+      # (not shipped); it is covered by typecheck above, not a prod build here.
+      - run: npx turbo build --filter=static-to-variable
 
   python:
     runs-on: ubuntu-latest

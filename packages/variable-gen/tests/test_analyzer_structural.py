@@ -33,19 +33,26 @@ class StructuralCheckTests(unittest.TestCase):
     def test_markdown_renders_summary_and_tiers(self) -> None:
         report = {
             "stage": "raw",
-            "hard_gates": {"status": "fail", "blocking_reasons": [
-                {"field": "interpolatable_error_count", "value": 3, "threshold": 0},
-            ]},
+            "hard_gates": {
+                "status": "fail",
+                "blocking_reasons": [
+                    {"field": "interpolatable_error_count", "value": 3, "threshold": 0},
+                ],
+            },
             "summary": {
-                "family_count": 1, "problem_glyph_count": 2, "issue_count": 3,
+                "family_count": 1,
+                "problem_glyph_count": 2,
+                "issue_count": 3,
                 "severity_counts": {"P0": 1, "P1": 1},
                 "issue_type_counts": {"segment_type_mismatch": 1, "winding_mismatch": 2},
             },
             "families": {
                 "roman": {
-                    "name": "Circular", "style": "roman",
+                    "name": "Circular",
+                    "style": "roman",
                     "summary": {
-                        "glyph_count": 100, "problem_glyph_count": 2,
+                        "glyph_count": 100,
+                        "problem_glyph_count": 2,
                         "severity_counts": {"P0": 1, "P1": 1},
                         "issue_type_counts": {"segment_type_mismatch": 1, "winding_mismatch": 2},
                     },

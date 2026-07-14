@@ -106,9 +106,7 @@ class ManifestDiscoveryTests(unittest.TestCase):
         )
         self.assertIn(report["verdict"], {"pass", "fail"})
         self.assertGreaterEqual(report["summary"]["stage_count"], 6)
-        self.assertTrue(
-            any(stage["id"] == "raw_compatibility" for stage in report["stages"])
-        )
+        self.assertTrue(any(stage["id"] == "raw_compatibility" for stage in report["stages"]))
 
 
 if __name__ == "__main__":
