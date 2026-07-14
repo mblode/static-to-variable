@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-donor: var(--donor);
+  --color-glide: var(--glide);
+
+  --color-verdict-unknown: var(--verdict-unknown);
+  --color-verdict-low: var(--verdict-low);
+  --color-verdict-medium: var(--verdict-medium);
+  --color-verdict-high: var(--verdict-high);
+  --color-verdict-blocker: var(--verdict-blocker);
+  --color-verdict-tracked: var(--verdict-tracked);
+
+  --color-band-green: var(--band-green);
+  --color-band-amber: var(--band-amber);
+  --color-band-red: var(--band-red);
+  --color-band-unknown: var(--band-unknown);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+}
+
+:root {
+  /* Blode / shadcn neutral light mode */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.625rem;
+
+  /* Domain tokens — quality indicators and donor vs glide lineage */
+  --donor: oklch(0.52 0.04 250); /* slate-blue: donor = reference */
+  --glide: oklch(0.66 0.18 65); /* amber: glide = our interpolation */
+
+  --verdict-unknown: oklch(0.556 0 0);
+  --verdict-low: oklch(0.64 0.15 150);
+  --verdict-medium: oklch(0.75 0.15 85);
+  --verdict-high: oklch(0.64 0.19 40);
+  --verdict-blocker: oklch(0.59 0.24 25);
+  --verdict-tracked: oklch(0.62 0.18 245);
+
+  --band-green: oklch(0.59 0.15 150);
+  --band-amber: oklch(0.72 0.16 75);
+  --band-red: oklch(0.59 0.24 25);
+  --band-unknown: oklch(0.65 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+  }
+  button:not([disabled]),
+  [role="button"]:not([disabled]),
+  a {
+    cursor: pointer;
+  }
+}
+
+svg[data-glyph-cell] {
+  color: currentColor;
+  display: block;
+  width: 100%;
+  height: 100%;
+}

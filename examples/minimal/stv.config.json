@@ -1,0 +1,79 @@
+{
+  "$schema": "../../schemas/stv-config.schema.json",
+  "version": 3,
+  "id": "minimal",
+  "family": {
+    "name": "STV Minimal",
+    "version": "1.000",
+    "vendor": "STV",
+    "designer": "static-to-variable",
+    "designerUrl": "https://github.com/mblode/static-to-variable",
+    "vendorUrl": "https://github.com/mblode/static-to-variable",
+    "license": "OFL-1.1",
+    "licenseUrl": "https://openfontlicense.org"
+  },
+  "axes": [
+    {
+      "tag": "wght",
+      "name": "Weight",
+      "minimum": 100,
+      "default": 400,
+      "maximum": 900,
+      "namedInstances": {
+        "100": "Thin",
+        "400": "Regular",
+        "900": "Black"
+      }
+    }
+  ],
+  "styles": {
+    "roman": {
+      "italic": false,
+      "source": "build/minimal.glyphs",
+      "output": "build/minimal-vf.ttf",
+      "donors": [
+        {
+          "id": "thin",
+          "name": "Thin",
+          "path": "donors/Inter-Thin.ttf",
+          "location": { "wght": 100 }
+        },
+        {
+          "id": "regular",
+          "name": "Regular",
+          "path": "donors/Inter-Regular.ttf",
+          "location": { "wght": 400 }
+        },
+        {
+          "id": "black",
+          "name": "Black",
+          "path": "donors/Inter-Black.ttf",
+          "location": { "wght": 900 }
+        }
+      ],
+      "masters": [
+        {
+          "name": "Thin",
+          "donorId": "thin",
+          "location": { "wght": 100 }
+        },
+        {
+          "name": "Regular",
+          "donorId": "regular",
+          "location": { "wght": 400 },
+          "default": true
+        },
+        {
+          "name": "Black",
+          "donorId": "black",
+          "location": { "wght": 900 }
+        }
+      ]
+    }
+  },
+  "output": {
+    "dir": "build",
+    "formats": ["ttf"],
+    "releaseDir": "build/release"
+  }
+}

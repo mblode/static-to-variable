@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    env:
+      LEFTHOOK: "0"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Require a changeset on PRs
+        if: github.event_name == 'pull_request'
+        run: npx changeset status --since origin/main
+      - run: npm run check
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      # Scoped to the durable library; the legacy Glide-era scripts keep their
+      # own compact style (relaxed via ruff per-file-ignores) and are not
+      # format-checked here.
+      - name: Lint (ruff)
+        run: |
+          uvx ruff@0.14 check packages/variable-gen/src packages/variable-gen/tests packages/variable-gen/scripts/compare_builds.py
+          uvx ruff@0.14 format --check packages/variable-gen/src packages/variable-gen/tests packages/variable-gen/scripts/compare_builds.py
+      - name: Test (pytest)
+        run: uv run pytest packages/variable-gen/tests

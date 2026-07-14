@@ -1,0 +1,52 @@
+name: Publish to npm
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    env:
+      # changesets/action commits "Version Packages" to a new branch. The
+      # repo's lefthook pre-commit hook runs oxlint, whose native linux binding
+      # is missing from the lockfile on hosted runners (npm optional deps bug).
+      # Skip hooks entirely in CI.
+      LEFTHOOK: "0"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@11.12.1
+
+      - run: npm ci
+
+      - name: Build the CLI (tsdown + bundled engine)
+        run: npx turbo run build --filter=static-to-variable
+
+      - name: Create Release Pull Request or Publish
+        uses: changesets/action@v1
+        with:
+          publish: npx changeset publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"

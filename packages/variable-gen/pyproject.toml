@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "variable-gen"
+version = "0.1.0"
+description = "Manifest-driven static-to-variable font pipeline foundations."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fonttools>=4.62",
+  "glyphsLib>=6.13",
+  "fontmake>=3.11",
+  "ufoLib2",
+  "numpy",
+  "scipy",
+  "Pillow",
+  "Brotli",
+  "zopfli",
+  "skia-pathops",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/variable_gen"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

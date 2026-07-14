@@ -1,0 +1,25 @@
+{
+  "name": "@static-to-variable/variable-gen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Static-to-variable font generation workspace.",
+  "type": "module",
+  "scripts": {
+    "inventory": "../../.venv/bin/python -m variable_gen.cli inventory --manifest manifests/circular-sources.v2.json --output reports/donor-inventory.json",
+    "inventory:stdout": "../../.venv/bin/python -m variable_gen.cli inventory --manifest manifests/circular-sources.v2.json",
+    "compatibility:raw": "../../.venv/bin/python -m variable_gen.cli compatibility --manifest manifests/circular-sources.v2.json --stage raw --output reports/compatibility-raw.json --markdown reports/compatibility-raw.md",
+    "pipeline:status": "../../.venv/bin/python -m variable_gen.cli pipeline-status --output reports/pipeline-status.json --markdown reports/pipeline-status.md",
+    "repair": "../../.venv/bin/python scripts/repair_sources.py --font all",
+    "repair:roman": "../../.venv/bin/python scripts/repair_sources.py --font roman",
+    "repair:italic": "../../.venv/bin/python scripts/repair_sources.py --font italic",
+    "repair:skip-import": "../../.venv/bin/python scripts/repair_sources.py --font all --skip-import",
+    "residual:blockers": "../../.venv/bin/python scripts/validate_residual_glyphs.py --family all --min-priority blocker --output reports/repair/blocker-residual-validation.md",
+    "validate:residuals": "npm run residual:blockers",
+    "audit": "../../.venv/bin/python scripts/audit_variable_font.py --family all",
+    "audit:roman": "../../.venv/bin/python scripts/audit_variable_font.py --family roman",
+    "audit:italic": "../../.venv/bin/python scripts/audit_variable_font.py --family italic",
+    "audit:interpolation": "../../.venv/bin/python scripts/audit_variable_font.py --family all --interpolation-only",
+    "audit:roman:interpolation": "../../.venv/bin/python scripts/audit_variable_font.py --family roman --interpolation-only",
+    "audit:italic:interpolation": "../../.venv/bin/python scripts/audit_variable_font.py --family italic --interpolation-only"
+  }
+}

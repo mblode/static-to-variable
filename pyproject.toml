@@ -1,0 +1,50 @@
+[project]
+name = "static-to-variable-workspace"
+version = "0.0.0"
+description = "Monorepo root for the static-to-variable font pipeline (virtual, non-packaged)."
+requires-python = ">=3.11"
+dependencies = ["variable-gen", "glyph-forge-engine"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.14"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/variable-gen", "packages/glyph-forge-engine"]
+
+[tool.uv.sources]
+variable-gen = { workspace = true }
+glyph-forge-engine = { workspace = true }
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["cabinet", ".venv", "master_ufo"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+# The legacy Glide-era scripts predate this lint config: long lines, sys.path
+# import shims (E402), and a few unused locals. They are slated for cleanup as
+# they get folded into the package; until then they are relaxed so the strict
+# rules stay enforced on the durable library under src/.
+[tool.ruff.lint.per-file-ignores]
+# Relax style categories (pycodestyle E, isort I, pyupgrade UP, bugbear B) and
+# unused-symbol lint on the legacy scripts; real-bug pyflakes checks (undefined
+# names, redefinitions) stay on.
+"packages/variable-gen/scripts/**" = ["E", "I", "UP", "B", "F401", "F841"]
+"packages/glyph-forge-engine/python/**" = ["E", "I", "UP", "B", "F401", "F841"]
+# Ported verbatim from the legacy scripts into the package (so the installed
+# engine carries it); keeps its compact style rather than being restyled.
+"packages/variable-gen/src/variable_gen/reconstruct_compatible.py" = [
+  "E",
+  "I",
+  "UP",
+  "B",
+  "F841",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/variable-gen/tests"]

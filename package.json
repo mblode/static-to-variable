@@ -1,0 +1,45 @@
+{
+  "name": "static-to-variable-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "npm --workspace @static-to-variable/studio run dev",
+    "build": "turbo build",
+    "typecheck": "turbo typecheck --filter=static-to-variable --filter=@static-to-variable/studio",
+    "test": "turbo test",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "release": "turbo build --filter=static-to-variable && changeset publish",
+    "pipeline": "npm --workspace static-to-variable run cli --",
+    "pipeline:app": "turbo dev --filter=@static-to-variable/studio",
+    "pipeline:list": "npm --workspace static-to-variable run cli -- list",
+    "pipeline:status": "npm --workspace static-to-variable run cli -- status",
+    "verify:generation": "npm --workspace @static-to-variable/studio run generation:smoke --",
+    "forge:ingest": "npm --workspace @static-to-variable/glyph-forge-engine run ingest",
+    "forge:cache": "npm --workspace @static-to-variable/glyph-forge-engine run cache",
+    "forge:build": "npm --workspace @static-to-variable/glyph-forge-engine run qa:build",
+    "forge:converge": "npm --workspace @static-to-variable/glyph-forge-engine run converge",
+    "setup:python": "uv sync",
+    "build:glide": "uv run python -m variable_gen.cli build --config examples/glide/stv.config.json --style all",
+    "rebuild:glide": "uv run python -m variable_gen.cli rebuild --config examples/glide/stv.config.json --style all && uv run python -m variable_gen.cli normalize --config examples/glide/stv.config.json --style all && uv run python -m variable_gen.cli build --config examples/glide/stv.config.json --style all",
+    "check": "ultracite check",
+    "fix": "ultracite fix",
+    "prepare": "lefthook install"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0",
+    "lefthook": "^2.1.10",
+    "oxfmt": "^0.58.0",
+    "oxlint": "^1.73.0",
+    "portless": "^0.15.1",
+    "turbo": "^2",
+    "ultracite": "^7.9.3",
+    "vitest": "^4.1.10"
+  },
+  "packageManager": "npm@11.16.0"
+}

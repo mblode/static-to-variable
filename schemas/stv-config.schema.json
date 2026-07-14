@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mblode/static-to-variable/schemas/stv-config.schema.json",
+  "title": "static-to-variable project config (v3)",
+  "description": "Declarative config describing how to build a variable font from a family of static donor fonts.",
+  "type": "object",
+  "required": ["version", "id", "family", "axes", "styles", "output"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path or URL to this schema."
+    },
+    "version": {
+      "const": 3,
+      "description": "Config schema version. Must be 3."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identifier for this project config."
+    },
+    "root": {
+      "type": "string",
+      "description": "Base directory for resolving donor, source, and output paths, relative to the config file (default \".\", the config's own directory). Also where build artifacts (reports, master UFOs, release dir) are written.",
+      "default": "."
+    },
+    "repoRoot": {
+      "type": "string",
+      "description": "Deprecated alias for \"root\". Prefer \"root\".",
+      "deprecated": true
+    },
+    "family": { "$ref": "#/$defs/family" },
+    "axes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/axis" }
+    },
+    "styles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/style" }
+    },
+    "verticalMetrics": { "$ref": "#/$defs/verticalMetrics" },
+    "discovery": { "$ref": "#/$defs/discovery" },
+    "glyphs": { "$ref": "#/$defs/glyphs" },
+    "normalize": { "$ref": "#/$defs/normalize" },
+    "output": { "$ref": "#/$defs/output" }
+  },
+  "$defs": {
+    "family": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "vendor",
+        "designer",
+        "designerUrl",
+        "vendorUrl"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "vendor": { "type": "string", "minLength": 1 },
+        "designer": { "type": "string", "minLength": 1 },
+        "designerUrl": { "type": "string", "minLength": 1 },
+        "vendorUrl": { "type": "string", "minLength": 1 },
+        "license": { "type": "string", "minLength": 1 },
+        "licenseUrl": { "type": "string", "minLength": 1 }
+      }
+    },
+    "axis": {
+      "type": "object",
+      "required": ["tag", "name", "minimum", "default", "maximum"],
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "minimum": { "type": "number" },
+        "default": { "type": "number" },
+        "maximum": { "type": "number" },
+        "map": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "number" }
+          }
+        },
+        "namedInstances": {
+          "type": "object",
+          "description": "Axis coordinate (as a numeric string) -> style name.",
+          "propertyNames": { "pattern": "^-?[0-9]+(\\.[0-9]+)?$" },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "description": "Axis coordinate map keyed by axis tag.",
+      "minProperties": 1,
+      "additionalProperties": { "type": "number" }
+    },
+    "donor": {
+      "type": "object",
+      "required": ["id", "name", "path", "location"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "location": { "$ref": "#/$defs/location" },
+        "role": { "type": "string", "minLength": 1 }
+      }
+    },
+    "master": {
+      "type": "object",
+      "required": ["name", "donorId", "location"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "donorId": { "type": "string", "minLength": 1 },
+        "location": { "$ref": "#/$defs/location" },
+        "default": { "type": "boolean" }
+      }
+    },
+    "style": {
+      "type": "object",
+      "required": ["italic", "donors", "source", "masters", "output"],
+      "additionalProperties": false,
+      "properties": {
+        "italic": { "type": "boolean" },
+        "donors": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/donor" }
+        },
+        "source": { "type": "string", "minLength": 1 },
+        "baseSource": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional prior source used to sample non-donor glyphs (accents/superscripts the donors lack) across the new masters. Omit for a project with no prior source; those glyphs then freeze."
+        },
+        "masters": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/master" }
+        },
+        "output": { "type": "string", "minLength": 1 }
+      }
+    },
+    "verticalMetrics": {
+      "type": "object",
+      "required": ["ascender", "descender", "capHeight", "xHeight"],
+      "additionalProperties": false,
+      "properties": {
+        "ascender": { "type": "number" },
+        "descender": { "type": "number" },
+        "capHeight": { "type": "number" },
+        "xHeight": { "type": "number" }
+      }
+    },
+    "discovery": {
+      "type": "object",
+      "required": ["dir", "pattern", "weightSource"],
+      "additionalProperties": false,
+      "properties": {
+        "dir": { "type": "string", "minLength": 1 },
+        "pattern": { "type": "string", "minLength": 1 },
+        "weightSource": { "type": "string", "minLength": 1 }
+      }
+    },
+    "glyphs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "freeze": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "strategies": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/glyphStrategy" }
+        },
+        "seeds": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "glyphStrategy": {
+      "type": "object",
+      "required": ["strategy"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["open_bar", "freeze", "interpolate_neighbors"]
+        },
+        "params": { "type": "object" }
+      }
+    },
+    "normalize": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" }
+    },
+    "output": {
+      "type": "object",
+      "required": ["dir", "formats", "releaseDir"],
+      "additionalProperties": false,
+      "properties": {
+        "dir": { "type": "string", "minLength": 1 },
+        "formats": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "releaseDir": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

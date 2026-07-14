@@ -1,0 +1,69 @@
+{
+  "name": "static-to-variable",
+  "version": "0.1.0",
+  "description": "Convert a family of static fonts into a single variable font, guided by a config and an audited pipeline.",
+  "keywords": [
+    "cli",
+    "fontmake",
+    "fonts",
+    "fonttools",
+    "opentype",
+    "typography",
+    "variable-fonts"
+  ],
+  "homepage": "https://github.com/mblode/static-to-variable#readme",
+  "bugs": {
+    "url": "https://github.com/mblode/static-to-variable/issues"
+  },
+  "license": "MIT",
+  "author": "Matthew Blode",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mblode/static-to-variable.git",
+    "directory": "packages/cli"
+  },
+  "bin": {
+    "static-to-variable": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "engine",
+    "skills",
+    "README.md",
+    "LICENSE.md"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "bundle": "node scripts/bundle-engine.mjs",
+    "prepack": "tsdown && node scripts/bundle-engine.mjs",
+    "dev": "tsdown --watch",
+    "cli": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "tsdown": "^0.22.4",
+    "tsx": "^4",
+    "typescript": "7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=24.11"
+  }
+}

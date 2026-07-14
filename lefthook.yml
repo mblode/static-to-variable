@@ -1,0 +1,17 @@
+pre-commit:
+  jobs:
+    - run: npx ultracite fix
+      glob:
+        - "**/*.js"
+        - "**/*.jsx"
+        - "**/*.ts"
+        - "**/*.tsx"
+        - "**/*.json"
+        - "**/*.jsonc"
+        - "**/*.css"
+        - "**/*.md"
+      stage_fixed: true
+    - name: ruff
+      glob: "*.py"
+      run: uvx ruff@0.14 check --fix {staged_files} && uvx ruff@0.14 format {staged_files}
+      stage_fixed: true
