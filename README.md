@@ -53,6 +53,14 @@ The `stv.config.json` describes your font: its name, the weight axis and named i
 
 Add `--help` to any command for its options, or `--json` for machine-readable output.
 
+## Use with AI agents
+
+Install the skill so Claude Code, Cursor, Codex, and others know how to drive it:
+
+```bash
+npx skills add mblode/static-to-variable
+```
+
 ## License
 
 [MIT](LICENSE.md)
