@@ -38,9 +38,9 @@ uv run --with fonttools python -c "import sys; from fontTools.ttLib import TTFon
 
 ### 2. Author stv.config.json
 
-`static-to-variable init` scaffolds a starter; edit it. Every path is relative to the config file. One donor and one master per weight; the master's `location.wght` must match that file's weight, and its `donorId` must reference a donor `id`. Exactly one master needs `"default": true`.
+`static-to-variable init` scaffolds a starter; edit it. Every path is relative to the config file. One donor and one master per weight; the master's `location.wght` must match that file's weight, and its `donorId` must reference a donor `id`. Exactly one master needs `"default": true`. It is strict JSON: no comments or trailing commas. `source` need not exist yet (it is bootstrapped from the default-master donor).
 
-```jsonc
+```json
 {
   "version": 3,
   "id": "myfamily",
@@ -50,7 +50,7 @@ uv run --with fonttools python -c "import sys; from fontTools.ttLib import TTFon
     "vendor": "MYCO",
     "designer": "Name",
     "designerUrl": "https://example.com",
-    "vendorUrl": "https://example.com",
+    "vendorUrl": "https://example.com"
   },
   "axes": [
     {
@@ -59,33 +59,33 @@ uv run --with fonttools python -c "import sys; from fontTools.ttLib import TTFon
       "minimum": 100,
       "default": 400,
       "maximum": 900,
-      "namedInstances": { "100": "Thin", "400": "Regular", "900": "Black" },
-    },
+      "namedInstances": { "100": "Thin", "400": "Regular", "900": "Black" }
+    }
   ],
   "styles": {
     "roman": {
       "italic": false,
-      "source": "build/myfamily.glyphs", // does not need to exist; it is bootstrapped
+      "source": "build/myfamily.glyphs",
       "output": "build/myfamily-vf.ttf",
       "donors": [
         {
           "id": "thin",
           "name": "Thin",
           "path": "donors/MyFamily-Thin.otf",
-          "location": { "wght": 100 },
+          "location": { "wght": 100 }
         },
         {
           "id": "regular",
           "name": "Regular",
           "path": "donors/MyFamily-Regular.otf",
-          "location": { "wght": 400 },
+          "location": { "wght": 400 }
         },
         {
           "id": "black",
           "name": "Black",
           "path": "donors/MyFamily-Black.otf",
-          "location": { "wght": 900 },
-        },
+          "location": { "wght": 900 }
+        }
       ],
       "masters": [
         { "name": "Thin", "donorId": "thin", "location": { "wght": 100 } },
@@ -93,17 +93,17 @@ uv run --with fonttools python -c "import sys; from fontTools.ttLib import TTFon
           "name": "Regular",
           "donorId": "regular",
           "location": { "wght": 400 },
-          "default": true,
+          "default": true
         },
-        { "name": "Black", "donorId": "black", "location": { "wght": 900 } },
-      ],
-    },
+        { "name": "Black", "donorId": "black", "location": { "wght": 900 } }
+      ]
+    }
   },
   "output": {
     "dir": "build",
     "releaseDir": "build/release",
-    "formats": ["ttf", "woff2"],
-  },
+    "formats": ["ttf", "woff2"]
+  }
 }
 ```
 
