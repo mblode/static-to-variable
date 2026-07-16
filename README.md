@@ -51,7 +51,11 @@ The `stv.config.json` describes your font: its name, the weight axis and named i
 | `release` | Finalize the metadata and write TTF + WOFF2.     |
 | `doctor`  | Check Node, Python, uv, and your config.         |
 
-Add `--help` to any command for its options, or `--json` for machine-readable output.
+Add `--help` to any command for its options. `build`, `release`, and `doctor` take `--json` for a machine-readable summary on stdout (human progress always goes to stderr).
+
+Your config is validated against the [published schema](schemas/stv-config.schema.json) before any work starts — unknown keys and malformed fields fail fast with the offending path named.
+
+Exit codes: `0` success, `1` a pipeline step failed, `2` usage (bad flag, missing or invalid config), `3` environment not ready (no Python/uv), `130` interrupted.
 
 ## Use with AI agents
 

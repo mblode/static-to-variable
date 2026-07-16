@@ -35,7 +35,7 @@ Dev server is fronted by **portless** (global install) — `portless static-to-v
 
 - **Don't commit `public/svg/` or `public/broken-glyphs.json`** — generated, gitignored.
 - **Don't commit `.pipeline-jobs/`** — generated upload/job/output state, gitignored.
-- **Port 3333** not 3000 — so it coexists with `apps/web` on 3000 during `turbo dev` at the root.
+- **Port 3333** not 3000 — leaves the default Next.js port free for anything else running locally.
 - **Missing SVGs render as broken images on purpose**: if a glyph doesn't exist in one of the 16 cells (e.g., the donor lacks `.ss02` variants), the cell shows a dim placeholder. This is a real audit signal, not a bug.
 - **Portless cert lives in the system trust store**: if `https://static-to-variable.localhost` throws a cert error, run `portless trust` once. Safari needs `portless hosts sync` for `/etc/hosts` resolution.
 
