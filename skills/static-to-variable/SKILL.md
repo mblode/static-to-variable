@@ -167,7 +167,7 @@ To show every glyph, read the font's `cmap` and render one cell per codepoint, e
 | `release` | Finalize metadata and write TTF + WOFF2. |
 | `doctor` | Report Node, Python, uv, mode (checkout vs standalone), and config. |
 
-`--json` gives machine output; exit codes are `0` ok, `1` failure, `2` usage, `3` environment.
+`build`, `release`, and `doctor` take `--json` for a machine-readable summary on stdout (progress goes to stderr). Exit codes are `0` ok, `1` failure, `2` usage (bad flag, missing or invalid config), `3` environment. Configs are validated against the JSON schema before any work starts.
 
 ## Gotchas
 

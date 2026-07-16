@@ -17,11 +17,17 @@ npm run pipeline -- step
 
 ```text
 src/
-  cli.ts          # Commander entry point and Clack stepper
-  stages.ts       # Stage IDs, commands, aliases, and plan selection
-  runner.ts       # Workspace discovery, process execution, status printing
-  index.ts        # Public API exports
-  types.ts        # Shared TypeScript contracts
+  cli.ts            # Commander entry point and Clack stepper
+  config.ts         # Config resolution + JSON-schema validation (ajv)
+  stages.ts         # Stage IDs, commands, aliases, and plan selection
+  runner.ts         # Workspace discovery, stage execution, status printing
+  python.ts         # Python/engine resolution (checkout vs standalone venv)
+  proc.ts           # Shared child-process spawning (child stdout -> stderr)
+  output.ts         # Stream-aware color + progress/JSON conventions
+  errors.ts         # CliError codes + exit-code map
+  init-template.ts  # The `init` scaffold (schema-validated by tests)
+  index.ts          # Public API exports
+  types.ts          # Shared TypeScript contracts
 ```
 
 ## Gotchas

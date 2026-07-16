@@ -1,33 +1,25 @@
 # variable-gen
 
-`variable-gen` is now the working home for the reusable static-to-variable font repair pipeline used for Glide + Circular.
+`variable-gen` is the config-driven static-to-variable font engine: it rebuilds independently-drawn static weights onto a shared, interpolation-compatible structure and builds the variable font. Everything is driven by a v3 `stv.config.json` (see `schemas/stv-config.schema.json`).
 
 Docs:
 
-- [Research](../../docs/variable-gen-research.md)
-- [PRD](../../docs/prd.md)
-- [Execution plan](../../docs/variable-gen-plan.md)
-- [Technical spec](../../docs/variable-gen-technical-spec.md)
 - [First-principles static-to-variable pipeline](../../docs/static-to-variable-pipeline-first-principles.md)
 - [Manifest v2 schema](../../docs/static-to-variable-manifest-schema.md)
 - [Report contracts](../../docs/static-to-variable-report-contracts.md)
 
 ## Current scope
 
-The package now contains a manifest-driven repair runner that can:
+The package can:
 
-- inspect a v2 static-donor manifest without mutating source files
-- emit a deterministic donor inventory report with source hashes and coverage
-- re-import Circular donor statics into the live `.glyphs` sources
-- apply per-glyph repair strategies from a manifest
-- rebuild empty `.notdef` glyphs
-- normalize path order, start points, and winding direction
-- export UFO/designspace checkpoints
-- build variable TTFs
-- generate sampled static instances
-- validate exact-master instances against donor statics
-- produce ranked source-risk and instance-risk reports
-- generate a review packet for manual cleanup
+- bootstrap a minimal `.glyphs` source from a default-master donor
+- rebuild every master from its donors onto one shared point structure (`rebuild`), applying per-glyph strategies from the config
+- normalize donor-inherited height defects (`normalize`)
+- export UFO/designspace checkpoints with corrected axes (`designspace`)
+- build variable TTFs with a freeze loop + per-weight fidelity check (`build`)
+- finalize metadata and emit release TTF + WOFF2 (`release`)
+- inspect a v2 static-donor manifest without mutating source files (`inventory`), run raw donor compatibility diagnostics (`compatibility`), and aggregate the promotion gates (`pipeline-status`)
+- audit all glyphs across exact masters and sampled in-between weights (`scripts/audit_variable_font.py`) and validate tracked residual glyphs (`scripts/validate_residual_glyphs.py`)
 
 ## Primary entry point
 
