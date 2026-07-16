@@ -48,5 +48,48 @@ jobs:
         run: |
           uvx ruff@0.14 check packages/variable-gen packages/glyph-forge-engine
           uvx ruff@0.14 format --check packages/variable-gen/src packages/variable-gen/tests packages/glyph-forge-engine/tests
+      - name: Typecheck (mypy)
+        run: uv run mypy
       - name: Test (pytest)
         run: uv run pytest
+
+  # Prove the published CLI works end to end: build a real variable font from
+  # the committed minimal example (32K Inter subset donors — seconds, not
+  # minutes), and verify the packaging path produces an intact bundled engine.
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      LEFTHOOK: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: npm ci
+      - run: uv sync
+      - run: npx turbo build --filter=static-to-variable
+      - name: Build the minimal example font
+        run: node packages/cli/dist/cli.js build --config examples/minimal/stv.config.json --json > build-summary.json
+      - name: Assert the build summary and font output
+        run: |
+          node -e "const s = require('./build-summary.json'); if (!s.ok) { console.error(s); process.exit(1); }"
+          test -f examples/minimal/build/minimal-vf.ttf
+      - name: Doctor reports a usable environment
+        run: node packages/cli/dist/cli.js doctor --json | node -e "let d=''; process.stdin.on('data', c => d += c).on('end', () => { const r = JSON.parse(d); if (!r.usable) { console.error(r); process.exit(1); } });"
+      - name: Invalid configs fail fast with exit 2
+        run: |
+          set +e
+          node packages/cli/dist/cli.js build --config schemas/fixtures/invalid/unknown-top-level-key.json
+          code=$?
+          set -e
+          test "$code" -eq 2
+      - name: Bundle the engine for packaging
+        run: |
+          node packages/cli/scripts/bundle-engine.mjs
+          test -f packages/cli/engine/variable-gen/pyproject.toml
+          test -f packages/cli/engine/glyph-forge-engine/pyproject.toml
+          test -f packages/cli/skills/static-to-variable/SKILL.md
