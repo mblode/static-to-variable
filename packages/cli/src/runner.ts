@@ -1,10 +1,11 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { styleText } from "node:util";
 
 import { CliError, ExitCode } from "./errors.js";
+import { color, colorErr, progress } from "./output.js";
+import { spawnInherit } from "./proc.js";
 import { formatCommand } from "./stages.js";
 import type {
   HandoffMode,
@@ -50,11 +51,11 @@ export async function runStage(
 ): Promise<StageRunResult> {
   const startedAt = Date.now();
   const label = `${stage.id} (${stage.kind})`;
-  console.log(styleText("cyan", `\n[stage] ${label}`));
-  console.log(`$ ${formatCommand(stage)}`);
+  progress(colorErr("cyan", `\n[stage] ${label}`));
+  progress(`$ ${formatCommand(stage)}`);
 
   if (stage.artifact) {
-    console.log(`artifact: ${stage.artifact}`);
+    progress(`artifact: ${stage.artifact}`);
   }
 
   if (options.dryRun) {
@@ -69,9 +70,9 @@ export async function runStage(
   const durationMs = Date.now() - startedAt;
   const status =
     code === 0
-      ? styleText("green", "passed")
-      : styleText("red", `failed (${code})`);
-  console.log(`[stage] ${stage.id} ${status} in ${formatDuration(durationMs)}`);
+      ? colorErr("green", "passed")
+      : colorErr("red", `failed (${code})`);
+  progress(`[stage] ${stage.id} ${status} in ${formatDuration(durationMs)}`);
   return { code, durationMs, stage };
 }
 
@@ -101,8 +102,13 @@ export function readPipelineStatus(
     "packages/variable-gen/reports/pipeline-status.json"
   );
   if (!existsSync(reportPath)) {
-    throw new Error(
-      "Pipeline status report is missing. Run static-to-variable status first."
+    throw new CliError(
+      "STV_STATUS_REPORT_MISSING",
+      `Pipeline status report is missing at ${reportPath}.`,
+      {
+        fix: "Run `static-to-variable status` (without --read) to regenerate it.",
+        exitCode: ExitCode.Failure,
+      }
     );
   }
   return JSON.parse(readFileSync(reportPath, "utf-8")) as PipelineStatusReport;
@@ -114,9 +120,7 @@ export function printPipelineStatus(
   repoRoot = findRepoRoot()
 ): void {
   const verdict =
-    report.verdict === "pass"
-      ? styleText("green", "pass")
-      : styleText("red", "fail");
+    report.verdict === "pass" ? color("green", "pass") : color("red", "fail");
   console.log(`\nStatic-to-variable pipeline: ${verdict}`);
 
   const summary = report.summary ?? {};
@@ -134,8 +138,8 @@ export function printPipelineStatus(
   for (const stage of report.stages ?? []) {
     const status =
       stage.status === "pass"
-        ? styleText("green", stage.status)
-        : styleText("red", stage.status);
+        ? color("green", stage.status)
+        : color("red", stage.status);
     const gate = stage.blocking ? "blocking" : "diagnostic";
     console.log(`- ${stage.id}: ${status} (${gate})`);
     for (const failure of stage.failures ?? []) {
@@ -158,7 +162,7 @@ export function formatDuration(durationMs: number): string {
   return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
-function findWorkspaceRoot(start: string): string | null {
+export function findWorkspaceRoot(start: string): string | null {
   let current = path.resolve(start);
   while (true) {
     const packagePath = path.join(current, "package.json");
@@ -188,15 +192,7 @@ function spawnCommand(stage: PipelineStage, cwd: string): Promise<number> {
     process.platform === "win32" && stage.command === "npm"
       ? "npm.cmd"
       : stage.command;
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, stage.args, {
-      cwd,
-      env: process.env,
-      stdio: "inherit",
-    });
-    child.on("error", reject);
-    child.on("close", (code) => resolve(code ?? 1));
-  });
+  return spawnInherit(command, stage.args, cwd);
 }
 
 function printHandoff(
@@ -279,7 +275,7 @@ function glyphForgeSummaryNumber(
   return typeof value === "number" ? value : 0;
 }
 
-interface HandoffTarget {
+export interface HandoffTarget {
   family: string;
   name: string;
   verdict: string;
@@ -289,7 +285,10 @@ interface HandoffTarget {
   best: string | null;
 }
 
-function loadHandoffTargets(repoRoot: string, limit: number): HandoffTarget[] {
+export function loadHandoffTargets(
+  repoRoot: string,
+  limit: number
+): HandoffTarget[] {
   const manifest = readJson<Record<string, unknown>[]>(
     path.join(
       repoRoot,
@@ -347,7 +346,10 @@ function loadHandoffTargets(repoRoot: string, limit: number): HandoffTarget[] {
     .slice(0, limit);
 }
 
-function compareHandoffTargets(a: HandoffTarget, b: HandoffTarget): number {
+export function compareHandoffTargets(
+  a: HandoffTarget,
+  b: HandoffTarget
+): number {
   return (
     verdictRank(a.verdict) - verdictRank(b.verdict) ||
     (a.worstComposite ?? Number.POSITIVE_INFINITY) -
@@ -358,7 +360,7 @@ function compareHandoffTargets(a: HandoffTarget, b: HandoffTarget): number {
   );
 }
 
-function verdictRank(verdict: string): number {
+export function verdictRank(verdict: string): number {
   if (verdict === "blocker") {
     return 0;
   }

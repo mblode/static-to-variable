@@ -1,7 +1,8 @@
 /**
  * Output helpers that respect TTY/pipe conventions.
  *
- * - Color only when stdout is a TTY and NO_COLOR is unset.
+ * - Color only when the DESTINATION stream is a TTY and NO_COLOR is unset —
+ *   a piped stdout must never receive ANSI even while stderr is a terminal.
  * - Human progress and logs go to stderr, so a piped stdout stays clean.
  * - Machine output (--json) goes to stdout as a single JSON document.
  */
@@ -9,14 +10,19 @@ import { styleText } from "node:util";
 
 type Style = Parameters<typeof styleText>[0];
 
-/** Whether ANSI color should be emitted on stdout. */
-export function colorEnabled(): boolean {
-  return Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+/** Whether ANSI color should be emitted on the given stream. */
+export function colorEnabledFor(stream: NodeJS.WriteStream): boolean {
+  return Boolean(stream.isTTY) && !process.env.NO_COLOR;
 }
 
-/** Apply a style only when color is enabled; otherwise return the raw text. */
+/** Style text destined for stdout, only when stdout accepts color. */
 export function color(style: Style, text: string): string {
-  return colorEnabled() ? styleText(style, text) : text;
+  return colorEnabledFor(process.stdout) ? styleText(style, text) : text;
+}
+
+/** Style text destined for stderr, only when stderr accepts color. */
+export function colorErr(style: Style, text: string): string {
+  return colorEnabledFor(process.stderr) ? styleText(style, text) : text;
 }
 
 /** Write a human-facing progress/log line to stderr (never stdout). */
@@ -35,8 +41,8 @@ export function printError(
   options: { code?: string; fix?: string } = {}
 ): void {
   const label = options.code ? `error [${options.code}]` : "error";
-  process.stderr.write(`${color("red", label)}: ${message}\n`);
+  process.stderr.write(`${colorErr("red", label)}: ${message}\n`);
   if (options.fix) {
-    process.stderr.write(`${color("cyan", "fix")}: ${options.fix}\n`);
+    process.stderr.write(`${colorErr("cyan", "fix")}: ${options.fix}\n`);
   }
 }

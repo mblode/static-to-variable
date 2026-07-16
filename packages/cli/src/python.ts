@@ -10,7 +10,7 @@
  *   (sibling of dist/) and provisioned into a managed venv under the user's
  *   data dir on first run; the engine runs from the user's current directory.
  */
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 
 import { CliError, ExitCode } from "./errors.js";
 import { progress } from "./output.js";
+import { spawnInherit } from "./proc.js";
 import { tryFindRepoRoot } from "./runner.js";
 
 export interface PythonEnv {
@@ -291,17 +292,9 @@ export function runEngine(
   subcommand: string[],
   env: PythonEnv = resolveEngine().pythonEnv
 ): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      env.command,
-      [...env.baseArgs, "-m", "variable_gen.cli", ...subcommand],
-      {
-        cwd: env.cwd,
-        env: process.env,
-        stdio: "inherit",
-      }
-    );
-    child.on("error", reject);
-    child.on("close", (code) => resolve(code ?? 1));
-  });
+  return spawnInherit(
+    env.command,
+    [...env.baseArgs, "-m", "variable_gen.cli", ...subcommand],
+    env.cwd
+  );
 }
