@@ -44,13 +44,20 @@ from variable_gen.reconstruct_compatible import (
 
 @dataclass
 class RebuildStats:
-    """Per-style outcome counts for one ``rebuild_style`` run."""
+    """Per-style outcome counts for one ``rebuild_style`` run.
+
+    ``glyphs`` maps every glyph to its outcome (``donor`` / ``reconstructed`` /
+    ``sampled`` / ``frozen`` / ``ai_pending``) so downstream gates — the
+    residual validator above all — can tell which glyphs carry one constant
+    outline across masters without re-deriving it from the source.
+    """
 
     donor: int = 0
     reconstructed: int = 0
     sampled: int = 0
     frozen: int = 0
     ai_pending: list[str] = field(default_factory=list)
+    glyphs: dict[str, str] = field(default_factory=dict)
 
 
 # Vertical metrics + italic angle carried from the source template onto each
@@ -219,6 +226,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
                     draw_into(layer, reg[0])
                     layer.width = reg[1]
                 stats.frozen += 1
+                stats.glyphs[glyph.name] = "frozen"
                 continue
 
         dn = donor_name_for(glyph)
@@ -257,6 +265,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
                             layer.width = outlines[name][1]
                         stats.reconstructed += 1
                         stats.donor += 1
+                        stats.glyphs[glyph.name] = "reconstructed"
                         continue
             # Independent statics aren't interpolation-compatible. ALWAYS run
             # reconstruct(): it returns the donor outlines unchanged when they
@@ -269,6 +278,9 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
                 out8 = {name: (rec[pos_by_name[name]], outlines[name][1]) for name, _, _ in plan}
                 if info["stage"] == "reconstructed":
                     stats.reconstructed += 1
+                    stats.glyphs[glyph.name] = "reconstructed"
+                else:
+                    stats.glyphs[glyph.name] = "donor"
             else:
                 # reconstruct can't make it interpolate cleanly. Freeze to the
                 # default-master donor (constant across masters) so it renders
@@ -276,6 +288,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
                 reg = outlines[default_name]
                 out8 = {name: reg for name, _, _ in plan}
                 stats.ai_pending.append(glyph.name)
+                stats.glyphs[glyph.name] = "ai_pending"
             glyph.layers = []
             for name, _, _ in plan:
                 layer = GSLayer()
@@ -324,6 +337,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
                     break
             if ok and len(glyph.layers) == len(plan):
                 stats.sampled += 1
+                stats.glyphs[glyph.name] = "sampled"
                 continue
 
         # last resort: freeze to whatever single outline we can (keeps build valid)
@@ -336,6 +350,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
             draw_into(layer, ref[0])
             layer.width = ref[1]
         stats.frozen += 1
+        stats.glyphs[glyph.name] = "frozen"
 
     font.save(str(style.source))
     return stats

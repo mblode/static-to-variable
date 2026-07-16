@@ -5,6 +5,7 @@ import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from .analyze import (
     build_compatibility_report,
@@ -107,6 +108,25 @@ def run_command(command: str, argv: list[str] | None = None) -> int:
     return main([command, *args])
 
 
+def _merge_style_report(
+    path: Path, updates: dict[str, Any], style_order: list[str]
+) -> dict[str, Any]:
+    """Merge per-style report entries into whatever ``path`` already holds,
+    ordering configured styles first. An unreadable existing file is replaced."""
+    existing: dict[str, Any] = {}
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text())
+            if isinstance(payload, dict):
+                existing = payload
+        except json.JSONDecodeError:
+            existing = {}
+    merged = {**existing, **updates}
+    ordered = {key: merged[key] for key in style_order if key in merged}
+    ordered.update({key: value for key, value in merged.items() if key not in ordered})
+    return ordered
+
+
 def _pipeline_command(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     keys = resolve_style_keys(config, args.style)
@@ -145,7 +165,10 @@ def _pipeline_command(args: argparse.Namespace) -> int:
                 print(f"   ai-pending (topology change -> freeze): {stats.ai_pending}")
         out = config.repo_root / "packages/variable-gen/reports/reconstruction-report.json"
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(report, indent=2))
+        # Merge single-style runs into the existing report so `--style roman`
+        # cannot erase the italic entry (the promotion gate reads every style).
+        merged = _merge_style_report(out, report, list(config.styles))
+        out.write_text(json.dumps(merged, indent=2))
         print(f"reconstruction report -> {out}")
         return 0
 

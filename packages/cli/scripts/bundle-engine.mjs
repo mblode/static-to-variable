@@ -18,11 +18,12 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const cliRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -153,6 +154,21 @@ function main() {
 }
 
 // Only execute when run as a script; tests import stripUvSourcesText directly.
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// Compare realpath-based URLs so symlinked invocations and Windows drive-letter
+// casing can't silently skip main() during prepack.
+function isRunAsScript() {
+  if (!process.argv[1]) {
+    return false;
+  }
+  try {
+    const invoked = pathToFileURL(realpathSync(process.argv[1])).href;
+    const self = pathToFileURL(realpathSync(fileURLToPath(import.meta.url))).href;
+    return invoked === self;
+  } catch {
+    return false;
+  }
+}
+
+if (isRunAsScript()) {
   main();
 }
