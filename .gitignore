@@ -30,6 +30,7 @@ fonts/
 master_ufo/
 packages/variable-gen/build/
 examples/*/build/
+examples/*/packages/
 packages/variable-gen/reports/
 packages/glyph-forge-engine/public-cache/
 packages/glyph-forge-engine/manifests/broken-glyphs.json

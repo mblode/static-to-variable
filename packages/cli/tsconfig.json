@@ -5,7 +5,6 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2024"],
     "outDir": "./dist",
-    "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -17,6 +16,6 @@
     "isolatedModules": true,
     "types": ["node"]
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "../../schemas/stv-config.schema.json"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
