@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from .analyze import (
@@ -9,7 +11,8 @@ from .analyze import (
     write_compatibility_markdown,
     write_compatibility_report,
 )
-from .config import ConfigError, load_config
+from .common import PipelineError
+from .config import ConfigError, load_config, resolve_style_keys
 from .discover import build_inventory_report, write_inventory_report
 from .manifest import ManifestError, load_manifest
 from .pipeline import (
@@ -72,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
         sub.add_argument("--style", default="all", help="style key, or 'all'")
         if name == "build":
             sub.add_argument("--check-only", action="store_true")
+        if name == "bootstrap":
+            sub.add_argument("--force", action="store_true", help="overwrite an existing source")
 
     args = parser.parse_args(argv)
 
@@ -86,32 +91,39 @@ def main(argv: list[str] | None = None) -> int:
             return _pipeline_command(args)
     except (ManifestError, ConfigError, ValueError) as exc:
         parser.exit(2, f"variable-gen: {exc}\n")
+    except PipelineError as exc:
+        print(f"variable-gen: {exc}", file=sys.stderr)
+        return 1
 
     parser.error(f"unknown command {args.command!r}")
     return 2
 
 
-def _resolve_style_keys(config, style: str) -> list[str]:
-    if style != "all" and style not in config.styles:
-        raise ConfigError(f"unknown style {style!r}; have {sorted(config.styles)}")
-    return list(config.styles) if style == "all" else [style]
+def run_command(command: str, argv: list[str] | None = None) -> int:
+    """Run one subcommand with its own argv. Module mains delegate here so
+    ``python -m variable_gen.<command>`` and ``variable-gen <command>`` share a
+    single implementation."""
+    args = sys.argv[1:] if argv is None else argv
+    return main([command, *args])
 
 
 def _pipeline_command(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    keys = _resolve_style_keys(config, args.style)
+    keys = resolve_style_keys(config, args.style)
 
     if args.command == "bootstrap":
         from .bootstrap import bootstrap_style
 
         for key in keys:
-            stats = bootstrap_style(config, key)
-            if stats["skipped"]:
-                print(f"[{key}] source exists at {stats['source']} — skipped")
+            boot = bootstrap_style(config, key, force=args.force)
+            if boot.skipped:
+                print(
+                    f"[{key}] source exists at {boot.source} — skipped (use --force to overwrite)"
+                )
             else:
                 print(
-                    f"[{key}] bootstrapped {stats['glyphs']} glyphs "
-                    f"({stats['unmapped']} unmapped) -> {stats['source']}"
+                    f"[{key}] bootstrapped {boot.glyphs} glyphs "
+                    f"({boot.unmapped} unmapped) -> {boot.source}"
                 )
         return 0
 
@@ -121,16 +133,16 @@ def _pipeline_command(args: argparse.Namespace) -> int:
         report = {}
         for key in keys:
             stats = rebuild_style(config, key)
-            report[key] = stats
+            report[key] = asdict(stats)
             plan = config.styles[key].masters
             print(
-                f"[{key}] {len(plan)} masters | donor={stats['donor']} "
-                f"reconstructed={stats['reconstructed']} "
-                f"ai-pending={len(stats['ai_pending'])} "
-                f"sampled(non-donor)={stats['sampled']} frozen={stats['frozen']}"
+                f"[{key}] {len(plan)} masters | donor={stats.donor} "
+                f"reconstructed={stats.reconstructed} "
+                f"ai-pending={len(stats.ai_pending)} "
+                f"sampled(non-donor)={stats.sampled} frozen={stats.frozen}"
             )
-            if stats["ai_pending"]:
-                print(f"   ai-pending (topology change -> freeze): {stats['ai_pending']}")
+            if stats.ai_pending:
+                print(f"   ai-pending (topology change -> freeze): {stats.ai_pending}")
         out = config.repo_root / "packages/variable-gen/reports/reconstruction-report.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2))
@@ -141,12 +153,12 @@ def _pipeline_command(args: argparse.Namespace) -> int:
         from .normalize import normalize_style
 
         for key in keys:
-            r = normalize_style(config, key)
-            if r.get("skipped"):
+            norm = normalize_style(config, key)
+            if norm.skipped:
                 print(f"[{key}] height normalization disabled (normalize.heights=false)")
             else:
                 print(
-                    f"[{key}] vertical-normalized {r['vertical_normalized']} glyphs "
+                    f"[{key}] vertical-normalized {norm.vertical_normalized} glyphs "
                     f"(aligned to the default master's box)"
                 )
         return 0
@@ -160,7 +172,7 @@ def _pipeline_command(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "build":
-        from .build import build_style, check_fidelity
+        from .build import UNDERWEIGHT_RATIO, build_style, check_fidelity
 
         for key in keys:
             if not args.check_only:
@@ -168,7 +180,7 @@ def _pipeline_command(args: argparse.Namespace) -> int:
             fails = check_fidelity(config, key)
             worst = sorted(fails, key=lambda f: f[2])[:12]
             print(
-                f"[{key}] underweight (<0.92x mapped donor) at any named "
+                f"[{key}] underweight (<{UNDERWEIGHT_RATIO}x mapped donor) at any named "
                 f"weight: {len(fails)} glyph-weights"
             )
             if worst:

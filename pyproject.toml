@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = ["variable-gen", "glyph-forge-engine"]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.14"]
+dev = ["mypy>=1.14", "pytest>=8", "ruff>=0.14"]
 
 [tool.uv]
 package = false
@@ -55,6 +55,24 @@ select = ["E", "F", "I", "UP", "B"]
   "B",
   "F841",
 ]
+
+# Scoped to the typed library. The verbatim-ported reconstruction engine is
+# deliberately untyped (annotations there would be guesses); mypy still parses
+# it but does not require annotations anywhere.
+[tool.mypy]
+files = ["packages/variable-gen/src/variable_gen"]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+# The verbatim-ported geometry engine is untyped by design; checking its
+# untyped bodies produces inference noise, not findings. Characterization
+# tests in packages/variable-gen/tests guard its behaviour instead.
+[[tool.mypy.overrides]]
+module = "variable_gen.reconstruct_compatible"
+check_untyped_defs = false
 
 [tool.pytest.ini_options]
 testpaths = ["packages/variable-gen/tests", "packages/glyph-forge-engine/tests"]

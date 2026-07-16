@@ -284,13 +284,13 @@ def _residual_stage(repo_root: Path) -> Stage:
     # does not surface as one of its three counter fields.
     if verdict_path.exists():
         verdict, error = _read_json(verdict_path)
-        if error:
+        if error or verdict is None:
             return _invalid_stage(
                 "blocker_residuals",
                 "Blocker Residual Validation",
                 "blocking",
                 verdict_path,
-                error,
+                error or "verdict file is empty",
             )
         failures = list(verdict.get("failures", []))
         summary: dict[str, int] = {
@@ -382,7 +382,9 @@ def _glyph_forge_stage(repo_root: Path) -> Stage:
         )
 
     verdict_counts = Counter(item.get("auditVerdict", "unknown") for item in broken_glyphs)
-    solver_gain_count = sum(1 for item in solver_results.values() if (item.get("gain") or 0) > 0.1)
+    solver_gain_count = sum(
+        1 for item in solver_results.values() if (item.get("gain") or 0) > AUTOMATIC_MIN_GAIN
+    )
     failures: list[str] = []
     reconstruction_required = [
         item for item in broken_glyphs if _requires_reconstruction(item, solver_results)

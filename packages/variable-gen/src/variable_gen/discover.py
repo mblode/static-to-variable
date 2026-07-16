@@ -252,6 +252,8 @@ def _inventory_hard_gates(family_reports: dict[str, dict[str, Any]]) -> dict[str
     donor_reports = [
         donor for family in family_reports.values() for donor in family.get("donors", [])
     ]
+    # Donor axis locations are validated when the manifest is loaded, so there
+    # is no separate location gate here.
     fields = {
         "missing_required_donors": sum(1 for donor in donor_reports if not donor.get("exists")),
         "unreadable_donors": sum(
@@ -260,8 +262,6 @@ def _inventory_hard_gates(family_reports: dict[str, dict[str, Any]]) -> dict[str
         "hash_mismatch": sum(
             1 for donor in donor_reports if "sha256_mismatch" in donor.get("warnings", [])
         ),
-        "axis_location_missing": 0,
-        "path_resolution_error": sum(1 for donor in donor_reports if not donor.get("exists")),
     }
     blocking_reasons = [
         {

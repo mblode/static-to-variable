@@ -10,21 +10,27 @@ interpolation-compatible (per-master operations that preserve point structure):
     vertical box onto the default master's box, so the height is consistent
     across weights. Enabled by ``normalize.heights`` (default true).
 
-The ``normalize.monotonicInk`` toggle is reserved for a future ink-monotonicity
-pass; the current engine performs only the height normalization above, matching
-the historical ``normalize_glyphs.py`` behaviour.
-
 Run:  uv run python -m variable_gen.cli normalize --config <path> --style all
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import glyphsLib
 from fontTools.pens.areaPen import AreaPen
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 
-from variable_gen.config import ProjectConfig, Style, load_config
+from variable_gen.config import ProjectConfig, Style
+
+
+@dataclass(frozen=True)
+class NormalizeStats:
+    style: str
+    vertical_normalized: int
+    skipped: bool = False
+
 
 # A letter/figure is a donor defect (not innate overshoot) when its vertical box
 # is inconsistent with the default master: it floats above the baseline, or falls
@@ -63,11 +69,11 @@ def _first_donor_path(config: ProjectConfig, style: Style):
     return donor_by_id[style.masters[0].donor_id].path
 
 
-def normalize_style(config: ProjectConfig, style_key: str) -> dict:
+def normalize_style(config: ProjectConfig, style_key: str) -> NormalizeStats:
     """Height-normalize one style's source in place. Mirrors
     ``normalize_glyphs.normalize_family`` exactly, config-driven."""
     if not config.normalize.get("heights", True):
-        return {"style": style_key, "vertical_normalized": 0, "skipped": True}
+        return NormalizeStats(style=style_key, vertical_normalized=0, skipped=True)
 
     style = config.styles[style_key]
     default_pos = config.axes[0].default
@@ -75,7 +81,8 @@ def normalize_style(config: ProjectConfig, style_key: str) -> dict:
     rep = TTFont(str(_first_donor_path(config, style)))
     cmap_rev = {v: k for k, v in rep.getBestCmap().items()}
 
-    font = glyphsLib.load(open(style.source))
+    with open(style.source) as source_file:
+        font = glyphsLib.load(source_file)
     mids = [m.id for m in font.masters]
     default_id = next((m.id for m in font.masters if m.axes[0] == default_pos), None)
 
@@ -95,14 +102,15 @@ def normalize_style(config: ProjectConfig, style_key: str) -> dict:
         if ref_h <= 0:
             continue
 
-        boxes = {}
+        boxes: dict[str, tuple[float, float]] = {}
+        complete = True
         for mid, layer in layers.items():
             m = layer_metrics(layer)
             if m is None or m[1] is None:
-                boxes = None
+                complete = False
                 break
             boxes[mid] = (m[1], m[2])
-        if not boxes:
+        if not (complete and boxes):
             continue
         float_up = max(b[0] for b in boxes.values()) - ref_ymin
         falls_short = ref_ymax - min(b[1] for b in boxes.values())
@@ -126,31 +134,14 @@ def normalize_style(config: ProjectConfig, style_key: str) -> dict:
         n_fixed += 1
 
     font.save(str(style.source))
-    return {"style": style_key, "vertical_normalized": n_fixed}
+    return NormalizeStats(style=style_key, vertical_normalized=n_fixed)
 
 
-def main() -> int:
-    import argparse
+def main(argv: list[str] | None = None) -> int:
+    """Thin wrapper: ``python -m variable_gen.normalize`` == ``variable-gen normalize``."""
+    from variable_gen.cli import run_command
 
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", required=True, help="path to stv.config.json")
-    ap.add_argument("--style", default="all", help="style key, or 'all'")
-    args = ap.parse_args()
-
-    config = load_config(args.config)
-    keys = list(config.styles) if args.style == "all" else [args.style]
-    if args.style != "all" and args.style not in config.styles:
-        raise SystemExit(f"unknown style {args.style!r}; have {sorted(config.styles)}")
-    for key in keys:
-        r = normalize_style(config, key)
-        if r.get("skipped"):
-            print(f"[{key}] height normalization disabled (normalize.heights=false)")
-        else:
-            print(
-                f"[{key}] vertical-normalized {r['vertical_normalized']} glyphs "
-                f"(aligned to the default master's box)"
-            )
-    return 0
+    return run_command("normalize", argv)
 
 
 if __name__ == "__main__":
