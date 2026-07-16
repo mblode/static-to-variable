@@ -18,9 +18,11 @@ packages/cli/LICENSE.md
 .claude/
 
 # Runtime source inputs. Upload through the app or place locally when needed.
+# cabinet/Circular/ is the licensed-donor drop-in location for the Glide
+# example config; it must never be committed.
 glide-variable.glyphs
 glide-variable-italic.glyphs
-cabinet/Circular/
+cabinet/
 
 # Generated pipeline outputs.
 fonts/

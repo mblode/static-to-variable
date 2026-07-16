@@ -7,7 +7,7 @@ XX cut, where 477/755 glyphs are structurally incompatible), produce per-master
 outlines that share ONE point structure, so they interpolate into a variable
 font, while each master still matches its own weight's shape.
 
-Contours use the donor_outline format from rederive_from_donors:
+Contours use the donor_outline format from variable_gen.outlines:
     contours = [ [ (op, [pt,...]), ... ], ... ]   op in moveTo/lineTo/curveTo/
     qCurveTo/closePath/endPath; pts are (x, y) float tuples.
 
@@ -1147,76 +1147,3 @@ def _as_line_contour(points):
         con.append(("lineTo", [p]))
     con.append(("closePath", []))
     return con
-
-
-# ---------------------------------------------------------------------------
-# standalone test harness
-# ---------------------------------------------------------------------------
-
-
-def _test(glyph_names):
-    from pathlib import Path
-
-    from fontTools.ttLib import TTFont
-
-    from variable_gen.outlines import donor_outline
-
-    REPO = Path(__file__).resolve().parents[4]
-    D = REPO / "cabinet/Circular/CircularXX"
-    plan = [
-        ("Thin", 100),
-        ("Light", 200),
-        ("Regular", 300),
-        ("Book", 400),
-        ("Medium", 500),
-        ("Bold", 700),
-        ("Black", 800),
-        ("ExtraBlack", 900),
-    ]
-    gss = {pos: TTFont(str(D / f"CircularXX-{nm}.otf")).getGlyphSet() for nm, pos in plan}
-    for gname in glyph_names:
-        outs = {pos: donor_outline(gs, gname) for pos, gs in gss.items()}
-        if any(o is None for o in outs.values()):
-            print(f"{gname}: missing")
-            continue
-        outlines = {pos: o[0] for pos, o in outs.items()}
-        rec, info = reconstruct(outlines)
-        if rec is None:
-            print(f"{gname}: STAGE-A FAIL -> {info['note']}")
-            continue
-
-        # validate via interpolatable on recording-pen glyphsets
-        class _GS:
-            def __init__(self, contours):
-                self.contours = contours
-
-            def draw(self, pen):
-                for con in self.contours:
-                    for op, pts in con:
-                        getattr(pen, op)(*pts) if pts else getattr(pen, op)()
-
-            def __getitem__(self, k):
-                return self
-
-        ncon = {pos: len(c) for pos, c in rec.items()}
-        npts = {pos: sum(len(con) for con in c) for pos, c in rec.items()}
-        ok_con = len(set(ncon.values())) == 1
-        ok_pts = len(set(npts.values())) == 1
-        print(
-            f"{gname}: {info['stage']:14} contours={list(ncon.values())[0] if ok_con else ncon} "
-            f"pts/master={'=' if ok_pts else npts} "
-            f"{'OK' if ok_con and ok_pts else 'STRUCT-MISMATCH'}"
-        )
-
-
-if __name__ == "__main__":
-    import argparse
-
-    ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "glyphs",
-        nargs="*",
-        default=["Aacute", "dollar", "ampersand", "at", "two", "three", "a", "g", "eight"],
-    )
-    args = ap.parse_args()
-    _test(args.glyphs)

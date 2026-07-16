@@ -13,9 +13,7 @@ PACKAGE_DIR = SCRIPT_DIR.parent
 DEFAULT_MANIFEST = PACKAGE_DIR / "manifests/circular-triage.json"
 DEFAULT_REPORT_DIR = PACKAGE_DIR / "reports/repair"
 DEFAULT_OUTPUT = DEFAULT_REPORT_DIR / "tracked-residual-review.md"
-DEFAULT_SOLVER_RESULTS = (
-    PACKAGE_DIR.parent / "glyph-forge-engine" / "manifests/solver-results.json"
-)
+DEFAULT_SOLVER_RESULTS = PACKAGE_DIR.parent / "glyph-forge-engine" / "manifests/solver-results.json"
 PRIORITY_CHOICES = ("blocker", "high", "medium", "low")
 PRIORITY_RANK = {
     "low": 1,
@@ -36,12 +34,7 @@ def parse_repair_buckets(values: list[str] | None) -> set[str] | None:
     if values is None:
         return None
 
-    buckets = {
-        bucket.strip()
-        for value in values
-        for bucket in value.split(",")
-        if bucket.strip()
-    }
+    buckets = {bucket.strip() for value in values for bucket in value.split(",") if bucket.strip()}
     return buckets or None
 
 
@@ -141,8 +134,7 @@ def frozen_outline_allowance(manifest_entry: dict[str, object]) -> tuple[bool, b
         return False, False
 
     has_reason = any(
-        bool(str(manifest_entry.get(field, "")).strip())
-        for field in FROZEN_REASON_FIELDS
+        bool(str(manifest_entry.get(field, "")).strip()) for field in FROZEN_REASON_FIELDS
     )
     return has_reason, not has_reason
 
@@ -195,12 +187,9 @@ def build_family_review(
         )
         solver_entry = solver_results.get(f"{family_key}/{glyph_name}")
         solver_marks_reconstruction = (
-            isinstance(solver_entry, dict)
-            and solver_entry.get("requiresReconstruction") is True
+            isinstance(solver_entry, dict) and solver_entry.get("requiresReconstruction") is True
         )
-        is_reconstruction_required = (
-            manifest_marks_reconstruction and solver_marks_reconstruction
-        )
+        is_reconstruction_required = manifest_marks_reconstruction and solver_marks_reconstruction
         if manifest_marks_reconstruction and not solver_marks_reconstruction:
             failures.append(
                 f"{family_key}:{glyph_name}: manifest marks reconstruction but solver does not"
@@ -220,7 +209,7 @@ def build_family_review(
                 min_segment = value if min_segment is None else min(min_segment, value)
 
         area_diffs = []
-        for weight, payload in validation_payload.get("weights", {}).items():
+        for payload in validation_payload.get("weights", {}).values():
             value = payload.get("worst_area_diffs_pct", {}).get(glyph_name)
             if value is not None:
                 area_diffs.append(float(value))
@@ -292,8 +281,8 @@ def build_family_review(
             f"brace={entry.get('generated_brace_weights', [])} "
             f"frozen={entry['same_outline_across_masters']} "
             f"interpolatable={len(issues)} "
-            f"sourceAudit="
-            f"{source_path_order_issues}/{source_node_count_issues}/{source_start_issues}/{source_direction_issues} "
+            f"sourceAudit={source_path_order_issues}/{source_node_count_issues}"
+            f"/{source_start_issues}/{source_direction_issues} "
             f"riskyWeights={risky_weights} "
             f"maxAreaDrift={None if max_area is None else round(max_area, 2)}"
         )

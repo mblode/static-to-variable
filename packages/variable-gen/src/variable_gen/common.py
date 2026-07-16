@@ -2,10 +2,33 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
 from pathlib import Path
 from typing import Any, TypeVar
 
 FamilyT = TypeVar("FamilyT")
+
+
+class PipelineError(RuntimeError):
+    """A pipeline stage failed in a way the caller should report and exit 1 on.
+
+    Raised instead of ``SystemExit`` so library callers (tests, the studio job
+    runner, other Python code) can catch it without intercepting interpreter
+    shutdown.
+    """
+
+
+def fontmake_command(repo_root: Path) -> str:
+    """Resolve the fontmake executable: an explicit override, then the repo's
+    ``.venv``, then whatever is on PATH (e.g. under ``uv run``)."""
+    override = os.environ.get("STV_FONTMAKE")
+    if override:
+        return override
+    venv = repo_root / ".venv/bin/fontmake"
+    if venv.exists():
+        return str(venv)
+    return shutil.which("fontmake") or "fontmake"
 
 
 def select_families(

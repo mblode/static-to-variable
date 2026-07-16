@@ -73,9 +73,7 @@ def diff(pending: list[dict], triage: dict) -> list[Change]:
         family = entry["family"]
         glyph = entry["glyph"]
         after = entry["strategy"]
-        before = (
-            triage.get(family, {}).get("glyphs", {}).get(glyph, {}).get("strategy")
-        )
+        before = triage.get(family, {}).get("glyphs", {}).get(glyph, {}).get("strategy")
         existing = triage.get(family, {}).get("glyphs", {}).get(glyph, {})
         patch = sanitize_patch(entry.get("manifestPatch", {}))
         changes.append(
@@ -120,9 +118,7 @@ def apply_changes(triage: dict, changes: list[Change]) -> tuple[int, int]:
             if c.notes:
                 # Append to notes so manual context isn't lost.
                 old_notes = existing.get("notes")
-                existing["notes"] = (
-                    f"{old_notes}\n\n[staged] {c.notes}" if old_notes else c.notes
-                )
+                existing["notes"] = f"{old_notes}\n\n[staged] {c.notes}" if old_notes else c.notes
             updated += 1
     return created, updated
 
@@ -139,8 +135,7 @@ def write_triage(triage: dict) -> Path:
 
 def format_change(c: Change) -> str:
     patch = (
-        " "
-        + " ".join(f"{key}={value!r}" for key, value in sorted(c.patch.items()))
+        " " + " ".join(f"{key}={value!r}" for key, value in sorted(c.patch.items()))
         if c.patch
         else ""
     )
@@ -176,7 +171,9 @@ def main() -> int:
     no_change = [c for c in changes if not c.changes_state]
     real_changes = [c for c in changes if c.changes_state]
 
-    print(f"{len(changes)} pending edit(s) — {len(real_changes)} would change state, {len(no_change)} no-ops")
+    print(
+        f"{len(changes)} pending edit(s) — {len(real_changes)} would change state, {len(no_change)} no-ops"
+    )
     for c in changes:
         print(format_change(c))
 
@@ -200,8 +197,11 @@ def main() -> int:
             f.write("[]\n")
         print(f"cleared {PENDING_PATH.relative_to(PACKAGE_ROOT.parent)}")
 
-    print("\nNext: re-run the repair engine so the new strategies take effect:")
-    print("  .venv/bin/python packages/variable-gen/scripts/repair_circular_sources.py --font all")
+    print("\nNext: re-run the rebuild so the new strategies take effect:")
+    print(
+        "  .venv/bin/python -m variable_gen.cli rebuild"
+        " --config examples/glide/stv.config.json --style all"
+    )
     return 0
 
 

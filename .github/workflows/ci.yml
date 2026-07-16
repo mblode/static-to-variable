@@ -41,12 +41,12 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync
-      # Scoped to the durable library; the legacy Glide-era scripts keep their
-      # own compact style (relaxed via ruff per-file-ignores) and are not
-      # format-checked here.
+      # Lint everything; format-check the durable library and tests. The
+      # remaining legacy-styled modules (audit script, glyph-forge python/) are
+      # style-relaxed via ruff per-file-ignores but still pyflakes-checked.
       - name: Lint (ruff)
         run: |
-          uvx ruff@0.14 check packages/variable-gen/src packages/variable-gen/tests packages/variable-gen/scripts/compare_builds.py
-          uvx ruff@0.14 format --check packages/variable-gen/src packages/variable-gen/tests packages/variable-gen/scripts/compare_builds.py
+          uvx ruff@0.14 check packages/variable-gen packages/glyph-forge-engine
+          uvx ruff@0.14 format --check packages/variable-gen/src packages/variable-gen/tests packages/glyph-forge-engine/tests
       - name: Test (pytest)
-        run: uv run pytest packages/variable-gen/tests
+        run: uv run pytest

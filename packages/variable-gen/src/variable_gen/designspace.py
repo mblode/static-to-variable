@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """Config-driven designspace export for a static-to-variable project.
 
-This is the generic form of ``cabinet/export_designspace.py``: it converts a
-``.glyphs`` source into UFOs + a ``.designspace`` document, correcting the axis
-that glyphsLib mis-computes (it emits ``min=max=default`` with a bogus avar map
-because it confuses instance axesValues with mapping points). The axis range,
-default, STAT axis labels, and fvar named instances are all sourced from the v3
-``ProjectConfig`` (``axes[].namedInstances`` + the family metadata) instead of a
-hardcoded ``WEIGHT_NAMES`` table.
+Converts a ``.glyphs`` source into UFOs + a ``.designspace`` document,
+correcting the axis that glyphsLib mis-computes (it emits ``min=max=default``
+with a bogus avar map because it confuses instance axesValues with mapping
+points). The axis range, default, STAT axis labels, and fvar named instances
+are all sourced from the v3 ``ProjectConfig`` (``axes[].namedInstances`` + the
+family metadata).
 
-The core ``build_designspace`` takes plain values so the Glide-specific shim in
-``cabinet/export_designspace.py`` (and any other legacy caller) can keep calling
-it with the original three-argument ``export`` signature.
+The core ``build_designspace`` takes plain values so callers that are not
+config-driven can still invoke it directly.
 
 Run:  uv run python -m variable_gen.cli designspace --config <path> --style all
 """

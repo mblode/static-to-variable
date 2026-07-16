@@ -78,58 +78,44 @@ This reads the current stage artifacts and writes:
 
 The status report is the promotion surface for the static-to-variable glyph pipeline. Raw donor compatibility and the full audit are diagnostic; inventory, repair/build, blocker residual validation, and glyph-forge visual QA are blocking promotion gates.
 
-## Repair runner
+## Master rebuild
 
-Run the full repair pipeline for both live sources:
-
-```bash
-.venv/bin/python packages/variable-gen/scripts/repair_sources.py --font all
-```
-
-Run only one family:
+Rebuild every style's masters from its donors onto a shared, interpolation-compatible structure (config-driven):
 
 ```bash
-.venv/bin/python packages/variable-gen/scripts/repair_sources.py --font roman
-.venv/bin/python packages/variable-gen/scripts/repair_sources.py --font italic
+.venv/bin/python -m variable_gen.cli rebuild --config examples/glide/stv.config.json --style all
 ```
+
+Run only one style by passing its config key (e.g. `--style roman`).
 
 Important outputs:
 
-- Repair manifest:
+- Triage manifest (per-glyph strategies consumed by the residual gate):
   - `packages/variable-gen/manifests/circular-triage.json`
-- Source reports:
-  - `packages/variable-gen/reports/repair/roman-source-report.json`
-  - `packages/variable-gen/reports/repair/italic-source-report.json`
-- Export/interpolation reports:
-  - `packages/variable-gen/reports/repair/roman-designspace-interpolatable.json`
-  - `packages/variable-gen/reports/repair/italic-designspace-interpolatable.json`
-- Instance risk reports:
-  - `packages/variable-gen/reports/repair/roman-instance-risk-report.json`
-  - `packages/variable-gen/reports/repair/italic-instance-risk-report.json`
-- Review packet:
-  - `packages/variable-gen/reports/repair/review-packet.md`
-- Built variable fonts:
+- Reconstruction report (read by the `repair_build` promotion gate):
+  - `packages/variable-gen/reports/reconstruction-report.json`
+- Built variable fonts (after `variable_gen.cli build`):
   - `packages/variable-gen/build/roman/glide-variable-vf.ttf`
   - `packages/variable-gen/build/italic/glide-variable-italic-vf.ttf`
 
 ## Comprehensive audit workflow
 
-Run the all-glyph audit workflow for both families:
+Run the all-glyph audit workflow for every style:
 
 ```bash
-.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --family all
+.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --style all
 ```
 
-Run one family with denser in-between sampling:
+Run one style with denser in-between sampling:
 
 ```bash
-.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --family italic --samples-per-span 9
+.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --style italic --samples-per-span 9
 ```
 
 Run a focused in-between audit that skips donor validation and only prioritizes interior span failures:
 
 ```bash
-.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --family all --interpolation-only
+.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --style all --interpolation-only
 ```
 
 What it does:
@@ -167,13 +153,6 @@ Audit outputs:
   - `packages/variable-gen/reports/audit/audit-run-summary.json`
   - `packages/variable-gen/reports/audit/audit-overview-interpolation-only.md`
   - `packages/variable-gen/reports/audit/audit-run-summary-interpolation-only.json`
-
-## Initial target family
-
-Circular in:
-
-- `cabinet/Circular/Circular`
-- `cabinet/Circular/Circular Italic`
 
 ## Notes for implementation
 

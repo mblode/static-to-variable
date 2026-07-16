@@ -28,7 +28,6 @@ src/
 
 - Commands always execute from the static-to-variable workspace root, even when npm starts the workspace script inside `packages/cli`.
 - Python stages must call `.venv/bin/python` through the existing `@static-to-variable/variable-gen` npm scripts.
-- `isolate_blockers` mutates root roman glyph source and the variable-gen triage manifest. Keep that stage optional and visibly prompted.
-- `repair_build` mutates root `.glyphs` sources plus generated build/report artifacts. It should use `repair:skip-import` by default so local source isolation and manual cleanup are preserved.
+- `repair_build` mutates the live `.glyphs` sources plus generated build/report artifacts (it runs the config-driven `variable_gen.cli rebuild`). Keep it visibly prompted in the stepper.
 - Do not make this package write visual QA data directly. It should delegate to `@static-to-variable/glyph-forge-engine`.
 - This is the published npm package (`static-to-variable`). It builds with tsdown (ESM, dual cli+library output, shebang via banner — never add a shebang to `src/cli.ts`) and releases via changesets + OIDC. Bump versions with a changeset, not by hand.

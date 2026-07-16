@@ -8,7 +8,6 @@ from typing import Any
 
 import glyphsLib
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -106,7 +105,8 @@ def expand_manifest(path: Path) -> dict[str, Any]:
                 if missing_characters:
                     missing_string = "".join(missing_characters)
                     raise ValueError(
-                        f"{family_key}:{group_name}: missing glyphs for characters {missing_string!r}"
+                        f"{family_key}:{group_name}: "
+                        f"missing glyphs for characters {missing_string!r}"
                     )
                 group_members.extend(char_members)
 
@@ -121,7 +121,9 @@ def expand_manifest(path: Path) -> dict[str, Any]:
             inherit_from = group.get("inherit_from")
             inherited_payload = {}
             if inherit_from:
-                inherited_payload = dict(expanded_glyphs.get(inherit_from) or explicit_glyphs.get(inherit_from) or {})
+                inherited_payload = dict(
+                    expanded_glyphs.get(inherit_from) or explicit_glyphs.get(inherit_from) or {}
+                )
                 if not inherited_payload:
                     raise ValueError(
                         f"{family_key}:{group_name}: inherit_from={inherit_from!r} not found"
