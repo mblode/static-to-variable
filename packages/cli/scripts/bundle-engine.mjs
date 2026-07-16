@@ -162,7 +162,9 @@ function isRunAsScript() {
   }
   try {
     const invoked = pathToFileURL(realpathSync(process.argv[1])).href;
-    const self = pathToFileURL(realpathSync(fileURLToPath(import.meta.url))).href;
+    const self = pathToFileURL(
+      realpathSync(fileURLToPath(import.meta.url))
+    ).href;
     return invoked === self;
   } catch {
     return false;
