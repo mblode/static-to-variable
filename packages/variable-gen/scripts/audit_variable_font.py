@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""Config-driven variable-font audit gate.
+
+Exports each style's designspace from its live ``.glyphs`` source, builds an
+audit variable font, and validates all glyphs across exact masters and sampled
+in-between weights. Every input (sources, donors, weights) comes from a v3
+``stv.config.json``.
+"""
 
 from __future__ import annotations
 
@@ -12,18 +19,7 @@ from pathlib import Path
 import glyphsLib
 from fontTools.ttLib import TTFont
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-PACKAGE_DIR = SCRIPT_DIR.parent
-REPO_ROOT = PACKAGE_DIR.parent.parent
-CABINET_DIR = REPO_ROOT / "cabinet"
-
-for path in (SCRIPT_DIR, CABINET_DIR):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
-
-from export_designspace import export as export_designspace
-from populate_circular_glyphs import FONT_PLANS
-from repair_sources import (
+from variable_gen.audit_support import (
     build_variable_font,
     generate_static_samples,
     glyph_ink_area,
@@ -32,7 +28,13 @@ from repair_sources import (
     json_safe,
     run_interpolatable_designspace,
 )
+from variable_gen.config import ProjectConfig, Style, load_config, resolve_style_keys
+from variable_gen.designspace import export_designspace
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+PACKAGE_DIR = SCRIPT_DIR.parent
+
+DEFAULT_CONFIG = PACKAGE_DIR.parent.parent / "examples/glide/stv.config.json"
 DEFAULT_REPORT_DIR = PACKAGE_DIR / "reports/audit"
 DEFAULT_BUILD_DIR = PACKAGE_DIR / "build/audit"
 DEFAULT_MIN_SEGMENT_THRESHOLD = 2.0
@@ -45,15 +47,19 @@ DEFAULT_TOP_GLYPHS = 50
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Export a Glide variable font from the live .glyphs source and audit "
+            "Export a variable font from each style's live .glyphs source and audit "
             "all glyphs across exact masters and sampled in-between weights."
         )
     )
     parser.add_argument(
-        "--family",
-        choices=("roman", "italic", "all"),
+        "--config",
+        default=str(DEFAULT_CONFIG),
+        help="Path to the v3 stv.config.json driving the audit.",
+    )
+    parser.add_argument(
+        "--style",
         default="all",
-        help="Which family to audit.",
+        help="Which style to audit (a config style key, or 'all').",
     )
     parser.add_argument(
         "--report-dir",
@@ -106,10 +112,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def family_export_config(family_key: str) -> tuple[str, str]:
-    if family_key == "italic":
-        return ("GlideItalic.designspace", "GlideItalic")
-    return ("Glide.designspace", "Glide")
+def donor_paths_by_weight(style: Style) -> dict[int, Path]:
+    """Map each configured master's weight to its donor font path."""
+    donors_by_id = {donor.id: donor for donor in style.donors}
+    axis_tag = next(iter(style.masters[0].location))
+    return {
+        int(master.location[axis_tag]): donors_by_id[master.donor_id].path
+        for master in style.masters
+    }
 
 
 def master_weight(master) -> int:
@@ -243,11 +253,11 @@ def build_all_glyph_master_validation_report(
     family_key: str,
     generated: dict[int, Path],
     master_records: list[dict[str, object]],
+    donor_paths: dict[int, Path],
     point_deviation_threshold: float,
     area_diff_threshold: float,
     report_dir: Path,
 ) -> tuple[Path, dict[str, object]]:
-    plan = FONT_PLANS[family_key]
     payload = {
         "family": family_key,
         "point_deviation_threshold": point_deviation_threshold,
@@ -256,7 +266,7 @@ def build_all_glyph_master_validation_report(
     }
 
     for master in master_records:
-        donor_path = plan.donor_paths_by_master_name.get(str(master["name"]))
+        donor_path = donor_paths.get(int(master["weight"]))
         instance_path = generated.get(int(master["weight"]))
         if donor_path is None or instance_path is None:
             continue
@@ -727,6 +737,7 @@ def build_audit_markdown(
 
 
 def run_family_audit(
+    config: ProjectConfig,
     family_key: str,
     report_dir: Path,
     build_dir: Path,
@@ -737,12 +748,11 @@ def run_family_audit(
     top_glyphs: int,
     interpolation_only: bool,
 ) -> dict[str, object]:
-    plan = FONT_PLANS[family_key]
-    font = glyphsLib.load(str(plan.source_path))
+    style = config.styles[family_key]
+    font = glyphsLib.load(str(style.source))
     span_plan = build_span_plan(font, samples_per_span=samples_per_span)
 
-    designspace_name, ufo_prefix = family_export_config(family_key)
-    designspace_path = export_designspace(plan.source_path, designspace_name, ufo_prefix)
+    designspace_path = export_designspace(config, family_key)
 
     family_report_dir = report_dir / family_key
     family_build_dir = build_dir / family_key
@@ -759,8 +769,12 @@ def run_family_audit(
     )
     interpolatable_payload = json.loads(interpolatable_report_path.read_text())
 
-    variable_font_path = family_build_dir / f"{plan.source_path.stem}-audit-vf.ttf"
-    build_variable_font(designspace_path=designspace_path, output_path=variable_font_path)
+    variable_font_path = family_build_dir / f"{style.source.stem}-audit-vf.ttf"
+    build_variable_font(
+        designspace_path=designspace_path,
+        output_path=variable_font_path,
+        repo_root=config.repo_root,
+    )
 
     generated = generate_static_samples(
         variable_font_path=variable_font_path,
@@ -785,6 +799,7 @@ def run_family_audit(
                 family_key=family_key,
                 generated=generated,
                 master_records=span_plan["masters"],
+                donor_paths=donor_paths_by_weight(style),
                 point_deviation_threshold=point_deviation_threshold,
                 area_diff_threshold=area_diff_threshold,
                 report_dir=family_report_dir,
@@ -820,7 +835,7 @@ def run_family_audit(
         "family": family_key,
         "mode": mode_slug,
         "interpolation_only": interpolation_only,
-        "source_path": str(plan.source_path),
+        "source_path": str(style.source),
         "designspace_path": str(designspace_path),
         "variable_font_path": str(variable_font_path),
         "samples_per_span": samples_per_span,
@@ -955,12 +970,13 @@ def load_existing_run_summary(summary_path: Path) -> dict[str, dict[str, object]
 def merge_run_summary_results(
     existing: dict[str, dict[str, object]],
     updates: dict[str, dict[str, object]],
+    style_order: list[str],
 ) -> dict[str, dict[str, object]]:
     merged = dict(existing)
     merged.update(updates)
 
     ordered: dict[str, dict[str, object]] = {}
-    for family_key in ("roman", "italic"):
+    for family_key in style_order:
         if family_key in merged:
             ordered[family_key] = merged[family_key]
     for family_key, result in merged.items():
@@ -972,14 +988,15 @@ def merge_run_summary_results(
 
 def main() -> int:
     args = parse_args()
+    config = load_config(args.config)
     report_dir = Path(args.report_dir).resolve()
     build_dir = Path(args.build_dir).resolve()
 
-    selected = ["roman", "italic"] if args.family == "all" else [args.family]
+    selected = resolve_style_keys(config, args.style)
     summary_path = report_dir / summary_report_name(args.interpolation_only)
     overview_name = overview_report_name(args.interpolation_only)
 
-    if args.family == "all":
+    if args.style == "all":
         existing_results: dict[str, dict[str, object]] = {}
     else:
         try:
@@ -992,6 +1009,7 @@ def main() -> int:
 
     for family_key in selected:
         results[family_key] = run_family_audit(
+            config=config,
             family_key=family_key,
             report_dir=report_dir,
             build_dir=build_dir,
@@ -1004,7 +1022,9 @@ def main() -> int:
         )
 
     summary_results = (
-        results if args.family == "all" else merge_run_summary_results(existing_results, results)
+        results
+        if args.style == "all"
+        else merge_run_summary_results(existing_results, results, list(config.styles))
     )
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(json_safe(summary_results), indent=2))

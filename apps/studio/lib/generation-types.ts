@@ -70,7 +70,7 @@ export const GENERATION_STAGES: readonly GenerationStageDefinition[] = [
     blocking: true,
     id: "repair_build",
     phase: "Generation",
-    title: "Repair and build",
+    title: "Master rebuild",
   },
   {
     blocking: false,

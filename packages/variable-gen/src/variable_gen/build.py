@@ -19,9 +19,7 @@ Run:  uv run python -m variable_gen.cli build --config <path> --style all
 from __future__ import annotations
 
 import copy
-import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -31,23 +29,12 @@ from fontTools.pens.areaPen import AreaPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
+from variable_gen.common import fontmake_command
 from variable_gen.config import ProjectConfig, Style, load_config
 from variable_gen.designspace import export_designspace
 from variable_gen.outlines import donor_outline, draw_into
 
 UNDERWEIGHT_RATIO = 0.92
-
-
-def _fontmake(repo_root: Path) -> str:
-    """Resolve the fontmake executable: an explicit override, then the repo's
-    ``.venv``, then whatever is on PATH (e.g. under ``uv run``)."""
-    override = os.environ.get("STV_FONTMAKE")
-    if override:
-        return override
-    venv = repo_root / ".venv/bin/fontmake"
-    if venv.exists():
-        return str(venv)
-    return shutil.which("fontmake") or "fontmake"
 
 
 def _run(cmd, repo_root: Path):
@@ -99,7 +86,7 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
 
         print(f"[{style_key}] no source at {style.source} — bootstrapping + rebuilding from donors")
         rebuild_style(config, style_key)
-    fontmake = _fontmake(config.repo_root)
+    fontmake = fontmake_command(config.repo_root)
     out = style.output
     out.parent.mkdir(parents=True, exist_ok=True)
     frozen: list[str] = []

@@ -105,19 +105,12 @@ const COMMANDS = {
     "run",
     "compatibility:raw",
   ],
-  repairSkipImport: [
+  rebuild: [
     "npm",
     "--workspace",
     "@static-to-variable/variable-gen",
     "run",
-    "repair:skip-import",
-  ],
-  repairWithImport: [
-    "npm",
-    "--workspace",
-    "@static-to-variable/variable-gen",
-    "run",
-    "repair",
+    "rebuild",
   ],
   residualBlockers: [
     "npm",
@@ -159,10 +152,10 @@ const OUTPUTS = [
   },
   {
     contentType: "application/json",
-    destination: "reports/repair-run-summary.json",
-    id: "repair-summary-json",
-    label: "Repair summary JSON",
-    source: "packages/variable-gen/reports/repair/repair-run-summary.json",
+    destination: "reports/reconstruction-report.json",
+    id: "reconstruction-report-json",
+    label: "Reconstruction report JSON",
+    source: "packages/variable-gen/reports/reconstruction-report.json",
   },
   {
     contentType: "text/markdown; charset=utf-8",
@@ -241,7 +234,7 @@ async function main(): Promise<void> {
       job,
       "repair_build",
       isolatedRepoPath,
-      COMMANDS.repairWithImport
+      COMMANDS.rebuild
     );
     await runCommandStage(
       job,
@@ -258,7 +251,7 @@ async function main(): Promise<void> {
     );
 
     await runStage(job, "auto_convergence", async (stage) => {
-      stage.command = "auto-stage/apply/repair/audit loop";
+      stage.command = "auto-stage/apply/rebuild/audit loop";
       return await autoConverge(job, isolatedRepoPath);
     });
 
@@ -382,9 +375,6 @@ function shouldCopyPath(
   if (relative.startsWith(`packages${path.sep}variable-gen${path.sep}build`)) {
     return false;
   }
-  if (relative.startsWith(`cabinet${path.sep}build${path.sep}work`)) {
-    return false;
-  }
   return true;
 }
 
@@ -446,7 +436,7 @@ async function autoConverge(job: GenerationJob, cwd: string): Promise<string> {
     for (const command of [
       COMMANDS.autoStage,
       COMMANDS.applyTriage,
-      COMMANDS.repairSkipImport,
+      COMMANDS.rebuild,
       COMMANDS.auditInterpolation,
       COMMANDS.audit,
       COMMANDS.glyphForge,

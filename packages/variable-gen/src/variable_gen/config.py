@@ -137,6 +137,14 @@ class ProjectConfig:
 _VALID_STRATEGIES = {"open_bar", "freeze", "interpolate_neighbors"}
 
 
+def resolve_style_keys(config: ProjectConfig, style: str) -> list[str]:
+    """Expand a ``--style`` argument to config style keys ('all' means every
+    style, in config order). Raises ``ConfigError`` for an unknown key."""
+    if style != "all" and style not in config.styles:
+        raise ConfigError(f"unknown style {style!r}; have {sorted(config.styles)}")
+    return list(config.styles) if style == "all" else [style]
+
+
 def load_config(path: str | Path) -> ProjectConfig:
     config_path = Path(path).resolve()
     try:
