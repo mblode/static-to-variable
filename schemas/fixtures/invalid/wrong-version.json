@@ -1,0 +1,87 @@
+{
+  "_expect": {
+    "schema": false,
+    "python": false
+  },
+  "version": 2,
+  "id": "fixture-minimal",
+  "family": {
+    "name": "Fixture Family",
+    "version": "1.000",
+    "vendor": "FXTR",
+    "designer": "Fixture Designer",
+    "designerUrl": "https://example.com",
+    "vendorUrl": "https://example.com"
+  },
+  "axes": [
+    {
+      "tag": "wght",
+      "name": "Weight",
+      "minimum": 100,
+      "default": 400,
+      "maximum": 900
+    }
+  ],
+  "styles": {
+    "roman": {
+      "italic": false,
+      "donors": [
+        {
+          "id": "thin",
+          "name": "Fixture-Thin",
+          "path": "donors/Fixture-Thin.ttf",
+          "location": {
+            "wght": 100
+          }
+        },
+        {
+          "id": "regular",
+          "name": "Fixture-Regular",
+          "path": "donors/Fixture-Regular.ttf",
+          "location": {
+            "wght": 400
+          }
+        },
+        {
+          "id": "black",
+          "name": "Fixture-Black",
+          "path": "donors/Fixture-Black.ttf",
+          "location": {
+            "wght": 900
+          }
+        }
+      ],
+      "source": "build/fixture.glyphs",
+      "masters": [
+        {
+          "name": "Thin",
+          "donorId": "thin",
+          "location": {
+            "wght": 100
+          }
+        },
+        {
+          "name": "Regular",
+          "donorId": "regular",
+          "location": {
+            "wght": 400
+          },
+          "default": true
+        },
+        {
+          "name": "Black",
+          "donorId": "black",
+          "location": {
+            "wght": 900
+          }
+        }
+      ],
+      "output": "build/fixture-vf.ttf"
+    }
+  },
+  "output": {
+    "dir": "build",
+    "releaseDir": "build/release",
+    "formats": ["ttf"]
+  }
+}

@@ -54,6 +54,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
+    "ajv": "^8.20.0",
     "commander": "^15.0.0"
   },
   "devDependencies": {
