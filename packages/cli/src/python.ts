@@ -139,8 +139,9 @@ function venvPython(venvDir: string): string {
  * Cache key for the bundled engine: a content hash of every engine source file
  * (.py / .toml) plus a marker version, so ANY engine change — not just a
  * pyproject bump — provisions a fresh venv and never reuses stale code.
+ * Exported for tests.
  */
-function engineKey(engineDir: string): string {
+export function engineKey(engineDir: string): string {
   const hash = createHash("sha256").update(ENGINE_MARKER_VERSION).update("\0");
   let entries: string[] = [];
   try {
