@@ -255,8 +255,9 @@ export function ensureEngineEnv(): string {
 function runBootstrapStep(command: string, args: string[], what: string): void {
   const result = spawnSync(command, args, {
     encoding: "utf-8",
-    // Stream install progress to our stderr; keep stdout clean.
-    stdio: ["ignore", "inherit", "pipe"],
+    // Route uv's stdout to OUR stderr (fd 2): install progress is human
+    // output, and the CLI's stdout must stay clean for --json.
+    stdio: ["ignore", 2, "pipe"],
   });
   if (result.status !== 0) {
     if (result.stderr) {

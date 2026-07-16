@@ -97,6 +97,21 @@ test("runStage resolves with the child exit code", async () => {
   );
 });
 
+test("runStage uses npm.cmd on Windows", async () => {
+  const original = process.platform;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    await runStage(resolveStage("inventory"), {}, "/tmp");
+  } finally {
+    Object.defineProperty(process, "platform", { value: original });
+  }
+  expect(mockedSpawn).toHaveBeenCalledWith(
+    "npm.cmd",
+    expect.arrayContaining(["run", "inventory"]),
+    "/tmp"
+  );
+});
+
 test("runStage --dry-run never spawns", async () => {
   const result = await runStage(
     resolveStage("inventory"),

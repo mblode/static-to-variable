@@ -74,19 +74,30 @@ jobs:
       - run: npx turbo build --filter=static-to-variable
       - name: Build the minimal example font
         run: node packages/cli/dist/cli.js build --config examples/minimal/stv.config.json --json > build-summary.json
+      # The parse itself is the real assertion: if any engine/stage output
+      # leaked onto stdout, build-summary.json would not be valid JSON.
       - name: Assert the build summary and font output
         run: |
-          node -e "const s = require('./build-summary.json'); if (!s.ok) { console.error(s); process.exit(1); }"
+          node -e "
+            const s = require('./build-summary.json');
+            if (!s.ok || s.family !== 'STV Minimal' || s.steps.length !== 3) {
+              console.error(s);
+              process.exit(1);
+            }
+          "
           test -f examples/minimal/build/minimal-vf.ttf
       - name: Doctor reports a usable environment
         run: node packages/cli/dist/cli.js doctor --json | node -e "let d=''; process.stdin.on('data', c => d += c).on('end', () => { const r = JSON.parse(d); if (!r.usable) { console.error(r); process.exit(1); } });"
+      # The fixture's _expect annotation would trip strict validation on its
+      # own, so also assert the intended unknown key is what gets named.
       - name: Invalid configs fail fast with exit 2
         run: |
           set +e
-          node packages/cli/dist/cli.js build --config schemas/fixtures/invalid/unknown-top-level-key.json
+          stderr=$(node packages/cli/dist/cli.js build --config schemas/fixtures/invalid/unknown-top-level-key.json 2>&1 >/dev/null)
           code=$?
           set -e
           test "$code" -eq 2
+          echo "$stderr" | grep -q buildCache
       - name: Bundle the engine for packaging
         run: |
           node packages/cli/scripts/bundle-engine.mjs

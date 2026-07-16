@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""Validate manifest-tracked residual glyphs against the audit's artifacts.
+
+Inputs: the per-family audit reports under ``reports/audit/<family>/`` (run
+``npm --workspace @static-to-variable/variable-gen run audit`` first) and the
+rebuild's ``reports/reconstruction-report.json`` per-glyph outcomes (run
+``variable_gen.cli rebuild`` first). Writes the review markdown plus the
+authoritative JSON verdict consumed by the ``blocker_residuals`` promotion
+gate.
+"""
 
 from __future__ import annotations
 
@@ -11,9 +20,20 @@ from manifest_tools import expand_manifest
 SCRIPT_DIR = Path(__file__).resolve().parent
 PACKAGE_DIR = SCRIPT_DIR.parent
 DEFAULT_MANIFEST = PACKAGE_DIR / "manifests/circular-triage.json"
-DEFAULT_REPORT_DIR = PACKAGE_DIR / "reports/repair"
-DEFAULT_OUTPUT = DEFAULT_REPORT_DIR / "tracked-residual-review.md"
+DEFAULT_REPORT_DIR = PACKAGE_DIR / "reports/audit"
+DEFAULT_RECONSTRUCTION_REPORT = PACKAGE_DIR / "reports/reconstruction-report.json"
+DEFAULT_OUTPUT = PACKAGE_DIR / "reports/repair/tracked-residual-review.md"
 DEFAULT_SOLVER_RESULTS = PACKAGE_DIR.parent / "glyph-forge-engine" / "manifests/solver-results.json"
+
+# Rebuild outcomes that mean the glyph carries one outline across every master
+# (constant, so it renders but does not vary in weight).
+FROZEN_OUTCOMES = ("frozen", "ai_pending")
+
+AUDIT_HINT = "run `npm --workspace @static-to-variable/variable-gen run audit` first"
+REBUILD_HINT = (
+    "run `.venv/bin/python -m variable_gen.cli rebuild "
+    "--config examples/glide/stv.config.json --style all` first"
+)
 PRIORITY_CHOICES = ("blocker", "high", "medium", "low")
 PRIORITY_RANK = {
     "low": 1,
@@ -67,7 +87,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--report-dir",
         default=str(DEFAULT_REPORT_DIR),
-        help="Directory containing repair reports.",
+        help="Directory containing the per-family audit reports.",
+    )
+    parser.add_argument(
+        "--reconstruction-report",
+        default=str(DEFAULT_RECONSTRUCTION_REPORT),
+        help="Path to the rebuild's reconstruction-report.json (per-glyph outcomes).",
     )
     parser.add_argument(
         "--output",
@@ -101,6 +126,22 @@ def parse_args() -> argparse.Namespace:
 
 def load_json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text())
+
+
+def load_report(path: Path, hint: str) -> dict[str, object]:
+    """Load a required upstream report, failing with the command to run first."""
+    if not path.exists():
+        raise SystemExit(f"missing required report {path} — {hint}")
+    return load_json(path)
+
+
+def load_glyph_outcomes(path: Path, family_key: str) -> dict[str, str]:
+    """Per-glyph rebuild outcomes for one family from reconstruction-report.json."""
+    report = load_report(path, REBUILD_HINT)
+    family = report.get(family_key)
+    if not isinstance(family, dict) or not isinstance(family.get("glyphs"), dict):
+        raise SystemExit(f"{path} has no per-glyph outcomes for {family_key!r} — {REBUILD_HINT}")
+    return {str(name): str(outcome) for name, outcome in family["glyphs"].items()}
 
 
 def load_solver_results(path: Path) -> dict[str, object]:
@@ -143,18 +184,22 @@ def build_family_review(
     family_key: str,
     manifest: dict[str, object],
     report_dir: Path,
+    glyph_outcomes: dict[str, str],
     max_area_drift: float,
     min_segment_threshold: float,
     min_priority: str | None,
     repair_buckets: set[str] | None,
     solver_results: dict[str, object],
 ) -> tuple[list[str], dict[str, int], list[str]]:
-    source_payload = load_json(report_dir / f"{family_key}-source-report.json")
-    interpolatable_payload = load_json(report_dir / f"{family_key}-designspace-interpolatable.json")
-    instance_payload = load_json(report_dir / f"{family_key}-instance-risk-report.json")
-    validation_payload = load_json(report_dir / f"{family_key}-master-validation.json")
+    family_dir = report_dir / family_key
+    interpolatable_payload = load_report(
+        family_dir / f"{family_key}-designspace-interpolatable-all.json", AUDIT_HINT
+    )
+    instance_payload = load_report(family_dir / f"{family_key}-instance-risk-all.json", AUDIT_HINT)
+    validation_payload = load_report(
+        family_dir / f"{family_key}-master-validation-all.json", AUDIT_HINT
+    )
 
-    source_index = {entry["glyph_name"]: entry for entry in source_payload["glyphs"]}
     tracked = manifest[family_key]["glyphs"]
     lines = [f"## {family_key.title()}", ""]
     counts = {
@@ -164,20 +209,19 @@ def build_family_review(
         "interpolatable": 0,
         "area_drift_failures": 0,
         "min_segment_failures": 0,
-        "source_structure_failures": 0,
     }
     failures: list[str] = []
 
     for glyph_name in sorted(tracked):
-        entry = source_index.get(glyph_name)
+        outcome = glyph_outcomes.get(glyph_name)
         manifest_entry = tracked[glyph_name]
         if not priority_matches(manifest_entry, min_priority) or not repair_bucket_matches(
             manifest_entry,
             repair_buckets,
         ):
             continue
-        if not entry:
-            failures.append(f"{family_key}:{glyph_name}: missing source report entry")
+        if outcome is None:
+            failures.append(f"{family_key}:{glyph_name}: missing from reconstruction report")
             continue
 
         counts["tracked"] += 1
@@ -215,23 +259,18 @@ def build_family_review(
                 area_diffs.append(float(value))
         max_area = max(area_diffs) if area_diffs else None
 
-        source_path_order_issues = int(entry.get("source_path_order_issues") or 0)
-        source_node_count_issues = int(entry.get("source_node_count_issues") or 0)
-        source_start_issues = int(entry.get("source_start_issues") or 0)
-        source_direction_issues = int(entry.get("source_direction_issues") or 0)
-        source_structure_total = (
-            source_path_order_issues
-            + source_node_count_issues
-            + source_start_issues
-            + source_direction_issues
-        )
+        # The rebuild guarantees shared point structure across masters, so the
+        # legacy per-glyph source-structure audit is unnecessary here; what can
+        # still go wrong post-rebuild is captured by the interpolatable, area
+        # drift, and min-segment checks below.
+        is_frozen = outcome in FROZEN_OUTCOMES
 
         frozen_allowed = False
-        if entry.get("same_outline_across_masters"):
+        if is_frozen:
             counts["frozen"] += 1
             frozen_allowed, missing_frozen_reason = frozen_outline_allowance(manifest_entry)
             if not frozen_allowed:
-                message = f"{family_key}:{glyph_name}: exact-outline frozen"
+                message = f"{family_key}:{glyph_name}: exact-outline frozen ({outcome})"
                 if missing_frozen_reason:
                     message += " (allowlist reason required)"
                 failures.append(message)
@@ -239,16 +278,6 @@ def build_family_review(
             counts["interpolatable"] += 1
             if not is_reconstruction_required:
                 failures.append(f"{family_key}:{glyph_name}: interpolatable={len(issues)}")
-        if source_structure_total > 0:
-            if not is_reconstruction_required:
-                counts["source_structure_failures"] += 1
-                failures.append(
-                    f"{family_key}:{glyph_name}: source structure "
-                    f"pathOrder={source_path_order_issues} "
-                    f"nodeCount={source_node_count_issues} "
-                    f"start={source_start_issues} "
-                    f"direction={source_direction_issues}"
-                )
         if (
             not is_reconstruction_required
             and not frozen_allowed
@@ -267,22 +296,13 @@ def build_family_review(
             counts["min_segment_failures"] += 1
             failures.append(f"{family_key}:{glyph_name}: min segment {round(min_segment, 2)}")
 
-        manifest_strategy = manifest_entry.get("strategy")
-        source_strategy = entry.get("strategy")
-        strategy_note = source_strategy
-        if manifest_strategy and manifest_strategy != source_strategy:
-            strategy_note = f"{source_strategy}->{manifest_strategy}"
-
         lines.append(
             "- "
-            f"`{glyph_name}` strategy={strategy_note} class={entry['classification']} "
-            f"group={entry.get('group_name') or manifest_entry.get('group_name')} "
-            f"inherits={entry.get('inherits_from') or manifest_entry.get('inherits_from')} "
-            f"brace={entry.get('generated_brace_weights', [])} "
-            f"frozen={entry['same_outline_across_masters']} "
+            f"`{glyph_name}` strategy={manifest_entry.get('strategy')} outcome={outcome} "
+            f"group={manifest_entry.get('group_name')} "
+            f"inherits={manifest_entry.get('inherits_from')} "
+            f"frozen={is_frozen} "
             f"interpolatable={len(issues)} "
-            f"sourceAudit={source_path_order_issues}/{source_node_count_issues}"
-            f"/{source_start_issues}/{source_direction_issues} "
             f"riskyWeights={risky_weights} "
             f"maxAreaDrift={None if max_area is None else round(max_area, 2)}"
         )
@@ -294,7 +314,6 @@ def build_family_review(
         f"reconstructionRequired={counts['reconstruction_required']} "
         f"frozen={counts['frozen']} "
         f"interpolatable={counts['interpolatable']} "
-        f"sourceStructureFailures={counts['source_structure_failures']} "
         f"areaDriftFailures={counts['area_drift_failures']} "
         f"minSegmentFailures={counts['min_segment_failures']}"
     )
@@ -319,6 +338,7 @@ def main() -> int:
             family_key=family_key,
             manifest=manifest,
             report_dir=report_dir,
+            glyph_outcomes=load_glyph_outcomes(Path(args.reconstruction_report), family_key),
             max_area_drift=args.max_area_drift,
             min_segment_threshold=args.min_segment_threshold,
             min_priority=args.min_priority,

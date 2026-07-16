@@ -699,7 +699,3 @@ function reportError(error: unknown): void {
   printError(error instanceof Error ? error.message : String(error));
   process.exitCode = ExitCode.Failure;
 }
-
-process.on("unhandledRejection", (error) => {
-  reportError(error);
-});
