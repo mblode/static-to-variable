@@ -16,14 +16,15 @@ Each workspace has its own `AGENTS.md` with route maps, gotchas, and conventions
 npm run setup:python     # uv sync — provisions .venv with both Python packages + dev tools
 npm run dev              # studio at https://static-to-variable.localhost
 npm run build            # turbo build (cli via tsdown, studio via next)
-npm run typecheck        # turbo typecheck (cli + studio)
+npm run typecheck        # turbo typecheck (cli + studio + glyph-forge types)
 npm run check            # oxlint + oxfmt (ultracite)
 npm run test             # turbo test (vitest)
 npm run pipeline -- list # pipeline stages
 npm run pipeline -- run all  # run the full pipeline
 npm run pipeline:status  # promotion-gate report
 npm run forge:build      # rebuild SVG cache for the studio
-uv run pytest packages/variable-gen/tests  # Python tests
+uv run pytest            # Python tests (variable-gen + glyph-forge)
+uv run mypy              # typecheck the variable_gen package
 npm run changeset        # add a changeset before opening a release PR
 ```
 

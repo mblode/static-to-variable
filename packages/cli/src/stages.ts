@@ -33,20 +33,15 @@ export const PIPELINE_STAGES: readonly PipelineStage[] = [
     title: "Raw Donor Compatibility",
   },
   {
-    args: [
-      "--workspace",
-      "@static-to-variable/variable-gen",
-      "run",
-      "repair:skip-import",
-    ],
-    artifact: "packages/variable-gen/reports/repair/repair-run-summary.json",
+    args: ["--workspace", "@static-to-variable/variable-gen", "run", "rebuild"],
+    artifact: "packages/variable-gen/reports/reconstruction-report.json",
     command: "npm",
     description:
-      "Run the static donor repair/build pipeline without re-importing donor outlines.",
+      "Rebuild every master from its donors onto a shared, interpolation-compatible structure.",
     id: "repair_build",
     kind: "blocking",
     mutatesSources: true,
-    title: "Strict Compatibility Build",
+    title: "Compatible Master Rebuild",
   },
   {
     args: [
@@ -142,6 +137,7 @@ const STAGE_ALIASES = new Map<string, string>([
   ["glyph-forge", "glyph_forge"],
   ["interpolation", "audit_interpolation"],
   ["raw", "raw_compatibility"],
+  ["rebuild", "repair_build"],
   ["repair", "repair_build"],
   ["residuals", "blocker_residuals"],
   ["status", "pipeline_status"],

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from fontTools.ttLib import TTFont
 
-from variable_gen.config import ProjectConfig, load_config
+from variable_gen.config import ProjectConfig
 
 WIN = (3, 1, 0x409)
 MAC = (1, 0, 0)
@@ -149,25 +149,11 @@ def release_style(config: ProjectConfig, style_key: str) -> Path:
     return out
 
 
-def main() -> int:
-    import argparse
+def main(argv: list[str] | None = None) -> int:
+    """Thin wrapper: ``python -m variable_gen.release`` == ``variable-gen release``."""
+    from variable_gen.cli import run_command
 
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", required=True, help="path to stv.config.json")
-    ap.add_argument("--style", default="all", help="style key, or 'all'")
-    args = ap.parse_args()
-
-    config = load_config(args.config)
-    keys = list(config.styles) if args.style == "all" else [args.style]
-    if args.style != "all" and args.style not in config.styles:
-        raise SystemExit(f"unknown style {args.style!r}; have {sorted(config.styles)}")
-
-    out_dir = _release_dir(config)
-    for key in keys:
-        out = release_style(config, key)
-        print(f"[{key}] -> {out.name} + .woff2")
-    print(f"release staged in {out_dir}")
-    return 0
+    return run_command("release", argv)
 
 
 if __name__ == "__main__":

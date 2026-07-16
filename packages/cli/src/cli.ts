@@ -13,8 +13,10 @@ import {
 } from "@clack/prompts";
 import { Command } from "commander";
 
+import type { ProjectConfigSummary } from "./config.js";
 import { loadProjectConfig, resolveConfigPath } from "./config.js";
 import { CliError, ExitCode, isCliError } from "./errors.js";
+import { INIT_CONFIG_TEMPLATE } from "./init-template.js";
 import { emitJson, printError, progress } from "./output.js";
 import type { EngineMode } from "./python.js";
 import {
@@ -74,7 +76,7 @@ program
   .version(pkg.version, "-V, --version")
   .action(async () => {
     if (process.stdin.isTTY) {
-      const results = await stepPipeline({});
+      const { results } = await stepPipeline({});
       process.exitCode = exitCodeFor(results);
       return;
     }
@@ -130,10 +132,13 @@ program
   .action(async (stageArg: string, options: RunCommandOptions) => {
     const stages = selectRunStages(stageArg, options);
     const results = await runStages(stages, options);
-    if (!options.dryRun) {
-      printFinalStatusIfAvailable(stages, options);
-    }
-    process.exitCode = exitCodeFor(results, options.failOnRed);
+    const redFailure = options.dryRun
+      ? false
+      : printFinalStatusIfAvailable(stages, options);
+    process.exitCode = exitCodeFor(
+      results,
+      Boolean(options.failOnRed) && redFailure
+    );
   });
 
 program
@@ -166,8 +171,11 @@ program
     5
   )
   .action(async (options: StepCommandOptions) => {
-    const results = await stepPipeline(options);
-    process.exitCode = exitCodeFor(results, options.failOnRed);
+    const { results, redFailure } = await stepPipeline(options);
+    process.exitCode = exitCodeFor(
+      results,
+      Boolean(options.failOnRed) && redFailure
+    );
   });
 
 program
@@ -221,6 +229,7 @@ program
     "--skip-rebuild",
     "Build from existing sources without re-deriving masters from donors."
   )
+  .option("--json", "Emit a machine-readable build summary to stdout.")
   .action(async (options: BuildCommandOptions) => {
     const configPath = resolveConfigPath(options.config);
     const summary = loadProjectConfig(configPath);
@@ -234,6 +243,7 @@ program
     const steps = options.skipRebuild
       ? ["build"]
       : ["rebuild", "normalize", "build"];
+    const stepResults: { step: string; code: number }[] = [];
     for (const step of steps) {
       const args = [step, "--config", configPath, "--style", style];
       if (step === "build" && options.checkOnly) {
@@ -241,10 +251,14 @@ program
       }
       progress(`-> ${step}`);
       const code = await runEngine(args, env);
+      stepResults.push({ code, step });
       if (code !== 0) {
         process.exitCode = code;
-        return;
+        break;
       }
+    }
+    if (options.json) {
+      emitJson(engineRunSummary(summary, configPath, style, stepResults));
     }
   });
 
@@ -256,16 +270,34 @@ program
     "Path to stv.config.json (default: ./stv.config.json)."
   )
   .option("--style <key>", "Style key, or 'all'.", "all")
-  .action(async (options: { config?: string; style?: string }) => {
-    const configPath = resolveConfigPath(options.config);
-    process.exitCode = await runEngine([
-      "release",
-      "--config",
-      configPath,
-      "--style",
-      options.style ?? "all",
-    ]);
-  });
+  .option("--json", "Emit a machine-readable release summary to stdout.")
+  .action(
+    async (options: { config?: string; style?: string; json?: boolean }) => {
+      const configPath = resolveConfigPath(options.config);
+      const summary = loadProjectConfig(configPath);
+      const style = options.style ?? "all";
+      progress(
+        `Releasing ${summary.familyName} [${style === "all" ? summary.styleKeys.join(", ") : style}]`
+      );
+      const code = await runEngine([
+        "release",
+        "--config",
+        configPath,
+        "--style",
+        style,
+      ]);
+      if (code !== 0) {
+        process.exitCode = code;
+      }
+      if (options.json) {
+        emitJson(
+          engineRunSummary(summary, configPath, style, [
+            { code, step: "release" },
+          ])
+        );
+      }
+    }
+  );
 
 program
   .command("doctor")
@@ -299,6 +331,13 @@ program
     scaffoldConfig(Boolean(options.force));
   });
 
+// Register BEFORE parsing so rejections during command execution are caught —
+// top-level await suspends module evaluation, so anything registered after
+// parseAsync() would only exist once every command had already finished.
+process.on("unhandledRejection", (error) => {
+  reportError(error);
+});
+
 try {
   await program.parseAsync();
 } catch (error) {
@@ -307,7 +346,7 @@ try {
 
 async function stepPipeline(
   options: StepCommandOptions
-): Promise<StageRunResult[]> {
+): Promise<{ results: StageRunResult[]; redFailure: boolean }> {
   intro("static-to-variable");
 
   const mode = await chooseMode(options);
@@ -323,7 +362,7 @@ async function stepPipeline(
     : await confirm({ initialValue: true, message: "Run this stage plan?" });
   if (isCancel(shouldRun) || !shouldRun) {
     cancel("No stages run.");
-    return [];
+    return { redFailure: false, results: [] };
   }
 
   const results: StageRunResult[] = [];
@@ -340,11 +379,11 @@ async function stepPipeline(
     }
   }
 
-  if (!options.dryRun) {
-    printFinalStatusIfAvailable(stages, options);
-  }
+  const redFailure = options.dryRun
+    ? false
+    : printFinalStatusIfAvailable(stages, options);
   outro("Pipeline stepper finished.");
-  return results;
+  return { redFailure, results };
 }
 
 function selectRunStages(
@@ -401,7 +440,7 @@ async function chooseMode(options: StepCommandOptions): Promise<string> {
 
   if (isCancel(mode)) {
     cancel("Cancelled.");
-    process.exit(130);
+    process.exit(ExitCode.Interrupted);
   }
   return mode;
 }
@@ -440,7 +479,7 @@ async function confirmStage(
   });
   if (isCancel(run)) {
     cancel("Cancelled.");
-    process.exit(130);
+    process.exit(ExitCode.Interrupted);
   }
   return run;
 }
@@ -468,36 +507,36 @@ async function optionsForMode(
     });
     if (isCancel(stage)) {
       cancel("Cancelled.");
-      process.exit(130);
+      process.exit(ExitCode.Interrupted);
     }
     return { from: stage };
   }
   return options;
 }
 
+/**
+ * Print the aggregate status when the plan included the reporting stage.
+ * Returns whether the pipeline verdict was red, so callers can decide the
+ * exit code — this function never mutates `process.exitCode` itself.
+ */
 function printFinalStatusIfAvailable(
   stages: PipelineStage[],
-  options: StatusPrintOptions & { failOnRed?: boolean }
-): void {
+  options: StatusPrintOptions
+): boolean {
   if (!stages.some((stage) => stage.id === "pipeline_status")) {
-    return;
+    return false;
   }
   const report = readPipelineStatus();
   printPipelineStatus(report, options);
-  if (options.failOnRed && report.verdict !== "pass") {
-    process.exitCode = 1;
-  }
+  return report.verdict !== "pass";
 }
 
-function exitCodeFor(results: StageRunResult[], failOnRed?: boolean): number {
+function exitCodeFor(results: StageRunResult[], redFailure = false): number {
   const failedCommand = results.find((result) => result.code !== 0);
   if (failedCommand) {
     return failedCommand.code;
   }
-  if (failOnRed && process.exitCode && process.exitCode !== 0) {
-    return Number(process.exitCode);
-  }
-  return 0;
+  return redFailure ? ExitCode.Failure : ExitCode.Success;
 }
 
 function parseHandoff(value: string): HandoffMode {
@@ -512,12 +551,12 @@ function parseHandoff(value: string): HandoffMode {
 
 function parseTop(value: string): number {
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0) {
+  if (!Number.isInteger(parsed) || parsed < 1) {
     throw new CliError(
       "STV_INVALID_OPTION",
       `Invalid --top count "${value}".`,
       {
-        fix: "Use a non-negative integer.",
+        fix: "Use a positive integer.",
         exitCode: ExitCode.Usage,
       }
     );
@@ -525,11 +564,37 @@ function parseTop(value: string): number {
   return parsed;
 }
 
+interface EngineStepResult {
+  step: string;
+  code: number;
+}
+
+/** The machine-readable summary emitted by `build --json` / `release --json`. */
+function engineRunSummary(
+  summary: ProjectConfigSummary,
+  configPath: string,
+  style: string,
+  steps: EngineStepResult[]
+): Record<string, unknown> {
+  return {
+    config: configPath,
+    family: summary.familyName,
+    id: summary.id,
+    ok: steps.every((entry) => entry.code === 0),
+    outputDir: summary.outputDir,
+    releaseDir: summary.releaseDir,
+    steps,
+    style,
+    styles: summary.styleKeys,
+  };
+}
+
 interface BuildCommandOptions {
   config?: string;
   style?: string;
   checkOnly?: boolean;
   skipRebuild?: boolean;
+  json?: boolean;
 }
 
 interface DoctorReport {
@@ -601,52 +666,10 @@ function doctorReport(): DoctorReport {
 }
 
 function scaffoldConfig(force: boolean): void {
-  const starterConfig = `{
-  "$schema": "https://github.com/mblode/static-to-variable/schemas/stv-config.schema.json",
-  "version": 3,
-  "id": "myfamily",
-  "family": {
-    "name": "My Family",
-    "version": "1.000",
-    "vendor": "MYCO",
-    "designer": "Your Name",
-    "designerUrl": "https://example.com",
-    "vendorUrl": "https://example.com"
-  },
-  "axes": [
-    {
-      "tag": "wght",
-      "name": "Weight",
-      "minimum": 100,
-      "default": 400,
-      "maximum": 900,
-      "namedInstances": { "100": "Thin", "400": "Regular", "900": "Black" }
-    }
-  ],
-  "styles": {
-    "roman": {
-      "italic": false,
-      "donors": [
-        { "id": "roman-thin", "name": "MyFamily-Thin", "path": "donors/MyFamily-Thin.otf", "location": { "wght": 100 } },
-        { "id": "roman-regular", "name": "MyFamily-Regular", "path": "donors/MyFamily-Regular.otf", "location": { "wght": 400 } },
-        { "id": "roman-black", "name": "MyFamily-Black", "path": "donors/MyFamily-Black.otf", "location": { "wght": 900 } }
-      ],
-      "source": "sources/myfamily.glyphs",
-      "masters": [
-        { "name": "Thin", "donorId": "roman-thin", "location": { "wght": 100 } },
-        { "name": "Regular", "donorId": "roman-regular", "location": { "wght": 400 }, "default": true },
-        { "name": "Black", "donorId": "roman-black", "location": { "wght": 900 } }
-      ],
-      "output": "build/roman/myfamily-vf.ttf"
-    }
-  },
-  "output": { "dir": "build", "releaseDir": "build/release", "formats": ["ttf", "woff2"] }
-}
-`;
   const target = path.resolve(process.cwd(), "stv.config.json");
   if (existsSync(target) && !force) {
     throw new CliError(
-      "STV_CONFIG_INVALID",
+      "STV_CONFIG_EXISTS",
       `stv.config.json already exists at ${target}.`,
       {
         fix: "Edit it, or pass --force to overwrite.",
@@ -654,7 +677,7 @@ function scaffoldConfig(force: boolean): void {
       }
     );
   }
-  writeFileSync(target, starterConfig);
+  writeFileSync(target, INIT_CONFIG_TEMPLATE);
   progress(`Wrote ${target}`);
   progress(
     "Edit family metadata, donor paths, and axis/masters, then run `static-to-variable build`."
@@ -676,7 +699,3 @@ function reportError(error: unknown): void {
   printError(error instanceof Error ? error.message : String(error));
   process.exitCode = ExitCode.Failure;
 }
-
-process.on("unhandledRejection", (error) => {
-  reportError(error);
-});

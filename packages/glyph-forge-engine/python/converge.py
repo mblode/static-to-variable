@@ -59,12 +59,15 @@ def repair() -> None:
     run(
         [
             str(VENV_PY),
-            "packages/variable-gen/scripts/repair_sources.py",
-            "--font",
+            "-m",
+            "variable_gen.cli",
+            "rebuild",
+            "--config",
+            "examples/glide/stv.config.json",
+            "--style",
             "all",
-            "--skip-import",
         ],
-        label="repair --skip-import",
+        label="rebuild",
     )
 
 
@@ -88,7 +91,7 @@ def residual() -> None:
 
 def forge_audit() -> None:
     run(
-        [str(VENV_PY), "packages/variable-gen/scripts/audit_variable_font.py", "--family", "all"],
+        [str(VENV_PY), "packages/variable-gen/scripts/audit_variable_font.py", "--style", "all"],
         label="audit",
     )
     run(["npm", "run", "forge:build"], label="forge:build")

@@ -10,7 +10,7 @@
  *   (sibling of dist/) and provisioned into a managed venv under the user's
  *   data dir on first run; the engine runs from the user's current directory.
  */
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 
 import { CliError, ExitCode } from "./errors.js";
 import { progress } from "./output.js";
+import { spawnInherit } from "./proc.js";
 import { tryFindRepoRoot } from "./runner.js";
 
 export interface PythonEnv {
@@ -138,8 +139,9 @@ function venvPython(venvDir: string): string {
  * Cache key for the bundled engine: a content hash of every engine source file
  * (.py / .toml) plus a marker version, so ANY engine change — not just a
  * pyproject bump — provisions a fresh venv and never reuses stale code.
+ * Exported for tests.
  */
-function engineKey(engineDir: string): string {
+export function engineKey(engineDir: string): string {
   const hash = createHash("sha256").update(ENGINE_MARKER_VERSION).update("\0");
   let entries: string[] = [];
   try {
@@ -253,8 +255,9 @@ export function ensureEngineEnv(): string {
 function runBootstrapStep(command: string, args: string[], what: string): void {
   const result = spawnSync(command, args, {
     encoding: "utf-8",
-    // Stream install progress to our stderr; keep stdout clean.
-    stdio: ["ignore", "inherit", "pipe"],
+    // Route uv's stdout to OUR stderr (fd 2): install progress is human
+    // output, and the CLI's stdout must stay clean for --json.
+    stdio: ["ignore", 2, "pipe"],
   });
   if (result.status !== 0) {
     if (result.stderr) {
@@ -291,17 +294,9 @@ export function runEngine(
   subcommand: string[],
   env: PythonEnv = resolveEngine().pythonEnv
 ): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      env.command,
-      [...env.baseArgs, "-m", "variable_gen.cli", ...subcommand],
-      {
-        cwd: env.cwd,
-        env: process.env,
-        stdio: "inherit",
-      }
-    );
-    child.on("error", reject);
-    child.on("close", (code) => resolve(code ?? 1));
-  });
+  return spawnInherit(
+    env.command,
+    [...env.baseArgs, "-m", "variable_gen.cli", ...subcommand],
+    env.cwd
+  );
 }

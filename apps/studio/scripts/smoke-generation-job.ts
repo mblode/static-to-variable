@@ -16,7 +16,7 @@ const REQUIRED_ARTIFACTS = [
   "roman-variable-ttf",
   "italic-variable-ttf",
   "pipeline-status-json",
-  "repair-summary-json",
+  "reconstruction-report-json",
 ] as const;
 
 async function main(): Promise<void> {

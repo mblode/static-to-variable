@@ -5,7 +5,6 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2024"],
     "outDir": "./dist",
-    "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -15,8 +14,11 @@
     "declarationMap": true,
     "sourceMap": true,
     "isolatedModules": true,
-    "types": ["node"]
+    "types": ["node"],
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "include": ["src/**/*", "../../schemas/stv-config.schema.json"],
+  "exclude": ["node_modules", "dist"]
 }

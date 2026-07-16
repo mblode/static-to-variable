@@ -19,6 +19,7 @@
     "reconstruction-stage": "../../.venv/bin/python python/bulk_stage.py --reconstruction-review",
     "converge": "../../.venv/bin/python python/converge.py",
     "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "qa:build": "npm run ingest && npm run cache -- --force && npm run score && npm run recommend && npm run solve"
   }
 }
