@@ -27,7 +27,7 @@ from fontTools.designspaceLib import (
 )
 from glyphsLib.builder import to_designspace
 
-from variable_gen.config import ProjectConfig, load_config
+from variable_gen.config import ProjectConfig
 
 
 def fix_designspace_axis(
@@ -176,22 +176,11 @@ def export_designspace(config: ProjectConfig, style_key: str) -> Path:
     )
 
 
-def main() -> int:
-    import argparse
+def main(argv: list[str] | None = None) -> int:
+    """Thin wrapper: ``python -m variable_gen.designspace`` == ``variable-gen designspace``."""
+    from variable_gen.cli import run_command
 
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", required=True, help="path to stv.config.json")
-    ap.add_argument("--style", default="all", help="style key, or 'all'")
-    args = ap.parse_args()
-
-    config = load_config(args.config)
-    keys = list(config.styles) if args.style == "all" else [args.style]
-    if args.style != "all" and args.style not in config.styles:
-        raise SystemExit(f"unknown style {args.style!r}; have {sorted(config.styles)}")
-    for key in keys:
-        ds_path = export_designspace(config, key)
-        print(f"[{key}] -> {ds_path}")
-    return 0
+    return run_command("designspace", argv)
 
 
 if __name__ == "__main__":

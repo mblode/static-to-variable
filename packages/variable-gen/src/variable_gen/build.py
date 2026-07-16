@@ -29,8 +29,8 @@ from fontTools.pens.areaPen import AreaPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
-from variable_gen.common import fontmake_command
-from variable_gen.config import ProjectConfig, Style, load_config
+from variable_gen.common import PipelineError, fontmake_command
+from variable_gen.config import ProjectConfig, Style, default_donor_path
 from variable_gen.designspace import export_designspace
 from variable_gen.outlines import donor_outline, draw_into
 
@@ -51,18 +51,13 @@ def _axis_tag(style: Style) -> str:
     return next(iter(style.masters[0].location))
 
 
-def _default_donor_path(style: Style) -> Path:
-    donor_by_id = {d.id: d for d in style.donors}
-    default_master = next(m for m in style.masters if m.default)
-    return donor_by_id[default_master.donor_id].path
-
-
 def freeze_to_book(config: ProjectConfig, style_key: str, names) -> None:
     """Pin the named glyphs to the default master's donor outline across every
     master (constant -> can't collapse). Mirrors ``build_glide.freeze_to_book``."""
     style = config.styles[style_key]
-    book = TTFont(str(_default_donor_path(style))).getGlyphSet()
-    font = glyphsLib.load(open(style.source))
+    book = TTFont(str(default_donor_path(style))).getGlyphSet()
+    with open(style.source) as source_file:
+        font = glyphsLib.load(source_file)
     ids = [m.id for m in font.masters]
     by = {g.name: g for g in font.glyphs}
     for nm in names:
@@ -123,13 +118,13 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
             | set(re.findall(r"in glyph (\S+?),", err))
             | set(re.findall(r"in glyph (\S+?):", err))
         )
-        names = [n for n in names if n not in frozen]
-        if not names:
+        fresh = [n for n in names if n not in frozen]
+        if not fresh:
             sys.stderr.write(err[-2000:])
-            raise SystemExit(f"[{style_key}] build failed, no glyph parsed")
-        frozen += names
-        freeze_to_book(config, style_key, names)
-    raise SystemExit(f"[{style_key}] freeze loop did not converge")
+            raise PipelineError(f"[{style_key}] build failed, no glyph parsed")
+        frozen += fresh
+        freeze_to_book(config, style_key, fresh)
+    raise PipelineError(f"[{style_key}] freeze loop did not converge")
 
 
 def _collapsing_glyphs(config: ProjectConfig, style_key: str, tol=0.22) -> list[str]:
@@ -139,7 +134,7 @@ def _collapsing_glyphs(config: ProjectConfig, style_key: str, tol=0.22) -> list[
     vf = TTFont(str(style.output))
     masters = _positions(style)
     pairs = list(zip(masters, masters[1:], strict=False))
-    weights = sorted(set(masters) | {(a + b) // 2 for a, b in pairs})
+    weights = sorted(set(masters) | {(a + b) / 2 for a, b in pairs})
     inst = {
         w: instantiateVariableFont(copy.deepcopy(vf), {tag: w}, inplace=False).getGlyphSet()
         for w in weights
@@ -149,7 +144,7 @@ def _collapsing_glyphs(config: ProjectConfig, style_key: str, tol=0.22) -> list[
         if g == ".notdef":
             continue
         for a, b in pairs:
-            m = (a + b) // 2
+            m = (a + b) / 2
             aa, ab, am = _area(inst[a], g), _area(inst[b], g), _area(inst[m], g)
             if not aa or not ab or am is None:
                 continue
@@ -192,32 +187,11 @@ def _area(gs, n):
     return abs(pen.value)
 
 
-def main() -> int:
-    import argparse
+def main(argv: list[str] | None = None) -> int:
+    """Thin wrapper: ``python -m variable_gen.build`` == ``variable-gen build``."""
+    from variable_gen.cli import run_command
 
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", required=True, help="path to stv.config.json")
-    ap.add_argument("--style", default="all", help="style key, or 'all'")
-    ap.add_argument("--check-only", action="store_true")
-    args = ap.parse_args()
-
-    config = load_config(args.config)
-    keys = list(config.styles) if args.style == "all" else [args.style]
-    if args.style != "all" and args.style not in config.styles:
-        raise SystemExit(f"unknown style {args.style!r}; have {sorted(config.styles)}")
-
-    for key in keys:
-        if not args.check_only:
-            build_style(config, key)
-        fails = check_fidelity(config, key)
-        worst = sorted(fails, key=lambda f: f[2])[:12]
-        print(
-            f"[{key}] underweight (<{UNDERWEIGHT_RATIO}x mapped donor) at any named "
-            f"weight: {len(fails)} glyph-weights"
-        )
-        if worst:
-            print("   worst:", worst)
-    return 0
+    return run_command("build", argv)
 
 
 if __name__ == "__main__":

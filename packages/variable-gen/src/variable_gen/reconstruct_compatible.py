@@ -501,12 +501,6 @@ def _order_normalize(outlines_by_pos, reference_pos=400):
     return out
 
 
-def _assign_nearest(items, slots):
-    """Assign each item centroid to its nearest slot centroid (slots may be
-    unused; an item maps to exactly one slot). Returns list slot-index per item."""
-    return [min(range(len(slots)), key=lambda s: _dist(c, slots[s])) for c in items]
-
-
 def _counter_closing(outlines_by_pos, reference_pos):
     """Reconstruct a glyph whose contour COUNT varies across weights because a
     piece (a counter that fills in, a bar stub or accent that merges into the
@@ -604,17 +598,9 @@ def _counter_closing(outlines_by_pos, reference_pos):
 # becomes two short overlapping nubs (keep-overlaps unions them onto the letter).
 # ---------------------------------------------------------------------------
 
-# glyph -> (bare-letter donor, body start-anchor extreme)
-OPEN_BAR_GLYPHS = {
-    "dollar": ("S", "bottom"),
-    "cent": ("c", "left"),
-    "dollar.tf": ("S", "bottom"),
-    "cent.tf": ("c", "left"),
-    "dollar.ss08": ("S", "bottom"),
-    "cent.ss08": ("c", "left"),
-    "dollar.tf.ss08": ("S", "bottom"),
-    "cent.tf.ss08": ("c", "left"),
-}
+# Which glyphs use this strategy, and with which bare-letter donor/anchor, is
+# declared per-project in stv.config.json (glyphs.strategies["<name>"] with
+# strategy "open_bar" and params letter/anchor).
 # how far each nub reaches INTO the letter's stroke (font units) so it joins the
 # S/c spine without leaving a gap; and the minimum stub protrusion beyond the
 # letter (the donor ¢ has no bottom protrusion and the $ top is short, so we make

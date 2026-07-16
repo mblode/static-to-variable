@@ -23,8 +23,8 @@ Then: uv run python -m variable_gen.cli build --config <path> --style all
 
 from __future__ import annotations
 
-import argparse
-import json
+import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import glyphsLib
@@ -32,14 +32,26 @@ from fontTools.ttLib import TTFont
 from glyphsLib.classes import GSFontMaster, GSLayer
 
 from variable_gen import reconstruct_compatible as rc
-from variable_gen.config import ProjectConfig, Style, load_config
-from variable_gen.outlines import donor_outline, draw_into
+from variable_gen.config import ProjectConfig, Style
+from variable_gen.outlines import Contour, donor_outline, draw_into
 from variable_gen.reconstruct_compatible import (
     _interp_ok,
     _struct_ok,
     open_bar,
     reconstruct,
 )
+
+
+@dataclass
+class RebuildStats:
+    """Per-style outcome counts for one ``rebuild_style`` run."""
+
+    donor: int = 0
+    reconstructed: int = 0
+    sampled: int = 0
+    frozen: int = 0
+    ai_pending: list[str] = field(default_factory=list)
+
 
 # Vertical metrics + italic angle carried from the source template onto each
 # rebuilt master (the family metrics overwrite the first four downstream).
@@ -81,7 +93,8 @@ def layer_outline(layer):
 
     pen = RecordingPen()
     layer.draw(pen)
-    contours, cur = [], None
+    contours: list[Contour] = []
+    cur: Contour = []
     for op, args in pen.value:
         if op == "moveTo":
             cur = [("moveTo", [tuple(args[0])])]
@@ -92,7 +105,7 @@ def layer_outline(layer):
         elif op in ("closePath", "endPath"):
             cur.append((op, []))
             contours.append(cur)
-            cur = None
+            cur = []
     return contours, layer.width
 
 
@@ -132,7 +145,7 @@ def _vertical_metrics(config: ProjectConfig, default_donor_path: Path) -> dict[s
     }
 
 
-def rebuild_style(config: ProjectConfig, style_key: str) -> dict:
+def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
     """Rebuild one style's ``.glyphs`` source in place, returning reconstruction
     stats. Mirrors ``rebuild_8master.rebuild_family`` exactly, config-driven."""
     style = config.styles[style_key]
@@ -168,11 +181,14 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> dict:
             return donor_cmap.get(cp)
         return None
 
-    font = glyphsLib.load(open(style.source))
+    with open(style.source) as source_file:
+        font = glyphsLib.load(source_file)
     base_glyphs: dict = {}
     base_mids: dict = {}
     if style.base_source is not None:
-        base = glyphsLib.load(open(style.base_source))  # prior source, for sampling
+        # prior source, for sampling
+        with open(style.base_source) as base_file:
+            base = glyphsLib.load(base_file)
         base_glyphs = {g.name: g for g in base.glyphs}
         base_mids = {m.id: m.axes[0] for m in base.masters}
 
@@ -186,7 +202,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> dict:
             setattr(m, attr, val)
     font.instances = []
 
-    stats = {"donor": 0, "reconstructed": 0, "ai_pending": [], "sampled": 0, "frozen": 0}
+    stats = RebuildStats()
     for glyph in font.glyphs:
         strat = strategies.get(glyph.name)
 
@@ -202,12 +218,15 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> dict:
                     glyph.layers.append(layer)
                     draw_into(layer, reg[0])
                     layer.width = reg[1]
-                stats["frozen"] += 1
+                stats.frozen += 1
                 continue
 
         dn = donor_name_for(glyph)
-        outlines = {name: (donor_outline(donors[name], dn) if dn else None) for name, _, _ in plan}
-        in_donors = all(o is not None for o in outlines.values())
+        maybe_outlines = {
+            name: (donor_outline(donors[name], dn) if dn else None) for name, _, _ in plan
+        }
+        outlines = {name: o for name, o in maybe_outlines.items() if o is not None}
+        in_donors = len(outlines) == len(plan)
 
         if in_donors:
             out8 = {name: outlines[name] for name, _, _ in plan}
@@ -236,8 +255,8 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> dict:
                             glyph.layers.append(layer)
                             draw_into(layer, bf[pos_by_name[name]])
                             layer.width = outlines[name][1]
-                        stats["reconstructed"] += 1
-                        stats["donor"] += 1
+                        stats.reconstructed += 1
+                        stats.donor += 1
                         continue
             # Independent statics aren't interpolation-compatible. ALWAYS run
             # reconstruct(): it returns the donor outlines unchanged when they
@@ -249,14 +268,14 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> dict:
             if rec is not None:
                 out8 = {name: (rec[pos_by_name[name]], outlines[name][1]) for name, _, _ in plan}
                 if info["stage"] == "reconstructed":
-                    stats["reconstructed"] += 1
+                    stats.reconstructed += 1
             else:
                 # reconstruct can't make it interpolate cleanly. Freeze to the
                 # default-master donor (constant across masters) so it renders
                 # correctly and never collapses; it just won't vary in weight.
                 reg = outlines[default_name]
                 out8 = {name: reg for name, _, _ in plan}
-                stats["ai_pending"].append(glyph.name)
+                stats.ai_pending.append(glyph.name)
             glyph.layers = []
             for name, _, _ in plan:
                 layer = GSLayer()
@@ -264,7 +283,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> dict:
                 glyph.layers.append(layer)
                 draw_into(layer, out8[name][0])
                 layer.width = out8[name][1]
-            stats["donor"] += 1
+            stats.donor += 1
             continue
 
         # not in donors — sample the glyph's prior interpolation from base_source
@@ -295,11 +314,16 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> dict:
                     glyph.layers.append(layer)
                     draw_into(layer, contours)
                     layer.width = width
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001 — fall back to freeze below
+                    print(
+                        f"[{style_key}] sampling {glyph.name} from base source failed"
+                        f" at {name}: {exc} — freezing",
+                        file=sys.stderr,
+                    )
                     ok = False
                     break
             if ok and len(glyph.layers) == len(plan):
-                stats["sampled"] += 1
+                stats.sampled += 1
                 continue
 
         # last resort: freeze to whatever single outline we can (keeps build valid)
@@ -311,41 +335,17 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> dict:
             glyph.layers.append(layer)
             draw_into(layer, ref[0])
             layer.width = ref[1]
-        stats["frozen"] += 1
+        stats.frozen += 1
 
     font.save(str(style.source))
     return stats
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", required=True, help="path to stv.config.json")
-    ap.add_argument("--style", default="all", help="style key, or 'all'")
-    args = ap.parse_args()
+def main(argv: list[str] | None = None) -> int:
+    """Thin wrapper: ``python -m variable_gen.rebuild`` == ``variable-gen rebuild``."""
+    from variable_gen.cli import run_command
 
-    config = load_config(args.config)
-    keys = list(config.styles) if args.style == "all" else [args.style]
-    if args.style != "all" and args.style not in config.styles:
-        raise SystemExit(f"unknown style {args.style!r}; have {sorted(config.styles)}")
-
-    report = {}
-    for key in keys:
-        stats = rebuild_style(config, key)
-        report[key] = stats
-        plan = config.styles[key].masters
-        print(
-            f"[{key}] {len(plan)} masters | donor={stats['donor']} "
-            f"reconstructed={stats['reconstructed']} ai-pending={len(stats['ai_pending'])} "
-            f"sampled(non-donor)={stats['sampled']} frozen={stats['frozen']}"
-        )
-        if stats["ai_pending"]:
-            print(f"   ai-pending (topology change -> freeze): {stats['ai_pending']}")
-
-    out = config.repo_root / "packages/variable-gen/reports/reconstruction-report.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(report, indent=2))
-    print(f"reconstruction report -> {out}")
-    return 0
+    return run_command("rebuild", argv)
 
 
 if __name__ == "__main__":

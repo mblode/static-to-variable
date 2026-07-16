@@ -145,6 +145,13 @@ def resolve_style_keys(config: ProjectConfig, style: str) -> list[str]:
     return list(config.styles) if style == "all" else [style]
 
 
+def default_donor_path(style: Style) -> Path:
+    """Path of the donor backing the style's default master."""
+    donor_by_id = {donor.id: donor for donor in style.donors}
+    default_master = next(master for master in style.masters if master.default)
+    return donor_by_id[default_master.donor_id].path
+
+
 def load_config(path: str | Path) -> ProjectConfig:
     config_path = Path(path).resolve()
     try:

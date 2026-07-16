@@ -14,31 +14,37 @@ Run:  uv run python -m variable_gen.cli bootstrap --config <path> --style all
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
 from glyphsLib.classes import GSFont, GSFontMaster, GSGlyph, GSLayer
 
-from variable_gen.config import ProjectConfig, Style
+from variable_gen.config import ProjectConfig, default_donor_path
 from variable_gen.outlines import donor_outline, draw_into
 
 
-def _default_donor_path(style: Style) -> Path:
-    donor_by_id = {d.id: d for d in style.donors}
-    default_master = next(m for m in style.masters if m.default)
-    return donor_by_id[default_master.donor_id].path
+@dataclass(frozen=True)
+class BootstrapStats:
+    skipped: bool
+    source: str
+    glyphs: int = 0
+    unmapped: int = 0
+    donor: str | None = None
 
 
-def bootstrap_style(config: ProjectConfig, style_key: str, *, force: bool = False) -> dict:
+def bootstrap_style(
+    config: ProjectConfig, style_key: str, *, force: bool = False
+) -> BootstrapStats:
     """Synthesize ``style.source`` from the default-master donor. Returns stats.
 
     No-op (``skipped``) when the source already exists unless ``force`` is set.
     """
     style = config.styles[style_key]
     if style.source.exists() and not force:
-        return {"skipped": True, "source": str(style.source), "glyphs": 0}
+        return BootstrapStats(skipped=True, source=str(style.source))
 
-    donor_path = _default_donor_path(style)
+    donor_path = default_donor_path(style)
     ttf = TTFont(str(donor_path))
     glyphset = ttf.getGlyphSet()
     cmap_rev = {gname: cp for cp, gname in ttf.getBestCmap().items()}
@@ -83,13 +89,13 @@ def bootstrap_style(config: ProjectConfig, style_key: str, *, force: bool = Fals
 
     style.source.parent.mkdir(parents=True, exist_ok=True)
     font.save(str(style.source))
-    return {
-        "skipped": False,
-        "source": str(style.source),
-        "glyphs": added,
-        "unmapped": len(skipped),
-        "donor": str(donor_path),
-    }
+    return BootstrapStats(
+        skipped=False,
+        source=str(style.source),
+        glyphs=added,
+        unmapped=len(skipped),
+        donor=str(donor_path),
+    )
 
 
 def ensure_source(config: ProjectConfig, style_key: str) -> bool:
@@ -99,41 +105,19 @@ def ensure_source(config: ProjectConfig, style_key: str) -> bool:
     if style.source.exists():
         return False
     stats = bootstrap_style(config, style_key)
+    donor = Path(stats.donor).name if stats.donor else "donor"
     print(
         f"[{style_key}] no source at {style.source} — bootstrapped "
-        f"{stats['glyphs']} glyphs from {Path(stats['donor']).name}"
+        f"{stats.glyphs} glyphs from {donor}"
     )
     return True
 
 
-def main() -> int:
-    import argparse
+def main(argv: list[str] | None = None) -> int:
+    """Thin wrapper: ``python -m variable_gen.bootstrap`` == ``variable-gen bootstrap``."""
+    from variable_gen.cli import run_command
 
-    from variable_gen.config import load_config
-
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", required=True, help="path to stv.config.json")
-    ap.add_argument("--style", default="all", help="style key, or 'all'")
-    ap.add_argument("--force", action="store_true", help="overwrite an existing source")
-    args = ap.parse_args()
-
-    config = load_config(args.config)
-    if args.style != "all" and args.style not in config.styles:
-        raise SystemExit(f"unknown style {args.style!r}; have {sorted(config.styles)}")
-    keys = list(config.styles) if args.style == "all" else [args.style]
-
-    for key in keys:
-        stats = bootstrap_style(config, key, force=args.force)
-        if stats["skipped"]:
-            print(
-                f"[{key}] source exists at {stats['source']} — skipped (use --force to overwrite)"
-            )
-        else:
-            print(
-                f"[{key}] bootstrapped {stats['glyphs']} glyphs "
-                f"({stats['unmapped']} unmapped) -> {stats['source']}"
-            )
-    return 0
+    return run_command("bootstrap", argv)
 
 
 if __name__ == "__main__":

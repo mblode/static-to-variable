@@ -31,6 +31,8 @@ P1_ISSUE_TYPES = {
     # Custom structural checks (additive to fontTools.varLib.interpolatable).
     "winding_mismatch",
     "advance_incompatible",
+    # Reserved: backs the contracted phantom_point_error_count gate field; the
+    # phantom-point structural check itself is not implemented yet.
     "phantom_point_mismatch",
 }
 
@@ -235,8 +237,9 @@ def _structural_issues(
         return {}
     issues_by_glyph: dict[str, list[dict[str, Any]]] = {}
     for name in fonts[0].getGlyphOrder():
-        signatures = [_outline_signature(gs, name) for gs in glyphsets]
-        if any(sig is None for sig in signatures):
+        maybe_signatures = [_outline_signature(gs, name) for gs in glyphsets]
+        signatures = [sig for sig in maybe_signatures if sig is not None]
+        if len(signatures) != len(maybe_signatures):
             continue  # missing/undrawable in a master — interpolatable reports "missing"
         ref = signatures[0]
         ref_contours = ref["contours"]

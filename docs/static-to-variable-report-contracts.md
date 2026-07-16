@@ -31,8 +31,8 @@ Minimum hard gate fields:
 - `missing_required_donors`
 - `unreadable_donors`
 - `hash_mismatch`
-- `axis_location_missing`
-- `path_resolution_error`
+
+Donor axis locations and path shapes are validated when the manifest is loaded, so the inventory gate does not repeat those checks.
 
 ## Compatibility report
 

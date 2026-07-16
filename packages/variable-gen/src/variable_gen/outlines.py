@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from fontTools.pens.recordingPen import DecomposingRecordingPen
 
+# One drawing op: ("moveTo", [pt]) / ("curveTo", [c1, c2, end]) / ("closePath", []).
+Segment = tuple[str, list[tuple[float, ...]]]
+Contour = list[Segment]
+
 
 def donor_outline(glyphset, name):
     """Return (contours, width) or None if the glyph can't be drawn.
@@ -23,7 +27,8 @@ def donor_outline(glyphset, name):
         glyphset[name].draw(pen)
     except Exception:  # noqa: BLE001
         return None
-    contours, cur = [], None
+    contours: list[Contour] = []
+    cur: Contour = []
     for op, args in pen.value:
         if op == "moveTo":
             cur = [("moveTo", [tuple(args[0])])]
@@ -36,7 +41,7 @@ def donor_outline(glyphset, name):
         elif op in ("closePath", "endPath"):
             cur.append((op, []))
             contours.append(cur)
-            cur = None
+            cur = []
     return contours, glyphset[name].width
 
 
