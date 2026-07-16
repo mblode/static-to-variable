@@ -1,0 +1,31 @@
+{
+  "_expect": {
+    "schema": false,
+    "python": false
+  },
+  "version": 3,
+  "id": "fixture-minimal",
+  "family": {
+    "name": "Fixture Family",
+    "version": "1.000",
+    "vendor": "FXTR",
+    "designer": "Fixture Designer",
+    "designerUrl": "https://example.com",
+    "vendorUrl": "https://example.com"
+  },
+  "axes": [
+    {
+      "tag": "wght",
+      "name": "Weight",
+      "minimum": 100,
+      "default": 400,
+      "maximum": 900
+    }
+  ],
+  "styles": {},
+  "output": {
+    "dir": "build",
+    "releaseDir": "build/release",
+    "formats": ["ttf"]
+  }
+}

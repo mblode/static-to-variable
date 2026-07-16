@@ -46,7 +46,6 @@ class ResidualGateTests(unittest.TestCase):
                     "counts_by_family": {
                         "italic": {
                             "area_drift_failures": 0,
-                            "source_structure_failures": 0,
                             "min_segment_failures": 0,
                             "interpolatable": 1,
                         }

@@ -137,6 +137,21 @@ class ProjectConfig:
 _VALID_STRATEGIES = {"open_bar", "freeze", "interpolate_neighbors"}
 
 
+def resolve_style_keys(config: ProjectConfig, style: str) -> list[str]:
+    """Expand a ``--style`` argument to config style keys ('all' means every
+    style, in config order). Raises ``ConfigError`` for an unknown key."""
+    if style != "all" and style not in config.styles:
+        raise ConfigError(f"unknown style {style!r}; have {sorted(config.styles)}")
+    return list(config.styles) if style == "all" else [style]
+
+
+def default_donor_path(style: Style) -> Path:
+    """Path of the donor backing the style's default master."""
+    donor_by_id = {donor.id: donor for donor in style.donors}
+    default_master = next(master for master in style.masters if master.default)
+    return donor_by_id[default_master.donor_id].path
+
+
 def load_config(path: str | Path) -> ProjectConfig:
     config_path = Path(path).resolve()
     try:

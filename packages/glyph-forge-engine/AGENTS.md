@@ -33,7 +33,7 @@ Always run Python through `.venv/bin/python`. Never `python` — the user's glob
 
 - **Solver simulator is raster-space, not vector**: `solve_glyph.py` blends donor/glide rasters at pixel level. It does not produce real interpolated outlines — projections are void-only (no irregularity / drift). Fidelity is good enough to rank strategies; don't use projected scores as ground truth.
 - **`weighted_fallback` needs independent nudge vs validation targets**: Glide masters are at wght 100/400/950; donor anchors are 250/400/950. We nudge Glide masters toward their matching donor anchor, then interpolate between nudged masters to reach the validation weight. Earlier bug: blending toward the same weight used as validation makes the simulation tautologically perfect. Always keep nudge-source and validation-target independent.
-- **Circular donor paths have a space**: `cabinet/Circular/Circular Italic/`. Use `pathlib.Path` in Python.
+- **Donor paths can contain spaces** (e.g. `cabinet/Circular/Circular Italic/` in the gitignored donor drop-in). Use `pathlib.Path` in Python.
 - **Instancing variable TTFs**: `fontTools.varLib.instancer.instantiateVariableFont()` returns a new `TTFont` — instance once per weight, reuse.
 - **Glyph names with slashes**: the user writes `/agrave.ss02` — that slash is a `.glyphs` source convention, not part of the name. Strip leading `/` at ingest.
 - **Cache is idempotent**: `build_cache.py` skips existing SVG files. Delete `public-cache/svg/` to force a full rebuild.

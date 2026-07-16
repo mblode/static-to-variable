@@ -21,13 +21,14 @@ static-to-variable --help
 | `build` | Rebuild masters, normalize, and build the variable font(s). |
 | `release` | Finalize metadata and emit release TTF + WOFF2. |
 | `doctor` | Report environment readiness (node, python, uv, config). |
-| `list` / `run` / `step` / `status` | Advanced QA pipeline: inventory, compatibility, repair, audit, and a promotion-gate report. |
+| `list` / `run` / `step` / `status` | Advanced QA pipeline (repo checkout only): inventory, compatibility, rebuild, audit, and a promotion-gate report. |
 
 ## Conventions
 
-- `--json` prints machine-readable output to stdout; progress goes to stderr.
-- Exit codes: `0` success, `1` failure, `2` usage error, `3` environment error.
-- Errors carry a stable `STV_*` code and a suggested fix; `NO_COLOR` is respected.
+- `build`, `release`, and `doctor` take `--json` for a machine-readable summary on stdout; human progress always goes to stderr, so piped stdout stays clean.
+- Configs are validated against `schemas/stv-config.schema.json` before any engine work starts; violations name the offending path.
+- Exit codes: `0` success, `1` failure, `2` usage error (bad flag, missing or invalid config), `3` environment error, `130` interrupted.
+- Errors carry a stable `STV_*` code and a suggested fix; `NO_COLOR` is respected on both streams.
 
 ## Configuration
 

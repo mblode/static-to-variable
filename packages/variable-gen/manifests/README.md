@@ -13,7 +13,7 @@ The manifest controls per-family and per-glyph strategy decisions, including:
 
 It is consumed by:
 
-- `packages/variable-gen/scripts/repair_sources.py`
+- `packages/variable-gen/scripts/validate_residual_glyphs.py`
 - `variable_gen.cli inventory`
 - `variable_gen.cli compatibility`
 - `variable_gen.cli pipeline-status`

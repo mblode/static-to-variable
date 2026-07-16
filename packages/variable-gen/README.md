@@ -1,33 +1,25 @@
 # variable-gen
 
-`variable-gen` is now the working home for the reusable static-to-variable font repair pipeline used for Glide + Circular.
+`variable-gen` is the config-driven static-to-variable font engine: it rebuilds independently-drawn static weights onto a shared, interpolation-compatible structure and builds the variable font. Everything is driven by a v3 `stv.config.json` (see `schemas/stv-config.schema.json`).
 
 Docs:
 
-- [Research](../../docs/variable-gen-research.md)
-- [PRD](../../docs/prd.md)
-- [Execution plan](../../docs/variable-gen-plan.md)
-- [Technical spec](../../docs/variable-gen-technical-spec.md)
 - [First-principles static-to-variable pipeline](../../docs/static-to-variable-pipeline-first-principles.md)
 - [Manifest v2 schema](../../docs/static-to-variable-manifest-schema.md)
 - [Report contracts](../../docs/static-to-variable-report-contracts.md)
 
 ## Current scope
 
-The package now contains a manifest-driven repair runner that can:
+The package can:
 
-- inspect a v2 static-donor manifest without mutating source files
-- emit a deterministic donor inventory report with source hashes and coverage
-- re-import Circular donor statics into the live `.glyphs` sources
-- apply per-glyph repair strategies from a manifest
-- rebuild empty `.notdef` glyphs
-- normalize path order, start points, and winding direction
-- export UFO/designspace checkpoints
-- build variable TTFs
-- generate sampled static instances
-- validate exact-master instances against donor statics
-- produce ranked source-risk and instance-risk reports
-- generate a review packet for manual cleanup
+- bootstrap a minimal `.glyphs` source from a default-master donor
+- rebuild every master from its donors onto one shared point structure (`rebuild`), applying per-glyph strategies from the config
+- normalize donor-inherited height defects (`normalize`)
+- export UFO/designspace checkpoints with corrected axes (`designspace`)
+- build variable TTFs with a freeze loop + per-weight fidelity check (`build`)
+- finalize metadata and emit release TTF + WOFF2 (`release`)
+- inspect a v2 static-donor manifest without mutating source files (`inventory`), run raw donor compatibility diagnostics (`compatibility`), and aggregate the promotion gates (`pipeline-status`)
+- audit all glyphs across exact masters and sampled in-between weights (`scripts/audit_variable_font.py`) and validate tracked residual glyphs (`scripts/validate_residual_glyphs.py`)
 
 ## Primary entry point
 
@@ -78,58 +70,44 @@ This reads the current stage artifacts and writes:
 
 The status report is the promotion surface for the static-to-variable glyph pipeline. Raw donor compatibility and the full audit are diagnostic; inventory, repair/build, blocker residual validation, and glyph-forge visual QA are blocking promotion gates.
 
-## Repair runner
+## Master rebuild
 
-Run the full repair pipeline for both live sources:
-
-```bash
-.venv/bin/python packages/variable-gen/scripts/repair_sources.py --font all
-```
-
-Run only one family:
+Rebuild every style's masters from its donors onto a shared, interpolation-compatible structure (config-driven):
 
 ```bash
-.venv/bin/python packages/variable-gen/scripts/repair_sources.py --font roman
-.venv/bin/python packages/variable-gen/scripts/repair_sources.py --font italic
+.venv/bin/python -m variable_gen.cli rebuild --config examples/glide/stv.config.json --style all
 ```
+
+Run only one style by passing its config key (e.g. `--style roman`).
 
 Important outputs:
 
-- Repair manifest:
+- Triage manifest (per-glyph strategies consumed by the residual gate):
   - `packages/variable-gen/manifests/circular-triage.json`
-- Source reports:
-  - `packages/variable-gen/reports/repair/roman-source-report.json`
-  - `packages/variable-gen/reports/repair/italic-source-report.json`
-- Export/interpolation reports:
-  - `packages/variable-gen/reports/repair/roman-designspace-interpolatable.json`
-  - `packages/variable-gen/reports/repair/italic-designspace-interpolatable.json`
-- Instance risk reports:
-  - `packages/variable-gen/reports/repair/roman-instance-risk-report.json`
-  - `packages/variable-gen/reports/repair/italic-instance-risk-report.json`
-- Review packet:
-  - `packages/variable-gen/reports/repair/review-packet.md`
-- Built variable fonts:
+- Reconstruction report (read by the `repair_build` promotion gate):
+  - `packages/variable-gen/reports/reconstruction-report.json`
+- Built variable fonts (after `variable_gen.cli build`):
   - `packages/variable-gen/build/roman/glide-variable-vf.ttf`
   - `packages/variable-gen/build/italic/glide-variable-italic-vf.ttf`
 
 ## Comprehensive audit workflow
 
-Run the all-glyph audit workflow for both families:
+Run the all-glyph audit workflow for every style:
 
 ```bash
-.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --family all
+.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --style all
 ```
 
-Run one family with denser in-between sampling:
+Run one style with denser in-between sampling:
 
 ```bash
-.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --family italic --samples-per-span 9
+.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --style italic --samples-per-span 9
 ```
 
 Run a focused in-between audit that skips donor validation and only prioritizes interior span failures:
 
 ```bash
-.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --family all --interpolation-only
+.venv/bin/python packages/variable-gen/scripts/audit_variable_font.py --style all --interpolation-only
 ```
 
 What it does:
@@ -167,13 +145,6 @@ Audit outputs:
   - `packages/variable-gen/reports/audit/audit-run-summary.json`
   - `packages/variable-gen/reports/audit/audit-overview-interpolation-only.md`
   - `packages/variable-gen/reports/audit/audit-run-summary-interpolation-only.json`
-
-## Initial target family
-
-Circular in:
-
-- `cabinet/Circular/Circular`
-- `cabinet/Circular/Circular Italic`
 
 ## Notes for implementation
 

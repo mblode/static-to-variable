@@ -1,0 +1,133 @@
+{
+  "_expect": {
+    "schema": true,
+    "python": true
+  },
+  "version": 3,
+  "id": "fixture-full",
+  "family": {
+    "name": "Fixture Family",
+    "version": "1.000",
+    "vendor": "FXTR",
+    "designer": "Fixture Designer",
+    "designerUrl": "https://example.com",
+    "vendorUrl": "https://example.com",
+    "license": "OFL-1.1",
+    "licenseUrl": "https://openfontlicense.org"
+  },
+  "axes": [
+    {
+      "tag": "wght",
+      "name": "Weight",
+      "minimum": 100,
+      "default": 400,
+      "maximum": 900,
+      "map": [
+        [100, 100],
+        [400, 400],
+        [900, 900]
+      ],
+      "namedInstances": {
+        "100": "Thin",
+        "400": "Regular",
+        "700": "Bold",
+        "900": "Black"
+      }
+    }
+  ],
+  "styles": {
+    "roman": {
+      "italic": false,
+      "donors": [
+        {
+          "id": "thin",
+          "name": "Fixture-Thin",
+          "path": "donors/Fixture-Thin.ttf",
+          "location": {
+            "wght": 100
+          }
+        },
+        {
+          "id": "regular",
+          "name": "Fixture-Regular",
+          "path": "donors/Fixture-Regular.ttf",
+          "location": {
+            "wght": 400
+          }
+        },
+        {
+          "id": "black",
+          "name": "Fixture-Black",
+          "path": "donors/Fixture-Black.ttf",
+          "location": {
+            "wght": 900
+          }
+        }
+      ],
+      "source": "build/fixture.glyphs",
+      "masters": [
+        {
+          "name": "Thin",
+          "donorId": "thin",
+          "location": {
+            "wght": 100
+          }
+        },
+        {
+          "name": "Regular",
+          "donorId": "regular",
+          "location": {
+            "wght": 400
+          },
+          "default": true
+        },
+        {
+          "name": "Black",
+          "donorId": "black",
+          "location": {
+            "wght": 900
+          }
+        }
+      ],
+      "output": "build/fixture-vf.ttf",
+      "baseSource": "build/fixture-base.glyphs"
+    }
+  },
+  "output": {
+    "dir": "build",
+    "releaseDir": "build/release",
+    "formats": ["ttf"]
+  },
+  "root": ".",
+  "verticalMetrics": {
+    "ascender": 800,
+    "descender": -200,
+    "capHeight": 700,
+    "xHeight": 500
+  },
+  "discovery": {
+    "dir": "donors",
+    "pattern": "Fixture-*.ttf",
+    "weightSource": "os2"
+  },
+  "glyphs": {
+    "freeze": ["percent"],
+    "strategies": {
+      "dollar": {
+        "strategy": "open_bar",
+        "params": {
+          "bars": 2
+        }
+      },
+      "at": {
+        "strategy": "freeze"
+      }
+    },
+    "seeds": {
+      "cent": ["c", "slash"]
+    }
+  },
+  "normalize": {
+    "heights": true
+  }
+}

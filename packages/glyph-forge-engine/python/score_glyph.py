@@ -63,14 +63,14 @@ def _flatten_ops(ops: list, steps: int = 12) -> list[tuple[float, float]]:
         elif op == "qCurveTo":
             # quadratic bezier chain; last arg is end, preceding are off-curve
             on_pts = [current, *args]
-            for a, b, c in zip(on_pts, on_pts[1:], on_pts[2:], strict=False):
-                # midpoint trick: quads are between implied midpoints
-                start = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0) if on_pts.index(a) > 0 else a
+            for index, (a, b, c) in enumerate(zip(on_pts, on_pts[1:], on_pts[2:], strict=False)):
+                # midpoint trick: quads are between implied midpoints. Track the
+                # segment index explicitly — list.index() returns the FIRST
+                # occurrence, which is wrong for contours with duplicate points.
+                start = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0) if index > 0 else a
                 control = b
                 end = (
-                    ((b[0] + c[0]) / 2.0, (b[1] + c[1]) / 2.0)
-                    if on_pts.index(c) < len(on_pts) - 1
-                    else c
+                    ((b[0] + c[0]) / 2.0, (b[1] + c[1]) / 2.0) if index + 2 < len(on_pts) - 1 else c
                 )
                 for i in range(1, steps + 1):
                     t = i / steps

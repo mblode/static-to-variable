@@ -16,9 +16,7 @@ These can't be automated and must be done once before the first publish:
 
 ## Cutting a release
 
-1. Add a changeset for user-facing changes: `npm run changeset` (commit it).
+1. Add a changeset for user-facing changes: `npm run changeset` (commit it). CI requires one on every PR.
 2. Merge to `main`. The Release workflow opens/updates a **Version Packages** PR that bumps the version and updates the changelog.
 3. Merge the Version Packages PR. The workflow re-runs and publishes to npm via OIDC with provenance.
 4. Verify: `npm view static-to-variable version`.
-
-The initial changeset (`initial-public-release`) is already in `.changeset/`, so the first Version Packages PR will propose `0.1.0`.

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .common import display_path, resolve_artifact_path, write_json_report
+from .common import display_path, write_json_report
 
 STRATEGY_RIGOUR = {
     "manual_review": 0,
@@ -194,31 +194,29 @@ def _raw_compatibility_stage(repo_root: Path) -> Stage:
 
 
 def _repair_stage(repo_root: Path) -> Stage:
-    path = repo_root / "packages/variable-gen/reports/repair/repair-run-summary.json"
+    path = repo_root / "packages/variable-gen/reports/reconstruction-report.json"
     data, error = _read_json(path)
     if error:
-        return _invalid_stage("repair_build", "Strict Compatibility Build", "blocking", path, error)
+        return _invalid_stage("repair_build", "Compatible Master Rebuild", "blocking", path, error)
     if data is None:
-        return _missing_stage("repair_build", "Strict Compatibility Build", "blocking", path)
+        return _missing_stage("repair_build", "Compatible Master Rebuild", "blocking", path)
 
     failures: list[str] = []
     summary: dict[str, Any] = {}
-    for family_key in ("roman", "italic"):
-        family = data.get(family_key, {})
-        strict = family.get("strict_audit_counts", {})
-        summary[f"{family_key}_strict"] = strict
-        variable_font = family.get("variable_font_path")
-        summary[f"{family_key}_variable_font"] = variable_font
-        for key in ("path_order", "node_count", "start", "post_write_mismatches"):
-            value = int(strict.get(key, 0) or 0)
-            if value:
-                failures.append(f"{family_key} strict {key}={value}")
-        if not variable_font or not resolve_artifact_path(repo_root, variable_font).exists():
-            failures.append(f"{family_key} variable font missing")
+    if not data:
+        failures.append("reconstruction report contains no styles")
+    for style_key, stats in data.items():
+        if not isinstance(stats, dict):
+            failures.append(f"{style_key} rebuild stats malformed")
+            continue
+        for key in ("donor", "reconstructed", "sampled", "frozen"):
+            summary[f"{style_key}_{key}"] = stats.get(key, 0)
+        ai_pending = stats.get("ai_pending") or []
+        summary[f"{style_key}_ai_pending"] = len(ai_pending)
 
     return Stage(
         id="repair_build",
-        name="Strict Compatibility Build",
+        name="Compatible Master Rebuild",
         kind="blocking",
         status="fail" if failures else "pass",
         blocking=True,
@@ -251,8 +249,8 @@ def _audit_stage(repo_root: Path) -> Stage:
 
     failures: list[str] = []
     summary: dict[str, Any] = {}
-    for family_key in ("roman", "italic"):
-        family_summary = data.get(family_key, {}).get("summary", {})
+    for family_key, family in data.items():
+        family_summary = family.get("summary", {}) if isinstance(family, dict) else {}
         problem_glyphs = int(family_summary.get("problem_glyphs", 0) or 0)
         summary[f"{family_key}_problem_glyphs"] = problem_glyphs
         summary[f"{family_key}_clean_glyphs"] = family_summary.get("clean_glyphs", 0)
@@ -286,13 +284,13 @@ def _residual_stage(repo_root: Path) -> Stage:
     # does not surface as one of its three counter fields.
     if verdict_path.exists():
         verdict, error = _read_json(verdict_path)
-        if error:
+        if error or verdict is None:
             return _invalid_stage(
                 "blocker_residuals",
                 "Blocker Residual Validation",
                 "blocking",
                 verdict_path,
-                error,
+                error or "verdict file is empty",
             )
         failures = list(verdict.get("failures", []))
         summary: dict[str, int] = {
@@ -384,7 +382,9 @@ def _glyph_forge_stage(repo_root: Path) -> Stage:
         )
 
     verdict_counts = Counter(item.get("auditVerdict", "unknown") for item in broken_glyphs)
-    solver_gain_count = sum(1 for item in solver_results.values() if (item.get("gain") or 0) > 0.1)
+    solver_gain_count = sum(
+        1 for item in solver_results.values() if (item.get("gain") or 0) > AUTOMATIC_MIN_GAIN
+    )
     failures: list[str] = []
     reconstruction_required = [
         item for item in broken_glyphs if _requires_reconstruction(item, solver_results)

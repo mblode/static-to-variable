@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = ["variable-gen", "glyph-forge-engine"]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.14"]
+dev = ["mypy>=1.14", "pytest>=8", "ruff>=0.14"]
 
 [tool.uv]
 package = false
@@ -21,23 +21,31 @@ glyph-forge-engine = { workspace = true }
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = ["cabinet", ".venv", "master_ufo"]
+extend-exclude = [".venv", "master_ufo"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
-# The legacy Glide-era scripts predate this lint config: long lines, sys.path
-# import shims (E402), and a few unused locals. They are slated for cleanup as
-# they get folded into the package; until then they are relaxed so the strict
-# rules stay enforced on the durable library under src/.
+# The Glide-era scripts predate this lint config: long lines, sys.path import
+# shims (E402), and a few unused locals. They are slated for cleanup as they
+# get folded into the package; until then they are relaxed so the strict rules
+# stay enforced on the durable library under src/.
 [tool.ruff.lint.per-file-ignores]
 # Relax style categories (pycodestyle E, isort I, pyupgrade UP, bugbear B) and
-# unused-symbol lint on the legacy scripts; real-bug pyflakes checks (undefined
-# names, redefinitions) stay on.
-"packages/variable-gen/scripts/**" = ["E", "I", "UP", "B", "F401", "F841"]
+# unused-symbol lint on the remaining legacy-styled code; real-bug pyflakes
+# checks (undefined names, redefinitions) stay on.
+"packages/variable-gen/scripts/audit_variable_font.py" = [
+  "E",
+  "I",
+  "UP",
+  "B",
+  "F401",
+  "F841",
+]
 "packages/glyph-forge-engine/python/**" = ["E", "I", "UP", "B", "F401", "F841"]
 # Tests use a sys.path shim before importing the package.
 "packages/variable-gen/tests/**" = ["E402", "I001"]
+"packages/glyph-forge-engine/tests/**" = ["E402", "I001"]
 # Ported verbatim from the legacy scripts into the package (so the installed
 # engine carries it); keeps its compact style rather than being restyled.
 "packages/variable-gen/src/variable_gen/reconstruct_compatible.py" = [
@@ -48,5 +56,23 @@ select = ["E", "F", "I", "UP", "B"]
   "F841",
 ]
 
+# Scoped to the typed library. The verbatim-ported reconstruction engine is
+# deliberately untyped (annotations there would be guesses); mypy still parses
+# it but does not require annotations anywhere.
+[tool.mypy]
+files = ["packages/variable-gen/src/variable_gen"]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+# The verbatim-ported geometry engine is untyped by design; checking its
+# untyped bodies produces inference noise, not findings. Characterization
+# tests in packages/variable-gen/tests guard its behaviour instead.
+[[tool.mypy.overrides]]
+module = "variable_gen.reconstruct_compatible"
+check_untyped_defs = false
+
 [tool.pytest.ini_options]
-testpaths = ["packages/variable-gen/tests"]
+testpaths = ["packages/variable-gen/tests", "packages/glyph-forge-engine/tests"]
