@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+# The build service is a thin packaging shim: it exists so `uv pip install
+# services/build` pulls in the variable-gen engine (fonttools, glyphsLib,
+# fontmake, ufoLib2, Pillow, Brotli, zopfli, skia-pathops). The pipeline is run
+# by runner.py as a subprocess (invoked by path, not imported), and HTTP is
+# handled by the Node API route, so there are no other runtime deps here.
+name = "stv-build-service"
+version = "0.1.0"
+description = "Packaging shim that provisions the variable-gen engine for the build sandbox."
+requires-python = ">=3.11"
+dependencies = ["variable-gen"]
+
+# Metadata-only wheel: this package ships no modules of its own (runner.py and
+# config_gen.py are run by path, never imported), it exists solely to declare the
+# engine dependency. bypass-selection lets hatchling build with no file targets.
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+# Resolve variable-gen from the local workspace member rather than PyPI, mirroring
+# the root pyproject's [tool.uv.sources]. `uv pip install ./services/build` (run
+# from the repo root) then builds and installs the engine from packages/variable-gen.
+[tool.uv.sources]
+variable-gen = { path = "../../packages/variable-gen" }
