@@ -375,7 +375,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
             outline = redrawn.get(job["glyph"])
             if not outline:
                 continue
-            layers = []
+            layers: list[GSLayer] = []
             for name, _, _ in plan:
                 contours = outline.get(pos_by_name[name])
                 if contours is None:
