@@ -70,7 +70,7 @@ export function BuildResult({ result }: BuildResultProps) {
         <span>
           Axis{" "}
           <span className="text-foreground tabular-nums">
-            wght {axis.min}–{axis.max}
+            Weight {axis.min}–{axis.max}
           </span>{" "}
           · default{" "}
           <span className="text-foreground tabular-nums">{axis.def}</span>

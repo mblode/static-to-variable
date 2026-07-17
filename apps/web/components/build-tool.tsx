@@ -2,7 +2,6 @@
 
 import {
   ArrowRotateClockwiseIcon,
-  MagicWandIcon,
   TriangleExclamationIcon,
 } from "blode-icons-react";
 import { useCallback, useRef, useState } from "react";
@@ -173,7 +172,6 @@ export function BuildTool() {
             onClick={start}
             size="lg"
           >
-            <MagicWandIcon />
             Build variable font
           </Button>
         </>
@@ -182,8 +180,8 @@ export function BuildTool() {
       {phase === "building" ? (
         <>
           <BuildProgress stages={stages} />
-          <p className="text-[var(--mut)] text-sm">
-            Rebuilding masters and compiling with fontmake — a build usually
+          <p className="text-muted-foreground text-sm">
+            Rebuilding masters and compiling with fontmake. A build usually
             takes 30s–2min.
           </p>
         </>

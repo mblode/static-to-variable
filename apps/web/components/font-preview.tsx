@@ -105,7 +105,7 @@ export function FontPreview({ src, axis, instances }: FontPreviewProps) {
 
       <div className="px-4 py-3 text-muted-foreground text-xs sm:px-6">
         {ready ? "" : "loading… "}
-        wght {axis.min}–{axis.max} · default {axis.def}
+        Weight {axis.min}–{axis.max} · default {axis.def}
       </div>
     </div>
   );

@@ -86,7 +86,7 @@ export function GlyphViewer() {
             onValueChange={(value) => setIndex(Number(value))}
             value={String(index)}
           >
-            <SelectTrigger className="w-56" size="sm">
+            <SelectTrigger className="w-fit" size="sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

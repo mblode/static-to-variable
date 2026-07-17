@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "npm --workspace @static-to-variable/studio run dev",
     "build": "turbo build",
-    "typecheck": "turbo typecheck --filter=static-to-variable --filter=@static-to-variable/studio --filter=@static-to-variable/glyph-forge-engine",
+    "typecheck": "turbo typecheck",
     "test": "turbo test",
     "changeset": "changeset",
     "changeset:version": "changeset version",
