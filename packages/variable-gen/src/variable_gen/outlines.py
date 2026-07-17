@@ -10,7 +10,9 @@ from __future__ import annotations
 from fontTools.pens.recordingPen import DecomposingRecordingPen
 
 # One drawing op: ("moveTo", [pt]) / ("curveTo", [c1, c2, end]) / ("closePath", []).
-Segment = tuple[str, list[tuple[float, ...]]]
+# A qCurveTo point may be None: the implied on-curve endpoint of an all-off-curve
+# TrueType contour, which round-trips straight back through the pen.
+Segment = tuple[str, list[tuple[float, ...] | None]]
 Contour = list[Segment]
 
 
