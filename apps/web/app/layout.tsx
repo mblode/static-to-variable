@@ -24,12 +24,12 @@ const glideMono = localFont({
 
 const title = "static-to-variable";
 const description =
-  "Turn a family of independently-drawn static font weights into one variable font — rebuilt onto a shared structure so they interpolate. Scrub the weight axis on real fonts the pipeline built.";
+  "Turn a family of independently-drawn static font weights into one variable font, rebuilt onto a shared structure so they interpolate. Scrub the weight axis on real fonts the pipeline built.";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://static-to-variable.vercel.app"),
+  metadataBase: new URL("https://variable.blode.co"),
   title: {
-    default: `${title} — static weights into one variable font`,
+    default: `${title}: static weights into one variable font`,
     template: `%s · ${title}`,
   },
   description,
@@ -43,13 +43,13 @@ export const metadata: Metadata = {
     "static to variable",
   ],
   openGraph: {
-    title: `${title} — static weights into one variable font`,
+    title: `${title}: static weights into one variable font`,
     description,
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: `${title} — static weights into one variable font`,
+    title: `${title}: static weights into one variable font`,
     description,
   },
 };

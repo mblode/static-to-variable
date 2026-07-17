@@ -102,7 +102,14 @@ def inspect_font(path: Path) -> dict:
         subfamily = _name(font, 17, 2) or "Regular"
         raw_family = _name(font, 16, 1) or path.stem
         raw_weight = getattr(os2, "usWeightClass", None)
-        weight = int(raw_weight) if raw_weight else _infer_weight(subfamily)
+        name_weight = _infer_weight(subfamily)
+        # Prefer usWeightClass, but defer to the style name when it's missing or a
+        # generic 400 that contradicts a named weight — some fonts (e.g. Operator
+        # Mono Bold) ship usWeightClass=400 despite a "Bold" subfamily.
+        if raw_weight and not (int(raw_weight) == 400 and name_weight != 400):
+            weight = int(raw_weight)
+        else:
+            weight = name_weight
         weight = max(1, min(1000, weight))
         italic = bool(getattr(os2, "fsSelection", 0) & 0x01) or "italic" in subfamily.lower()
         return {

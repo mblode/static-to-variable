@@ -122,7 +122,7 @@ export function WeightTable({
           <p className="text-muted-foreground">
             Axis{" "}
             <span className="text-foreground tabular-nums">
-              wght {min}–{max}
+              Weight {min}–{max}
             </span>
             {" · default "}
             <span className="text-foreground tabular-nums">{def}</span>

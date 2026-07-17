@@ -14,6 +14,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/build": ["../../packages/variable-gen/**", "../../services/build/**"],
   },
+  // Type safety is enforced by `turbo typecheck` (tsc --noEmit) in CI, not here.
   typescript: { ignoreBuildErrors: true },
   // Define the `@/*` alias for Turbopack directly so it resolves without relying
   // on tsconfig paths.
