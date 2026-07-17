@@ -18,8 +18,15 @@
     "auto-stage": "../../.venv/bin/python python/bulk_stage.py --strategy-source suggestion --no-downgrade",
     "reconstruction-stage": "../../.venv/bin/python python/bulk_stage.py --reconstruction-review",
     "converge": "../../.venv/bin/python python/converge.py",
+    "ai-redraw": "tsx src/ai/redraw-cli.ts",
     "build": "tsc --noEmit",
-    "typecheck": "tsc --noEmit",
     "qa:build": "npm run ingest && npm run cache -- --force && npm run score && npm run recommend && npm run solve"
+  },
+  "dependencies": {
+    "ai": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "tsx": "^4.19.0"
   }
 }

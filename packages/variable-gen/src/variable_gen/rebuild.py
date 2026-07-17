@@ -31,6 +31,7 @@ import glyphsLib
 from fontTools.ttLib import TTFont
 from glyphsLib.classes import GSFontMaster, GSLayer
 
+from variable_gen import ai_redraw
 from variable_gen import reconstruct_compatible as rc
 from variable_gen.config import ProjectConfig, Style
 from variable_gen.outlines import Contour, donor_outline, draw_into
@@ -58,6 +59,7 @@ class RebuildStats:
     frozen: int = 0
     ai_pending: list[str] = field(default_factory=list)
     glyphs: dict[str, str] = field(default_factory=dict)
+    ai_redrawn: int = 0
 
 
 # Vertical metrics + italic angle carried from the source template onto each
@@ -210,6 +212,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
     font.instances = []
 
     stats = RebuildStats()
+    ai_jobs: list[dict] = []  # incompatible glyphs frozen now, redrawn by AI after the loop
     for glyph in font.glyphs:
         strat = strategies.get(glyph.name)
 
@@ -289,6 +292,17 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
                 out8 = {name: reg for name, _, _ in plan}
                 stats.ai_pending.append(glyph.name)
                 stats.glyphs[glyph.name] = "ai_pending"
+                # Capture the incompatible masters so the optional AI escape hatch
+                # can redraw them onto a shared structure after the loop.
+                ai_jobs.append(
+                    {
+                        "glyph": glyph.name,
+                        "glyph_obj": glyph,
+                        "reference_pos": reference_pos,
+                        "outlines": dict(pos_outlines),
+                        "widths": {pos_by_name[name]: outlines[name][1] for name, _, _ in plan},
+                    }
+                )
             glyph.layers = []
             for name, _, _ in plan:
                 layer = GSLayer()
@@ -351,6 +365,32 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
             layer.width = ref[1]
         stats.frozen += 1
         stats.glyphs[glyph.name] = "frozen"
+
+    # AI escape hatch (opt-in): redraw the frozen-because-incompatible glyphs onto
+    # a shared structure so they interpolate. Best-effort — any glyph the model
+    # can't redraw keeps its frozen fallback from the loop above.
+    if ai_jobs and ai_redraw.enabled():
+        redrawn = ai_redraw.redraw_glyphs(ai_jobs, config.repo_root, font.upm)
+        for job in ai_jobs:
+            outline = redrawn.get(job["glyph"])
+            if not outline:
+                continue
+            layers = []
+            for name, _, _ in plan:
+                contours = outline.get(pos_by_name[name])
+                if contours is None:
+                    layers = []
+                    break
+                layer = GSLayer()
+                layer.layerId = layer.associatedMasterId = ids[name]
+                draw_into(layer, contours)
+                layer.width = job["widths"][pos_by_name[name]]
+                layers.append(layer)
+            if len(layers) == len(plan):
+                job["glyph_obj"].layers = layers
+                stats.ai_pending.remove(job["glyph"])
+                stats.ai_redrawn += 1
+        print(f"[ai-redraw] redrew {stats.ai_redrawn}/{len(ai_jobs)} frozen glyphs")
 
     font.save(str(style.source))
     return stats
