@@ -25,6 +25,15 @@ const nextConfig: NextConfig = {
     root: path.join(root, "..", ".."),
     resolveAlias: { "@/*": "./*" },
   },
+  // Dev uses Turbopack; the production build runs on webpack (`next build
+  // --webpack`) because the Turbopack production build silently crashes under
+  // Vercel's monorepo wrapper. Mirror the `@/*` alias here so it resolves the
+  // same way without relying on tsconfig paths (which Next skips under CI).
+  webpack: (config) => {
+    config.resolve ??= {};
+    config.resolve.alias = { ...config.resolve.alias, "@": root };
+    return config;
+  },
 };
 
 export default nextConfig;
