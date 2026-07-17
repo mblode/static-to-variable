@@ -26,7 +26,7 @@ glide-variable-italic.glyphs
 cabinet/
 
 # Generated pipeline outputs.
-fonts/
+/fonts/
 master_ufo/
 packages/variable-gen/build/
 examples/*/build/

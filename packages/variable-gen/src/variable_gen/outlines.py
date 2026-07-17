@@ -37,7 +37,9 @@ def donor_outline(glyphset, name):
         elif op == "curveTo":
             cur.append(("curveTo", [tuple(p) for p in args]))
         elif op == "qCurveTo":
-            cur.append(("qCurveTo", [tuple(p) for p in args]))
+            # An all-off-curve TrueType contour ends with an implied on-curve
+            # point the pen reports as None; keep it so draw_into round-trips it.
+            cur.append(("qCurveTo", [tuple(p) if p is not None else None for p in args]))
         elif op in ("closePath", "endPath"):
             cur.append((op, []))
             contours.append(cur)
@@ -66,7 +68,8 @@ def signature(contours):
     sig = []
     for con in contours:
         ops = tuple(op for op, _ in con if op in ("moveTo", "lineTo", "curveTo", "qCurveTo"))
-        pts = [p[-1] for op, p in con if p]
+        # Skip an all-off-curve contour's implied (None) endpoint in the winding poly.
+        pts = [p[-1] for op, p in con if p and p[-1] is not None]
         sig.append((ops, _winding(pts)))
     return tuple(sig)
 
