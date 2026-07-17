@@ -24,7 +24,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Require a changeset on PRs
-        if: github.event_name == 'pull_request'
+        # Skip the changesets bot's own "Version Packages" PR: it consumes the
+        # pending changeset by design, so requiring one there always fails.
+        if: github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main'
         run: npx changeset status --since origin/main
       - run: npm run check
       - run: npm run typecheck
