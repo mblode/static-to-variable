@@ -1,7 +1,11 @@
 import { Buffer } from "node:buffer";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Sandbox } from "@vercel/sandbox";
+// Type-only: importing the value at module scope runs @vercel/sandbox's init
+// when Next loads this route during the build (to read the route config), which
+// crashes Vercel's build worker. The value is imported dynamically in the
+// handler instead, so it only loads at request time.
+import type { Sandbox } from "@vercel/sandbox";
 
 // The build runs untrusted-ish native tooling (fontmake, skia-pathops) in a
 // throwaway Vercel Sandbox, so this route needs the Node runtime and must never
@@ -317,6 +321,7 @@ export async function POST(request: Request): Promise<Response> {
       let sawTerminal = false;
 
       try {
+        const { Sandbox } = await import("@vercel/sandbox");
         sandbox = await Sandbox.create({
           runtime: "python3.13",
           timeout: SANDBOX_TIMEOUT_MS,
