@@ -29,6 +29,44 @@ export default function Home() {
         <GlyphViewer />
       </section>
 
+      <section className="mt-16 border-t pt-12">
+        <h2 className="font-semibold text-xl">How it works</h2>
+        <p className="mt-3 max-w-2xl text-pretty text-muted-foreground">
+          Static fonts in a family are usually drawn independently, so the same
+          glyph has a different number of points and contours in each weight —
+          which is exactly why they won&apos;t interpolate. This isn&apos;t a
+          magic &ldquo;interpolate anything&rdquo; button: it reconciles what it
+          can deterministically, freezes what it can&apos;t, and tells you
+          which.
+        </p>
+        <div className="mt-8 grid gap-8 sm:grid-cols-3">
+          <div>
+            <p className="font-medium">Rebuilt onto one structure</p>
+            <p className="mt-1.5 text-muted-foreground text-sm">
+              Each weight is redrawn onto a shared point structure — matched
+              contour order, start points, and node counts — so the outlines
+              actually interpolate.
+            </p>
+          </div>
+          <div>
+            <p className="font-medium">Every glyph verified</p>
+            <p className="mt-1.5 text-muted-foreground text-sm">
+              Hard quality gates check that each named weight matches its donor
+              and that in-between weights don&apos;t collapse, self-intersect,
+              or drift.
+            </p>
+          </div>
+          <div>
+            <p className="font-medium">Frozen, never faked</p>
+            <p className="mt-1.5 text-muted-foreground text-sm">
+              A glyph that can&apos;t be reconciled cleanly is pinned to a
+              single master — constant and correct — and reported, so nothing
+              deformed ever ships silently.
+            </p>
+          </div>
+        </div>
+      </section>
+
       <footer className="mt-16 flex flex-col items-center gap-3 border-t pt-8 text-muted-foreground text-sm">
         <div className="flex items-center gap-5">
           <a
