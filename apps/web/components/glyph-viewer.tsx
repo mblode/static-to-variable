@@ -155,22 +155,9 @@ export function SingleGlyphViewer({
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t px-4 py-3 text-muted-foreground text-xs sm:px-6">
-        <span className="flex items-center gap-1.5">
+        <span>
           {status === "error" && "We couldn't load this font. Try refreshing."}
           {status === "loading" && "loading…"}
-          {status === "ready" &&
-            font.instances.map((inst) => (
-              <Button
-                key={inst.name}
-                onClick={() => setWeight(inst.wght)}
-                size="xs"
-                variant={
-                  Math.round(weight) === inst.wght ? "secondary" : "ghost"
-                }
-              >
-                {inst.name} {inst.wght}
-              </Button>
-            ))}
         </span>
         <span className="flex gap-1.5">
           {pageHref ? (
