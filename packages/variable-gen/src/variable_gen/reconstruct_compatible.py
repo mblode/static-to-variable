@@ -250,6 +250,7 @@ def reconstruct(outlines_by_pos, reference_pos=400):
             ordered is not None
             and _already_compatible(ordered)
             and _starts_aligned(ordered)
+            and _cu2qu_safe(ordered)
             and _interp_ok(ordered)
             and not _quality_offenders(ordered, outlines_by_pos)
         ):
@@ -262,7 +263,12 @@ def reconstruct(outlines_by_pos, reference_pos=400):
     # reconstructing each family independently preserves the shape far better
     # than bridging — try it first (gated on quality below).
     cc = _counter_closing(outlines_by_pos, reference_pos)
-    if cc is not None and _struct_ok(cc) and not _quality_offenders(cc, outlines_by_pos):
+    if (
+        cc is not None
+        and _struct_ok(cc)
+        and _cu2qu_safe(cc)
+        and not _quality_offenders(cc, outlines_by_pos)
+    ):
         return cc, {"stage": "reconstructed", "note": "counter-closing"}
 
     # each variant is (outlines, reference_pos)
@@ -305,6 +311,14 @@ def reconstruct(outlines_by_pos, reference_pos=400):
                 if not _interp_ok(out):
                     last = {"stage": None, "note": "interp gate: midpoint collapse"}
                     continue
+                # cu2qu gate: corresponding segments must share an identical
+                # (op, point-count) structure across masters, or fontmake's
+                # interpolatable cu2qu rejects the glyph and build.py freezes it.
+                # Fall through (to a denser angle, then the uniform all-line
+                # resample) rather than ship a curve set cu2qu can't reconcile.
+                if not _cu2qu_safe(out):
+                    last = {"stage": None, "note": "cu2qu gate: segment regroup"}
+                    continue
                 tags = []
                 if vi == 1:
                     tags.append("union")
@@ -326,6 +340,7 @@ def reconstruct(outlines_by_pos, reference_pos=400):
     if (
         uni is not None
         and _struct_ok(uni)
+        and _cu2qu_safe(uni)
         and not _quality_offenders(uni, outlines_by_pos)
         and _interp_ok(uni)
     ):
@@ -388,6 +403,23 @@ def _struct_ok(out):
     """All masters share contour count and per-contour point count."""
     cs = {tuple(len(c) for c in contours) for contours in out.values()}
     return len(cs) == 1
+
+
+def _cu2qu_safe(out):
+    """Every master shares an identical per-contour SEGMENT structure — the same
+    sequence of (op, point-count).
+
+    ``signature()`` compares only op TYPES and ``_struct_ok`` only per-contour
+    TOTAL point counts, so a glyph whose off-curve points regroup across masters
+    (e.g. e's ``Q3 Q3 Q4`` vs ``Q3 Q3 Q3`` — identical total) passes both yet is
+    rejected by fontmake's interpolatable cu2qu, which then makes build.py freeze
+    it to one weight. Requiring the finer structure forces such glyphs through the
+    uniform all-line resample instead, which is cu2qu-safe by construction."""
+    shapes = {
+        tuple(tuple((op, len(pts)) for op, pts in con) for con in contours)
+        for contours in out.values()
+    }
+    return len(shapes) == 1
 
 
 def _contour_pts(con):
