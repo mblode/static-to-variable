@@ -19,18 +19,9 @@ export interface StagePlanOptions {
   to?: string;
 }
 
-export type HandoffMode = "prompt" | "auto" | "off";
-
 export interface RunOptions {
   continueOnFail?: boolean;
   dryRun?: boolean;
-  handoff?: HandoffMode;
-  top?: number;
-}
-
-export interface StatusPrintOptions {
-  handoff?: HandoffMode;
-  top?: number;
 }
 
 export interface StageRunResult {

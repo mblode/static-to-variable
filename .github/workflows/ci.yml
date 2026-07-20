@@ -31,8 +31,8 @@ jobs:
       - run: npm run check
       - run: npm run typecheck
       - run: npm run test
-      # Build the published package. The studio app is a repo-only dev tool
-      # (not shipped); it is covered by typecheck above, not a prod build here.
+      # Build the published package. The web app is covered by typecheck above,
+      # not a prod build here.
       - run: npx turbo build --filter=static-to-variable
 
   python:
@@ -43,13 +43,13 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync
-      # Lint everything; format-check the durable library and tests. The
-      # remaining legacy-styled modules (audit script, glyph-forge python/) are
-      # style-relaxed via ruff per-file-ignores but still pyflakes-checked.
+      # Lint everything; format-check the durable library and tests. The audit
+      # script is style-relaxed via ruff per-file-ignores but still
+      # pyflakes-checked.
       - name: Lint (ruff)
         run: |
-          uvx ruff@0.14 check packages/variable-gen packages/glyph-forge-engine
-          uvx ruff@0.14 format --check packages/variable-gen/src packages/variable-gen/tests packages/glyph-forge-engine/tests
+          uvx ruff@0.14 check packages/variable-gen
+          uvx ruff@0.14 format --check packages/variable-gen/src packages/variable-gen/tests
       - name: Typecheck (mypy)
         run: uv run mypy
       - name: Test (pytest)
@@ -104,5 +104,4 @@ jobs:
         run: |
           node packages/cli/scripts/bundle-engine.mjs
           test -f packages/cli/engine/variable-gen/pyproject.toml
-          test -f packages/cli/engine/glyph-forge-engine/pyproject.toml
           test -f packages/cli/skills/static-to-variable/SKILL.md

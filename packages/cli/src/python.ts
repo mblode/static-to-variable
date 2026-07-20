@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 
 import { CliError, ExitCode } from "./errors.js";
 import { progress } from "./output.js";
-import { spawnInherit } from "./proc.js";
+import { spawnCapture, spawnInherit } from "./proc.js";
 import { tryFindRepoRoot } from "./runner.js";
 
 export interface PythonEnv {
@@ -239,7 +239,6 @@ export function ensureEngineEnv(): string {
       "--python",
       info.python,
       path.join(info.engineDir, "variable-gen"),
-      path.join(info.engineDir, "glyph-forge-engine"),
     ],
     "install the engine into the managed venv"
   );
@@ -295,6 +294,22 @@ export function runEngine(
   env: PythonEnv = resolveEngine().pythonEnv
 ): Promise<number> {
   return spawnInherit(
+    env.command,
+    [...env.baseArgs, "-m", "variable_gen.cli", ...subcommand],
+    env.cwd
+  );
+}
+
+/**
+ * Run an engine subcommand, capturing its stdout (stderr still inherits).
+ * Resolves to the exit code plus the captured stdout — for subcommands that
+ * emit a machine-readable document the CLI forwards to its own stdout.
+ */
+export function runEngineCapture(
+  subcommand: string[],
+  env: PythonEnv = resolveEngine().pythonEnv
+): Promise<{ code: number; stdout: string }> {
+  return spawnCapture(
     env.command,
     [...env.baseArgs, "-m", "variable_gen.cli", ...subcommand],
     env.cwd

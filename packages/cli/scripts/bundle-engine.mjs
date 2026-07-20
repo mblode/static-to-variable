@@ -5,10 +5,8 @@
  * checkout) provisions a managed venv from this bundled copy — see
  * src/python.ts (standalone mode).
  *
- * Source of truth stays in packages/variable-gen and packages/glyph-forge-engine;
- * this only copies. We prune caches, tests, build outputs, and reports to keep
- * the package lean, and we install the two bundled pyprojects together so
- * glyph-forge-engine's `variable-gen` dependency resolves locally (no PyPI).
+ * Source of truth stays in packages/variable-gen; this only copies. We prune
+ * caches, tests, build outputs, and reports to keep the package lean.
  *
  * The root skills/ directory is also copied in, so the published package ships
  * the agent skill without a second committed copy to keep in sync.
@@ -121,24 +119,13 @@ function main() {
   bundlePackage(
     "variable-gen",
     path.join(repoRoot, "packages/variable-gen"),
-    ["src", "scripts", "manifests"],
+    ["src", "scripts"],
     ["pyproject.toml", "README.md"]
   );
 
-  bundlePackage(
-    "glyph-forge-engine",
-    path.join(repoRoot, "packages/glyph-forge-engine"),
-    ["python"],
-    ["pyproject.toml", "README.md"]
-  );
-
-  // glyph-forge-engine depends on `variable-gen` by name. In the monorepo that
-  // resolves through the root [tool.uv.sources] workspace ref, which is absent in
-  // the bundled copies. Installing both paths together in one `uv pip install`
-  // makes the dependency resolve against the local build, so no rewrite is needed
-  // — but strip any package-level [tool.uv.sources] defensively in case one is
-  // ever added, since a `workspace = true` ref is meaningless standalone.
-  stripUvSources(path.join(engineOut, "glyph-forge-engine/pyproject.toml"));
+  // Strip any package-level [tool.uv.sources] defensively: a `workspace = true`
+  // ref is meaningless in the standalone bundled copy.
+  stripUvSources(path.join(engineOut, "variable-gen/pyproject.toml"));
 
   // The MIT license lives at the repo root; copy it into the package so the
   // published tarball includes it (packages/cli/package.json `files` lists it).

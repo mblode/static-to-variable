@@ -32,11 +32,13 @@ static-to-variable build
 
 Done. Your variable font is in `build/`. When you're happy with it, `static-to-variable release` writes the final TTF and WOFF2.
 
+Got a variable font and want the individual weights? `static-to-variable split MyFamily-VF.ttf` runs it the other way: one static TTF + WOFF2 per weight, in `static/`.
+
 If anything complains, run `static-to-variable doctor`: it checks Node, Python, uv, and your config, then tells you what to fix.
 
 ## Going further
 
-- The config can do much more (italics, named instances, per-glyph fixes). See the [schema](schemas/stv-config.schema.json) and the worked [Glide example](examples/glide).
+- The config can do much more (italics, named instances, per-glyph fixes). See the [schema](schemas/stv-config.schema.json) and the worked [Inter example](examples/inter).
 - Using Claude Code, Cursor, or Codex? `npx skills add mblode/static-to-variable` teaches them the CLI.
 - Full command reference, `--json` output, and exit codes: [CLI docs](packages/cli/README.md).
 

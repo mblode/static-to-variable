@@ -314,6 +314,6 @@ export async function runInit(force: boolean): Promise<void> {
     );
   }
   progress(
-    "Schema + a full worked example: schemas/stv-config.schema.json and examples/glide/."
+    "Schema + a full worked example: schemas/stv-config.schema.json and examples/inter/."
   );
 }

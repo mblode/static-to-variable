@@ -7,15 +7,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from .analyze import (
-    build_compatibility_report,
-    write_compatibility_markdown,
-    write_compatibility_report,
-)
 from .common import PipelineError
 from .config import ConfigError, load_config, resolve_style_keys
-from .discover import build_inventory_report, write_inventory_report
-from .manifest import ManifestError, load_manifest
 from .pipeline import (
     build_pipeline_status,
     write_pipeline_markdown,
@@ -41,24 +34,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    inventory_parser = subparsers.add_parser(
-        "inventory",
-        help="Inspect static donor fonts from a manifest without mutating sources.",
-    )
-    inventory_parser.add_argument("--manifest", required=True)
-    inventory_parser.add_argument("--family", default="all")
-    inventory_parser.add_argument("--output")
-
-    compatibility_parser = subparsers.add_parser(
-        "compatibility",
-        help="Run raw donor interpolatability analysis from a manifest.",
-    )
-    compatibility_parser.add_argument("--manifest", required=True)
-    compatibility_parser.add_argument("--family", default="all")
-    compatibility_parser.add_argument("--stage", default="raw")
-    compatibility_parser.add_argument("--output")
-    compatibility_parser.add_argument("--markdown")
-
     pipeline_parser = subparsers.add_parser(
         "pipeline-status",
         help="Summarize static-to-variable pipeline artifacts and promotion gates.",
@@ -69,6 +44,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     pipeline_parser.add_argument("--output")
     pipeline_parser.add_argument("--markdown")
+
+    split_parser = subparsers.add_parser(
+        "split",
+        help="Split a variable font into static weight files (the reverse of build).",
+    )
+    split_parser.add_argument("--input", required=True, help="path to a variable .ttf/.otf")
+    split_parser.add_argument("--output", default="static", help="output directory")
+    split_parser.add_argument(
+        "--step", type=int, default=100, help="weight step along the wght axis"
+    )
+    split_parser.add_argument("--json", action="store_true", help="emit a JSON summary")
 
     for name, help_text in _PIPELINE_COMMANDS.items():
         sub = subparsers.add_parser(name, help=help_text)
@@ -82,15 +68,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        if args.command == "inventory":
-            return _inventory(args)
-        if args.command == "compatibility":
-            return _compatibility(args)
         if args.command == "pipeline-status":
             return _pipeline_status(args)
+        if args.command == "split":
+            return _split(args)
         if args.command in _PIPELINE_COMMANDS:
             return _pipeline_command(args)
-    except (ManifestError, ConfigError, ValueError) as exc:
+    except (ConfigError, ValueError) as exc:
         parser.exit(2, f"variable-gen: {exc}\n")
     except PipelineError as exc:
         print(f"variable-gen: {exc}", file=sys.stderr)
@@ -158,11 +142,14 @@ def _pipeline_command(args: argparse.Namespace) -> int:
             print(
                 f"[{key}] {len(plan)} masters | donor={stats.donor} "
                 f"reconstructed={stats.reconstructed} "
-                f"ai-pending={len(stats.ai_pending)} "
+                f"frozen-incompatible={len(stats.frozen_incompatible)} "
                 f"sampled(non-donor)={stats.sampled} frozen={stats.frozen}"
             )
-            if stats.ai_pending:
-                print(f"   ai-pending (topology change -> freeze): {stats.ai_pending}")
+            if stats.frozen_incompatible:
+                print(
+                    "   frozen-incompatible (topology change -> freeze): "
+                    f"{stats.frozen_incompatible}"
+                )
         out = config.repo_root / "packages/variable-gen/reports/reconstruction-report.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         # Merge single-style runs into the existing report so `--style roman`
@@ -222,53 +209,6 @@ def _pipeline_command(args: argparse.Namespace) -> int:
     raise ConfigError(f"unhandled pipeline command {args.command!r}")
 
 
-def _inventory(args: argparse.Namespace) -> int:
-    manifest = load_manifest(Path(args.manifest))
-    report = build_inventory_report(manifest, family_filter=args.family)
-
-    if args.output:
-        output_path = write_inventory_report(report, Path(args.output))
-        print(
-            "Wrote donor inventory: "
-            f"{output_path} "
-            f"({report['summary']['family_count']} families, "
-            f"{report['summary']['donor_count']} donors, "
-            f"{report['summary']['warning_count']} warnings)"
-        )
-    else:
-        print(json.dumps(report, indent=2, sort_keys=True))
-
-    return 0
-
-
-def _compatibility(args: argparse.Namespace) -> int:
-    manifest = load_manifest(Path(args.manifest))
-    report = build_compatibility_report(
-        manifest,
-        family_filter=args.family,
-        stage=args.stage,
-    )
-
-    if args.output:
-        output_path = write_compatibility_report(report, Path(args.output))
-        print(
-            "Wrote compatibility report: "
-            f"{output_path} "
-            f"({report['summary']['family_count']} families, "
-            f"{report['summary']['problem_glyph_count']} problem glyphs, "
-            f"{report['summary']['issue_count']} issues, "
-            f"gate={report['hard_gates']['status']})"
-        )
-    else:
-        print(json.dumps(report, indent=2, sort_keys=True))
-
-    if args.markdown:
-        markdown_path = write_compatibility_markdown(report, Path(args.markdown))
-        print(f"Wrote compatibility markdown: {markdown_path}")
-
-    return 0
-
-
 def _pipeline_status(args: argparse.Namespace) -> int:
     report = build_pipeline_status(Path(args.repo_root))
 
@@ -286,6 +226,33 @@ def _pipeline_status(args: argparse.Namespace) -> int:
     if args.markdown:
         markdown_path = write_pipeline_markdown(report, Path(args.markdown))
         print(f"Wrote pipeline markdown: {markdown_path}")
+
+    return 0
+
+
+def _split(args: argparse.Namespace) -> int:
+    from .split import split_variable_font
+
+    output_dir = Path(args.output)
+    results = split_variable_font(Path(args.input), output_dir, step=args.step)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "input": str(args.input),
+                    "output": str(output_dir),
+                    "count": len(results),
+                    "weights": results,
+                },
+                indent=2,
+            )
+        )
+    else:
+        for entry in results:
+            names = ", ".join(Path(f).name for f in entry["files"])
+            print(f"[wght {entry['weight']}] {entry['name']} -> {names}")
+        print(f"Wrote {len(results)} static weights to {output_dir}")
 
     return 0
 

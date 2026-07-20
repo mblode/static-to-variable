@@ -12,7 +12,6 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "glyph-forge-engine",
     "static-to-variable-workspace",
     "variable-gen",
 ]
@@ -275,34 +274,6 @@ lxml = [
 unicode = [
     { name = "unicodedata2", marker = "python_full_version < '3.15'" },
 ]
-
-[[package]]
-name = "glyph-forge-engine"
-version = "0.1.0"
-source = { editable = "packages/glyph-forge-engine" }
-dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "pillow" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "variable-gen" },
-]
-
-[package.optional-dependencies]
-test = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "pillow", specifier = ">=10" },
-    { name = "pytest", marker = "extra == 'test'" },
-    { name = "scipy", specifier = ">=1.11" },
-    { name = "variable-gen", editable = "packages/variable-gen" },
-]
-provides-extras = ["test"]
 
 [[package]]
 name = "glyphslib"
@@ -1109,7 +1080,6 @@ name = "static-to-variable-workspace"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "glyph-forge-engine" },
     { name = "variable-gen" },
 ]
 
@@ -1121,10 +1091,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "glyph-forge-engine", editable = "packages/glyph-forge-engine" },
-    { name = "variable-gen", editable = "packages/variable-gen" },
-]
+requires-dist = [{ name = "variable-gen", editable = "packages/variable-gen" }]
 
 [package.metadata.requires-dev]
 dev = [

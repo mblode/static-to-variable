@@ -25,7 +25,9 @@ src/
   proc.ts           # Shared child-process spawning (child stdout -> stderr)
   output.ts         # Stream-aware color + progress/JSON conventions
   errors.ts         # CliError codes + exit-code map
+  init.ts           # `init` command: scan fonts, else fall back to the template
   init-template.ts  # The `init` scaffold (schema-validated by tests)
+  font-inspect.ts   # Dependency-free sfnt reader (weight/names) used by init
   index.ts          # Public API exports
   types.ts          # Shared TypeScript contracts
 ```
@@ -35,5 +37,5 @@ src/
 - Commands always execute from the static-to-variable workspace root, even when npm starts the workspace script inside `packages/cli`.
 - Python stages must call `.venv/bin/python` through the existing `@static-to-variable/variable-gen` npm scripts.
 - `repair_build` mutates the live `.glyphs` sources plus generated build/report artifacts (it runs the config-driven `variable_gen.cli rebuild`). Keep it visibly prompted in the stepper.
-- Do not make this package write visual QA data directly. It should delegate to `@static-to-variable/glyph-forge-engine`.
+- Do not reimplement build or repair logic here. Delegate to `@static-to-variable/variable-gen`.
 - This is the published npm package (`static-to-variable`). It builds with tsdown (ESM, dual cli+library output, shebang via banner — never add a shebang to `src/cli.ts`) and releases via changesets + OIDC. Bump versions with a changeset, not by hand.

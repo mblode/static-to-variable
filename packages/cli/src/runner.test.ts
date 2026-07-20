@@ -5,16 +5,12 @@ import path from "node:path";
 import { beforeEach, expect, test, vi } from "vitest";
 
 import { spawnInherit } from "./proc.js";
-import type { HandoffTarget } from "./runner.js";
 import {
-  compareHandoffTargets,
   findWorkspaceRoot,
   formatDuration,
-  loadHandoffTargets,
   readPipelineStatus,
   runStage,
   runStages,
-  verdictRank,
 } from "./runner.js";
 import { resolveStage } from "./stages.js";
 
@@ -87,12 +83,12 @@ test("readPipelineStatus throws STV_STATUS_REPORT_MISSING when absent", () => {
 
 test("runStage resolves with the child exit code", async () => {
   mockedSpawn.mockResolvedValueOnce(3);
-  const result = await runStage(resolveStage("inventory"), {}, "/tmp");
+  const result = await runStage(resolveStage("repair_build"), {}, "/tmp");
   expect(result.code).toBe(3);
-  expect(result.stage.id).toBe("inventory");
+  expect(result.stage.id).toBe("repair_build");
   expect(mockedSpawn).toHaveBeenCalledWith(
     "npm",
-    ["--workspace", "@static-to-variable/variable-gen", "run", "inventory"],
+    ["--workspace", "@static-to-variable/variable-gen", "run", "rebuild"],
     "/tmp"
   );
 });
@@ -101,20 +97,20 @@ test("runStage uses npm.cmd on Windows", async () => {
   const original = process.platform;
   Object.defineProperty(process, "platform", { value: "win32" });
   try {
-    await runStage(resolveStage("inventory"), {}, "/tmp");
+    await runStage(resolveStage("repair_build"), {}, "/tmp");
   } finally {
     Object.defineProperty(process, "platform", { value: original });
   }
   expect(mockedSpawn).toHaveBeenCalledWith(
     "npm.cmd",
-    expect.arrayContaining(["run", "inventory"]),
+    expect.arrayContaining(["run", "rebuild"]),
     "/tmp"
   );
 });
 
 test("runStage --dry-run never spawns", async () => {
   const result = await runStage(
-    resolveStage("inventory"),
+    resolveStage("repair_build"),
     { dryRun: true },
     "/tmp"
   );
@@ -123,7 +119,7 @@ test("runStage --dry-run never spawns", async () => {
 });
 
 test("runStages stops at the first failure unless continueOnFail", async () => {
-  const stages = [resolveStage("inventory"), resolveStage("status")];
+  const stages = [resolveStage("repair_build"), resolveStage("status")];
   mockedSpawn.mockResolvedValueOnce(1);
   const stopped = await runStages(stages, {}, "/tmp");
   expect(stopped.map((result) => result.code)).toEqual([1]);
@@ -131,98 +127,6 @@ test("runStages stops at the first failure unless continueOnFail", async () => {
   mockedSpawn.mockResolvedValueOnce(1);
   const all = await runStages(stages, { continueOnFail: true }, "/tmp");
   expect(all.map((result) => result.code)).toEqual([1, 0]);
-});
-
-test("verdictRank orders blocker < unknown < high < everything else", () => {
-  const ranks = ["blocker", "unknown", "high", "medium"].map(verdictRank);
-  expect(ranks).toEqual([0, 1, 2, 3]);
-});
-
-function target(overrides: Partial<HandoffTarget>): HandoffTarget {
-  return {
-    best: null,
-    family: "roman",
-    gain: null,
-    name: "a",
-    verdict: "high",
-    worstComposite: null,
-    worstWght: null,
-    ...overrides,
-  };
-}
-
-test("compareHandoffTargets sorts by verdict, then worst score, then gain", () => {
-  const sorted = [
-    target({ name: "high-good", verdict: "high", worstComposite: 0.9 }),
-    target({
-      gain: 0.1,
-      name: "blocker-lowgain",
-      verdict: "blocker",
-      worstComposite: 0.5,
-    }),
-    target({ name: "blocker-bad", verdict: "blocker", worstComposite: 0.2 }),
-    target({
-      gain: 0.4,
-      name: "blocker-highgain",
-      verdict: "blocker",
-      worstComposite: 0.5,
-    }),
-    target({ name: "blocker-null-worst", verdict: "blocker" }),
-    target({ name: "unknown-mid", verdict: "unknown", worstComposite: 0.1 }),
-  ].toSorted(compareHandoffTargets);
-
-  expect(sorted.map((entry) => entry.name)).toEqual([
-    // blockers first, lowest worstComposite first, higher gain breaks ties
-    "blocker-bad",
-    "blocker-highgain",
-    "blocker-lowgain",
-    // null worstComposite sorts after real scores within a verdict
-    "blocker-null-worst",
-    "unknown-mid",
-    "high-good",
-  ]);
-});
-
-test("loadHandoffTargets filters, joins, and limits the manifests", () => {
-  const root = tempWorkspace();
-  writeJson(root, "packages/glyph-forge-engine/manifests/broken-glyphs.json", [
-    { auditVerdict: "blocker", family: "roman", name: "dollar" },
-    { auditVerdict: "high", family: "roman", name: "at" },
-    // filtered out: verdict not in blocker/unknown/high
-    { auditVerdict: "medium", family: "roman", name: "percent" },
-    // filtered out: solver does not require reconstruction
-    { auditVerdict: "blocker", family: "roman", name: "ampersand" },
-  ]);
-  writeJson(root, "packages/glyph-forge-engine/manifests/glyph-scores.json", {
-    "roman/at": { worstComposite: 0.8, worstWght: 700 },
-    "roman/dollar": { worstComposite: 0.4, worstWght: 250 },
-  });
-  writeJson(root, "packages/glyph-forge-engine/manifests/solver-results.json", {
-    "roman/ampersand": { requiresReconstruction: false },
-    "roman/at": { best: "open_bar", gain: 0.05, requiresReconstruction: true },
-    "roman/dollar": {
-      best: "donor_copy",
-      gain: 0.2,
-      requiresReconstruction: true,
-    },
-  });
-
-  const targets = loadHandoffTargets(root, 5);
-  expect(targets.map((entry) => entry.name)).toEqual(["dollar", "at"]);
-  expect(targets[0]).toMatchObject({
-    best: "donor_copy",
-    gain: 0.2,
-    verdict: "blocker",
-    worstComposite: 0.4,
-    worstWght: 250,
-  });
-
-  expect(loadHandoffTargets(root, 1)).toHaveLength(1);
-});
-
-test("loadHandoffTargets returns empty when manifests are missing", () => {
-  const root = tempWorkspace();
-  expect(loadHandoffTargets(root, 5)).toEqual([]);
 });
 
 test("formatDuration switches to seconds at 1s", () => {

@@ -32,6 +32,8 @@ import {
   runStages,
   tryFindRepoRoot,
 } from "./runner.js";
+import type { SplitOptions } from "./split.js";
+import { runSplit } from "./split.js";
 import {
   buildStagePlan,
   defaultStages,
@@ -41,11 +43,9 @@ import {
   stageChoices,
 } from "./stages.js";
 import type {
-  HandoffMode,
   PipelineStage,
   StagePlanOptions,
   StageRunResult,
-  StatusPrintOptions,
 } from "./types.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as {
@@ -58,8 +58,6 @@ interface RunCommandOptions extends StagePlanOptions {
   continueOnFail?: boolean;
   dryRun?: boolean;
   failOnRed?: boolean;
-  handoff?: HandoffMode;
-  top?: number;
 }
 
 interface StepCommandOptions extends RunCommandOptions {
@@ -115,24 +113,12 @@ program
     "--fail-on-red",
     "Exit non-zero when final pipeline status verdict is fail."
   )
-  .option(
-    "--handoff <mode>",
-    "Human handoff mode: prompt, auto, or off.",
-    parseHandoff,
-    "prompt"
-  )
-  .option(
-    "--top <count>",
-    "Number of review targets to print in the handoff block.",
-    parseTop,
-    5
-  )
   .action(async (stageArg: string, options: RunCommandOptions) => {
     const stages = selectRunStages(stageArg, options);
     const results = await runStages(stages, options);
     const redFailure = options.dryRun
       ? false
-      : printFinalStatusIfAvailable(stages, options);
+      : printFinalStatusIfAvailable(stages);
     process.exitCode = exitCodeFor(
       results,
       Boolean(options.failOnRed) && redFailure
@@ -156,18 +142,6 @@ program
     "--fail-on-red",
     "Exit non-zero when final pipeline status verdict is fail."
   )
-  .option(
-    "--handoff <mode>",
-    "Human handoff mode: prompt, auto, or off.",
-    parseHandoff,
-    "prompt"
-  )
-  .option(
-    "--top <count>",
-    "Number of review targets to print in the handoff block.",
-    parseTop,
-    5
-  )
   .action(async (options: StepCommandOptions) => {
     const { results, redFailure } = await stepPipeline(options);
     process.exitCode = exitCodeFor(
@@ -181,36 +155,20 @@ program
   .description("Refresh and print the aggregate pipeline status report.")
   .option("--read", "Read the existing status report without regenerating it.")
   .option("--fail-on-red", "Exit non-zero when the pipeline verdict is fail.")
-  .option(
-    "--handoff <mode>",
-    "Human handoff mode: prompt, auto, or off.",
-    parseHandoff,
-    "prompt"
-  )
-  .option(
-    "--top <count>",
-    "Number of review targets to print in the handoff block.",
-    parseTop,
-    5
-  )
-  .action(
-    async (
-      options: StatusPrintOptions & { failOnRed?: boolean; read?: boolean }
-    ) => {
-      if (!options.read) {
-        const result = await runStage(resolveStage("pipeline_status"));
-        if (result.code !== 0) {
-          process.exitCode = result.code;
-          return;
-        }
-      }
-      const report = readPipelineStatus();
-      printPipelineStatus(report, options);
-      if (options.failOnRed && report.verdict !== "pass") {
-        process.exitCode = 1;
+  .action(async (options: { failOnRed?: boolean; read?: boolean }) => {
+    if (!options.read) {
+      const result = await runStage(resolveStage("pipeline_status"));
+      if (result.code !== 0) {
+        process.exitCode = result.code;
+        return;
       }
     }
-  );
+    const report = readPipelineStatus();
+    printPipelineStatus(report);
+    if (options.failOnRed && report.verdict !== "pass") {
+      process.exitCode = 1;
+    }
+  });
 
 program
   .command("build")
@@ -298,6 +256,22 @@ program
   );
 
 program
+  .command("split")
+  .description(
+    "Split a variable font into static weight files (TTF + WOFF2) — the reverse of build."
+  )
+  .argument("<font>", "Path to a variable .ttf/.otf.")
+  .option("--out <dir>", "Output directory.", "./static")
+  .option("--step <n>", "Weight step along the wght axis.", parseStep, 100)
+  .option("--json", "Emit a machine-readable summary to stdout.")
+  .action(async (font: string, options: SplitOptions) => {
+    const code = await runSplit(font, options);
+    if (code !== 0) {
+      process.exitCode = code;
+    }
+  });
+
+program
   .command("doctor")
   .description("Report environment readiness: node, python, uv, config.")
   .option("--json", "Emit a JSON report to stdout.")
@@ -381,7 +355,7 @@ async function stepPipeline(
 
   const redFailure = options.dryRun
     ? false
-    : printFinalStatusIfAvailable(stages, options);
+    : printFinalStatusIfAvailable(stages);
   outro("Pipeline stepper finished.");
   return { redFailure, results };
 }
@@ -519,15 +493,12 @@ async function optionsForMode(
  * Returns whether the pipeline verdict was red, so callers can decide the
  * exit code — this function never mutates `process.exitCode` itself.
  */
-function printFinalStatusIfAvailable(
-  stages: PipelineStage[],
-  options: StatusPrintOptions
-): boolean {
+function printFinalStatusIfAvailable(stages: PipelineStage[]): boolean {
   if (!stages.some((stage) => stage.id === "pipeline_status")) {
     return false;
   }
   const report = readPipelineStatus();
-  printPipelineStatus(report, options);
+  printPipelineStatus(report);
   return report.verdict !== "pass";
 }
 
@@ -539,27 +510,13 @@ function exitCodeFor(results: StageRunResult[], redFailure = false): number {
   return redFailure ? ExitCode.Failure : ExitCode.Success;
 }
 
-function parseHandoff(value: string): HandoffMode {
-  if (value === "prompt" || value === "auto" || value === "off") {
-    return value;
-  }
-  throw new CliError("STV_INVALID_OPTION", `Invalid handoff mode "${value}".`, {
-    fix: "Use one of: prompt, auto, off.",
-    exitCode: ExitCode.Usage,
-  });
-}
-
-function parseTop(value: string): number {
+function parseStep(value: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new CliError(
-      "STV_INVALID_OPTION",
-      `Invalid --top count "${value}".`,
-      {
-        fix: "Use a positive integer.",
-        exitCode: ExitCode.Usage,
-      }
-    );
+    throw new CliError("STV_INVALID_OPTION", `Invalid --step "${value}".`, {
+      fix: "Use a positive integer (e.g. 100).",
+      exitCode: ExitCode.Usage,
+    });
   }
   return parsed;
 }

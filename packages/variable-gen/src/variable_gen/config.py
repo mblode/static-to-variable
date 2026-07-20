@@ -1,10 +1,9 @@
-"""Loader for the v3 static-to-variable project config (``stv.config.json``).
+"""Loader for the static-to-variable project config (``stv.config.json``).
 
-This is additive: the v2 manifest loader in :mod:`variable_gen.manifest` is left
-fully intact. A v3 config captures everything a build needs (family metadata,
-axes with a named-instance ladder, per-style donors + ordered masters, glyph
-strategies, vertical metrics, and output layout) so the engine can be driven
-generically instead of from hardcoded literals.
+A config captures everything a build needs (family metadata, axes with a
+named-instance ladder, per-style donors + ordered masters, glyph strategies,
+vertical metrics, and output layout) so the engine can be driven generically
+instead of from hardcoded literals.
 
 Paths are resolved against a ``root`` directory that defaults to the config
 file's own directory, so a config is portable: copy the config and its donors
@@ -162,10 +161,6 @@ def load_config(path: str | Path) -> ProjectConfig:
         raise ConfigError(f"{config_path}: invalid JSON: {exc}") from exc
 
     version = raw.get("version")
-    if version == 2:
-        raise ConfigError(
-            f"{config_path}: this is a v2 manifest; v3 config expected (use load_manifest for v2)"
-        )
     if version != 3:
         raise ConfigError(f"{config_path}: expected version 3, got {version!r}")
 

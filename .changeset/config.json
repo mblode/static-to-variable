@@ -7,9 +7,5 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": [
-    "@static-to-variable/studio",
-    "@static-to-variable/variable-gen",
-    "@static-to-variable/glyph-forge-engine"
-  ]
+  "ignore": ["@static-to-variable/web", "@static-to-variable/variable-gen"]
 }

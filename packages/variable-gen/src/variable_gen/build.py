@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Config-driven variable-font build + per-weight fidelity check.
 
-This is the generic form of the historical ``build_glide.py``: it exports the
-designspace (via :mod:`variable_gen.designspace`), runs fontmake, and repeats a
+Exports the designspace (via :mod:`variable_gen.designspace`), runs fontmake, and repeats a
 freeze loop that pins any cu2qu-incompatible or interpolation-collapsing glyph to
 the default master's donor before rebuilding, then verifies that every named
 weight matches its mapped donor. Every input (masters, donor paths, output paths)
@@ -53,7 +52,7 @@ def _axis_tag(style: Style) -> str:
 
 def freeze_to_book(config: ProjectConfig, style_key: str, names) -> None:
     """Pin the named glyphs to the default master's donor outline across every
-    master (constant -> can't collapse). Mirrors ``build_glide.freeze_to_book``."""
+    master (constant -> can't collapse)."""
     style = config.styles[style_key]
     book = TTFont(str(default_donor_path(style))).getGlyphSet()
     with open(style.source) as source_file:
