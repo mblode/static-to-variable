@@ -1,6 +1,4 @@
-import { existsSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import path from "node:path";
 
 import {
   cancel,
@@ -16,7 +14,7 @@ import { Command } from "commander";
 import type { ProjectConfigSummary } from "./config.js";
 import { loadProjectConfig, resolveConfigPath } from "./config.js";
 import { CliError, ExitCode, isCliError } from "./errors.js";
-import { INIT_CONFIG_TEMPLATE } from "./init-template.js";
+import { runInit } from "./init.js";
 import { emitJson, printError, progress } from "./output.js";
 import type { EngineMode } from "./python.js";
 import {
@@ -325,10 +323,12 @@ program
 
 program
   .command("init")
-  .description("Scaffold a starter stv.config.json in the current directory.")
+  .description(
+    "Create an stv.config.json from the font files in the current directory."
+  )
   .option("--force", "Overwrite an existing stv.config.json.")
-  .action((options: { force?: boolean }) => {
-    scaffoldConfig(Boolean(options.force));
+  .action(async (options: { force?: boolean }) => {
+    await runInit(Boolean(options.force));
   });
 
 // Register BEFORE parsing so rejections during command execution are caught —
@@ -663,28 +663,6 @@ function doctorReport(): DoctorReport {
     usable: info.provisioned || (info.engineBundled && uv),
     uv,
   };
-}
-
-function scaffoldConfig(force: boolean): void {
-  const target = path.resolve(process.cwd(), "stv.config.json");
-  if (existsSync(target) && !force) {
-    throw new CliError(
-      "STV_CONFIG_EXISTS",
-      `stv.config.json already exists at ${target}.`,
-      {
-        fix: "Edit it, or pass --force to overwrite.",
-        exitCode: ExitCode.Usage,
-      }
-    );
-  }
-  writeFileSync(target, INIT_CONFIG_TEMPLATE);
-  progress(`Wrote ${target}`);
-  progress(
-    "Edit family metadata, donor paths, and axis/masters, then run `static-to-variable build`."
-  );
-  progress(
-    "Schema + a full worked example: schemas/stv-config.schema.json and examples/glide/."
-  );
 }
 
 function reportError(error: unknown): void {

@@ -70,7 +70,8 @@ export default function Home() {
           <div>
             <h2 className="font-semibold text-xl">Try it on your fonts</h2>
             <p className="mt-3 text-pretty text-muted-foreground">
-              Install it, point it at your files.
+              Run it in a folder with your font files. It finds them and does
+              the rest.
             </p>
           </div>
           <Button asChild variant="outline">
@@ -83,7 +84,7 @@ export default function Home() {
         <pre className="mt-6 overflow-x-auto rounded-xl bg-card px-5 py-4 font-mono text-muted-foreground text-sm leading-relaxed ring-1 ring-foreground/10">
           <code>{`npm install -g static-to-variable
 static-to-variable init
-static-to-variable build --config stv.config.json`}</code>
+static-to-variable build`}</code>
         </pre>
       </section>
 

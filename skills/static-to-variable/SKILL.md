@@ -38,7 +38,7 @@ uv run --with fonttools python -c "import sys; from fontTools.ttLib import TTFon
 
 ### 2. Author stv.config.json
 
-`static-to-variable init` scaffolds a starter; edit it. Every path is relative to the config file. One donor and one master per weight; the master's `location.wght` must match that file's weight, and its `donorId` must reference a donor `id`. Exactly one master needs `"default": true`. It is strict JSON: no comments or trailing commas. `source` need not exist yet (it is bootstrapped from the default-master donor).
+`static-to-variable init` scaffolds a starter. In an interactive terminal it scans the folder for .ttf/.otf files, reads their real weights and names, and writes a config that builds as-is; in a non-TTY shell (the usual agent case) it writes a static template to edit. Every path is relative to the config file. One donor and one master per weight; the master's `location.wght` must match that file's weight, and its `donorId` must reference a donor `id`. Exactly one master needs `"default": true`. It is strict JSON: no comments or trailing commas. `source` need not exist yet (it is bootstrapped from the default-master donor).
 
 ```json
 {
@@ -162,7 +162,7 @@ To show every glyph, read the font's `cmap` and render one cell per codepoint, e
 
 | Command | What it does |
 | --- | --- |
-| `init` | Scaffold a starter `stv.config.json`. |
+| `init` | Write `stv.config.json`: detected from nearby fonts (TTY), or a starter template (non-TTY). |
 | `build` | Rebuild the masters and build the variable font. |
 | `release` | Finalize metadata and write TTF + WOFF2. |
 | `doctor` | Report Node, Python, uv, mode (checkout vs standalone), and config. |

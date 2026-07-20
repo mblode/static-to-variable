@@ -4,7 +4,7 @@ Turn separate font weight files into one variable font.
 
 [![npm](https://img.shields.io/npm/v/static-to-variable)](https://www.npmjs.com/package/static-to-variable)
 
-Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. See it working first at [variable.blode.co](https://variable.blode.co): live demos built from Google Fonts that never had a variable version.
+Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. Try it first at [variable.blode.co](https://variable.blode.co): drop your fonts in and build right in the browser, or explore demos built from Google Fonts that never had a variable version.
 
 You can't just merge the files, because each weight is drawn separately and nothing lines up. static-to-variable redraws them onto one shared structure so they blend, checks every letter, and skips anything it can't convert cleanly instead of breaking it.
 
@@ -18,11 +18,13 @@ Needs [Node](https://nodejs.org) 24.11+, [Python](https://www.python.org) 3.11+,
 
 ## Use it
 
+Go to a folder with your font files and run:
+
 ```bash
 static-to-variable init
 ```
 
-That creates `stv.config.json` in the current folder. Open it and change two things: the paths to your font files, and the weight each one is (100 for thin, 400 for regular, 900 for black).
+It finds your fonts, reads their weights, and writes an `stv.config.json` for you. Confirm the list, name the family, and then:
 
 ```bash
 static-to-variable build
