@@ -2,27 +2,26 @@
 
 Turn separate font weight files into one variable font.
 
-Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. See it working first at [variable.blode.co](https://variable.blode.co): live demos built from Google Fonts that never had a variable version.
+Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. Try it first at [variable.blode.co](https://variable.blode.co): drop your fonts in and build right in the browser.
 
 ## Quick start
 
+Go to a folder with your font files and run:
+
 ```bash
 npm install -g static-to-variable
-static-to-variable init    # creates ./stv.config.json
-```
-
-Open `stv.config.json` and change two things: the paths to your font files, and the weight each one is (100 for thin, 400 for regular, 900 for black). Then:
-
-```bash
+static-to-variable init
 static-to-variable build
 ```
+
+`init` finds your fonts, reads their weights, and writes `stv.config.json` for you; confirm the list and name the family. In a non-interactive shell (CI, agents) it writes a starter template to edit instead.
 
 Your variable font is in `build/`. Needs [Node](https://nodejs.org) 24.11+, [Python](https://www.python.org) 3.11+, and [uv](https://docs.astral.sh/uv/); the bundled font engine sets itself up the first time you build. Run `static-to-variable doctor` to check your setup.
 
 ## Commands
 
 ```bash
-static-to-variable init      # scaffold ./stv.config.json
+static-to-variable init      # detect fonts, write ./stv.config.json
 static-to-variable build     # rebuild -> normalize -> build
 static-to-variable release   # finalize + WOFF2
 static-to-variable doctor    # environment readiness

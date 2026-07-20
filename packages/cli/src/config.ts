@@ -99,6 +99,22 @@ function invalidConfig(path: string, detail: string, fix: string): CliError {
 }
 
 /**
+ * Validate an already-parsed config value against the published JSON schema.
+ * Throws `STV_CONFIG_INVALID` (exit 2) naming the offending path. `label` is
+ * the config's origin (a file path, or e.g. "generated config").
+ */
+export function assertValidConfig(raw: unknown, label: string): void {
+  const validate = validator();
+  if (!validate(raw)) {
+    throw invalidConfig(
+      label,
+      `config does not match the schema — ${formatSchemaErrors(validate.errors)}`,
+      "See schemas/stv-config.schema.json for the full contract; examples/minimal/ has a small valid config."
+    );
+  }
+}
+
+/**
  * Read an stv.config.json (schema v3), validate it against the published JSON
  * schema, and expose the fields the CLI needs. Throws `STV_CONFIG_INVALID`
  * (exit 2) naming the offending path on any violation. Deeper semantic checks
@@ -133,14 +149,7 @@ export function loadProjectConfig(path: string): ProjectConfigSummary {
     );
   }
 
-  const validate = validator();
-  if (!validate(raw)) {
-    throw invalidConfig(
-      path,
-      `config does not match the schema — ${formatSchemaErrors(validate.errors)}`,
-      "See schemas/stv-config.schema.json for the full contract; examples/minimal/ has a small valid config."
-    );
-  }
+  assertValidConfig(raw, path);
 
   const config = raw as unknown as ValidatedConfig;
   return {
