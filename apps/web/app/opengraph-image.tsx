@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 export const alt =
-  "static-to-variable — turn a family of static weights into one variable font";
+  "static-to-variable: turn a family of static weights into one variable font";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -55,7 +55,7 @@ export default function OpengraphImage() {
             maxWidth: 900,
           }}
         >
-          Rebuilt onto a shared structure so they interpolate — every glyph
+          Rebuilt onto a shared structure so they interpolate. Every glyph
           verified, nothing faked.
         </div>
       </div>
