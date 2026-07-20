@@ -109,6 +109,14 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
                 frozen += collapsed
                 freeze_to_book(config, style_key, collapsed)
                 continue
+            # fontmake leaves the default instance's fvar subfamily name empty
+            # (its elidable "Regular" label collapses to ""), so repair instance
+            # names in the build artifact too, not just at release time.
+            from variable_gen.release import fix_instances
+
+            vf = TTFont(str(out))
+            fix_instances(vf, config, style.italic)
+            vf.save(str(out))
             print(f"[{style_key}] built (frozen: {frozen})")
             return frozen
         err = p.stdout + p.stderr
