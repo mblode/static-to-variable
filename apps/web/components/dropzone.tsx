@@ -48,10 +48,10 @@ export function Dropzone({ onFiles }: DropzoneProps) {
       </span>
       <div className="flex flex-col gap-1">
         <span className="font-medium text-base text-foreground">
-          Drop the static weights of one family
+          Drop the weight files of one font
         </span>
         <span className="text-muted-foreground text-sm">
-          or click to choose .ttf or .otf files
+          or choose .ttf or .otf files
         </span>
       </div>
       <input

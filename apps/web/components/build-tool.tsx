@@ -99,6 +99,17 @@ export function BuildTool() {
     setPhase("collect");
   }, [result]);
 
+  const adjustWeights = useCallback(() => {
+    for (const file of result?.files ?? []) {
+      URL.revokeObjectURL(file.url);
+    }
+    detectedRef.current = null;
+    setResult(null);
+    setError(null);
+    setStages([]);
+    setPhase("collect");
+  }, [result]);
+
   const start = useCallback(() => {
     setError(null);
     setResult(null);
@@ -155,7 +166,7 @@ export function BuildTool() {
 
       {rejected.length > 0 && phase === "collect" ? (
         <p className="text-destructive text-sm">
-          Skipped {rejected.join(", ")} — not a readable .ttf/.otf.
+          Skipped {rejected.join(", ")}: not a readable .ttf or .otf file.
         </p>
       ) : null}
 
@@ -181,8 +192,8 @@ export function BuildTool() {
         <>
           <BuildProgress stages={stages} />
           <p className="text-muted-foreground text-sm">
-            Rebuilding masters and compiling with fontmake. A build usually
-            takes 30s–2min.
+            Rebuilding your weights into one font. Usually takes 30 seconds to 2
+            minutes.
           </p>
         </>
       ) : null}
@@ -190,10 +201,15 @@ export function BuildTool() {
       {phase === "done" && result ? (
         <>
           <BuildResult result={result} />
-          <Button className="self-start" onClick={reset} variant="outline">
-            <ArrowRotateClockwiseIcon />
-            Build another
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={adjustWeights} variant="outline">
+              Adjust weights
+            </Button>
+            <Button onClick={reset} variant="ghost">
+              <ArrowRotateClockwiseIcon />
+              Start over
+            </Button>
+          </div>
         </>
       ) : null}
 
@@ -201,7 +217,7 @@ export function BuildTool() {
         <div className="flex flex-col gap-4">
           <Alert variant="destructive">
             <TriangleExclamationIcon />
-            <AlertTitle>Build failed — {error.code}</AlertTitle>
+            <AlertTitle>Build failed ({error.code})</AlertTitle>
             <AlertDescription>{error.message}</AlertDescription>
           </Alert>
           <Button

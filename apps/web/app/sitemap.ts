@@ -1,12 +1,30 @@
 import type { MetadataRoute } from "next";
 
+import { FONTS } from "@/lib/fonts";
+
+const BASE = "https://variable.blode.co";
+
 export default function sitemap(): MetadataRoute.Sitemap {
+  const lastModified = new Date();
+
   return [
     {
-      url: "https://variable.blode.co",
-      lastModified: new Date(),
+      url: BASE,
+      lastModified,
       changeFrequency: "monthly",
       priority: 1,
     },
+    {
+      url: `${BASE}/showcase`,
+      lastModified,
+      changeFrequency: "monthly",
+      priority: 0.8,
+    },
+    ...FONTS.map((font) => ({
+      url: `${BASE}/showcase/${font.id}`,
+      lastModified,
+      changeFrequency: "monthly" as const,
+      priority: 0.6,
+    })),
   ];
 }

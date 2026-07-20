@@ -1,12 +1,12 @@
 # static-to-variable
 
-Turn a set of static font weights into one variable font.
+Turn separate font weight files into one variable font.
 
 [![npm](https://img.shields.io/npm/v/static-to-variable)](https://www.npmjs.com/package/static-to-variable)
 
-You give it your static weights (say Thin, Regular, and Black) and a small config file. It builds a single variable font with a weight axis that interpolates smoothly between them.
+Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. Or try it in your browser at [variable.blode.co](https://variable.blode.co), with live demos built from Google Fonts that never had a variable version.
 
-The hard part it solves: static fonts are usually drawn independently, so their glyphs don't line up (different numbers of points or contours across weights) and won't interpolate. static-to-variable rebuilds them onto a shared structure so they do, then builds and checks the font for you.
+Normally you can't just merge the files because they don't line up: each weight is drawn separately. static-to-variable redraws them onto one shared structure so they blend, checks every letter, and skips anything it can't do cleanly instead of breaking it.
 
 ## Install
 
@@ -53,7 +53,7 @@ The `stv.config.json` describes your font: its name, the weight axis and named i
 
 Add `--help` to any command for its options. `build`, `release`, and `doctor` take `--json` for a machine-readable summary on stdout (human progress always goes to stderr).
 
-Your config is validated against the [published schema](schemas/stv-config.schema.json) before any work starts — unknown keys and malformed fields fail fast with the offending path named.
+Your config is validated against the [published schema](schemas/stv-config.schema.json) before any work starts: unknown keys and malformed fields fail fast with the offending path named.
 
 Exit codes: `0` success, `1` a pipeline step failed, `2` usage (bad flag, missing or invalid config), `3` environment not ready (no Python/uv), `130` interrupted.
 

@@ -25,7 +25,7 @@ const glideMono = localFont({
 
 const title = "static-to-variable";
 const description =
-  "Turn a family of independently-drawn static font weights into one variable font, rebuilt onto a shared structure so they interpolate. Scrub the weight axis on real fonts the pipeline built.";
+  "Turn separate font weight files into one variable font you can slide between. Try it on real Google Fonts that never had a variable version.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://variable.blode.co"),
