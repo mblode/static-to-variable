@@ -3,6 +3,7 @@
 import { useEffect, useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 
 interface FontPreviewProps {
   src: string;
@@ -17,7 +18,9 @@ export function FontPreview({ src, axis, instances }: FontPreviewProps) {
   const uid = useId();
   const family = `stvpreview-${uid.replaceAll(/[^a-zA-Z0-9]/g, "")}`;
   const [weight, setWeight] = useState(axis.def);
-  const [ready, setReady] = useState(false);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">(
+    "loading"
+  );
 
   useEffect(() => {
     setWeight(axis.def);
@@ -26,17 +29,19 @@ export function FontPreview({ src, axis, instances }: FontPreviewProps) {
   useEffect(() => {
     let cancelled = false;
     const face = new FontFace(family, `url(${src})`);
-    setReady(false);
+    setStatus("loading");
     face
       .load()
       .then((loaded) => {
         if (!cancelled) {
           document.fonts.add(loaded);
-          setReady(true);
+          setStatus("ready");
         }
       })
       .catch(() => {
-        /* leave the fallback font showing */
+        if (!cancelled) {
+          setStatus("error");
+        }
       });
     return () => {
       cancelled = true;
@@ -52,21 +57,20 @@ export function FontPreview({ src, axis, instances }: FontPreviewProps) {
   return (
     <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b px-4 py-3 sm:px-6">
-        <label className="flex flex-1 items-center gap-3 text-muted-foreground text-sm">
+        <div className="flex flex-1 items-center gap-3 text-muted-foreground text-sm">
           Weight
-          <input
-            className="w-full min-w-[180px] max-w-[420px] accent-primary"
+          <Slider
+            className="min-w-[180px] max-w-[420px]"
             max={axis.max}
             min={axis.min}
-            onChange={(e) => setWeight(Number(e.target.value))}
+            onValueChange={(next) => setWeight(next[0])}
             step={1}
-            type="range"
-            value={weight}
+            value={[weight]}
           />
           <span className="w-11 text-right font-mono text-foreground tabular-nums">
             {Math.round(weight)}
           </span>
-        </label>
+        </div>
 
         <div className="flex flex-wrap gap-1.5">
           {instances.map((ins) => (
@@ -90,12 +94,12 @@ export function FontPreview({ src, axis, instances }: FontPreviewProps) {
       </div>
 
       <div
-        className="grid gap-px bg-border p-px [grid-template-columns:repeat(auto-fill,minmax(56px,1fr))]"
+        className="grid gap-px bg-border p-px [grid-template-columns:repeat(auto-fill,minmax(64px,1fr))]"
         style={previewStyle}
       >
         {GLYPHS.map((glyph) => (
           <div
-            className="flex aspect-square items-center justify-center bg-background text-[30px] leading-none"
+            className="flex aspect-square items-center justify-center bg-background p-2 text-[24px] leading-none"
             key={glyph}
           >
             {glyph}
@@ -104,8 +108,14 @@ export function FontPreview({ src, axis, instances }: FontPreviewProps) {
       </div>
 
       <div className="px-4 py-3 text-muted-foreground text-xs sm:px-6">
-        {ready ? "" : "loading… "}
-        Weight {axis.min}–{axis.max} · default {axis.def}
+        {status === "error" ? (
+          "We couldn't load the preview. Try refreshing."
+        ) : (
+          <>
+            {status === "ready" ? "" : "loading… "}
+            Weight {axis.min}–{axis.max} · default {axis.def}
+          </>
+        )}
       </div>
     </div>
   );

@@ -88,7 +88,9 @@ export function WeightTable({
                   className="w-36"
                   max={MAX_WEIGHT}
                   min={MIN_WEIGHT}
-                  onValueChange={(value) => onChangeWeight(i, value ?? 0)}
+                  onValueChange={(value) =>
+                    onChangeWeight(i, value ?? row.weight)
+                  }
                   value={row.weight}
                 >
                   <NumberFieldGroup>
@@ -131,7 +133,7 @@ export function WeightTable({
         ) : (
           <p className="text-destructive">
             {enough
-              ? "Two files share the same weight — give each a distinct value."
+              ? "Two files share the same weight. Give each a different one."
               : "Add at least two weights to build a variable font."}
           </p>
         )}

@@ -85,9 +85,9 @@ export function BuildResult({ result }: BuildResultProps) {
 
       {frozen.length > 0 ? (
         <p className="rounded-lg bg-card px-4 py-3 text-muted-foreground text-xs ring-1 ring-foreground/10">
-          {frozen.length} glyph{frozen.length === 1 ? "" : "s"} couldn't
-          interpolate cleanly and {frozen.length === 1 ? "was" : "were"} pinned
-          — usually a sign of incompatible source outlines.
+          {frozen.length} letter{frozen.length === 1 ? "" : "s"} couldn't be
+          merged cleanly, so {frozen.length === 1 ? "it stays" : "they stay"}{" "}
+          fixed at one weight. The rest slide normally.
         </p>
       ) : null}
     </div>
