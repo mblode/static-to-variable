@@ -68,3 +68,7 @@ npx skills add mblode/static-to-variable
 ## License
 
 [MIT](LICENSE.md)
+
+---
+
+Crafted by [<img src="https://matthewblode.com/avatar-circle.png" width="20" align="top" />](https://matthewblode.com) [Matthew Blode](https://matthewblode.com)
