@@ -86,7 +86,7 @@ export default async function FamilyPage({
         </p>
       </header>
 
-      <SingleGlyphViewer font={font} />
+      <SingleGlyphViewer font={font} showGlyphs />
 
       <section className="mt-10 grid gap-6 sm:grid-cols-2">
         <div className="rounded-xl bg-card p-5 ring-1 ring-foreground/10">
