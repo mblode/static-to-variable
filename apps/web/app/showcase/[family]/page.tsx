@@ -66,11 +66,7 @@ export default async function FamilyPage({
           <Link className="hover:text-foreground" href="/">
             static-to-variable
           </Link>{" "}
-          /{" "}
-          <Link className="hover:text-foreground" href="/showcase">
-            showcase
-          </Link>{" "}
-          / {font.id}
+          / showcase / {font.id}
         </p>
         <h1 className="text-balance font-semibold text-4xl leading-[1.1] tracking-tight sm:text-5xl">
           {font.name} variable font
