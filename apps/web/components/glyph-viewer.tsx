@@ -51,20 +51,24 @@ async function activateFont(
 }
 
 /**
- * The glyph grid + weight-axis scrubber + download row for a single family.
- * `selector` renders in the top bar ahead of the weight control, letting the
- * multi-family <GlyphViewer /> slot its family <Select> in without this having
- * to know about switching. Reset-on-change is keyed off the `font` prop, so it
- * works whether `font` is fixed (a showcase page) or swapped (the selector).
+ * An editable type specimen + weight-axis scrubber + download row for a single
+ * family, with an optional every-glyph grid below the specimen (showcase
+ * pages). `selector` renders in the top bar ahead of the weight control,
+ * letting the multi-family <GlyphViewer /> slot its family <Select> in without
+ * this having to know about switching. Reset-on-change is keyed off the `font`
+ * prop, so it works whether `font` is fixed (a showcase page) or swapped (the
+ * selector).
  */
 export function SingleGlyphViewer({
   font,
   selector,
   pageHref,
+  showGlyphs = false,
 }: {
   font: DemoFont;
   selector?: ReactNode;
   pageHref?: string;
+  showGlyphs?: boolean;
 }) {
   const [weight, setWeight] = useState(font.axis.def);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
@@ -117,29 +121,56 @@ export function SingleGlyphViewer({
       </div>
 
       <div
-        className="grid gap-px bg-border p-px [grid-template-columns:repeat(auto-fill,minmax(84px,1fr))]"
+        aria-label="Type to preview the font"
+        className="min-h-[200px] cursor-text overflow-hidden text-balance px-5 py-12 text-[clamp(2.25rem,6.5vw,4.5rem)] leading-[1.08] tracking-tight outline-none sm:px-8 sm:py-16"
+        contentEditable
+        role="textbox"
+        spellCheck={false}
         style={previewStyle}
+        suppressContentEditableWarning
       >
-        {CODEPOINTS.map((cp) => (
-          <div
-            className="group relative flex aspect-square items-center justify-center overflow-hidden bg-background p-3 hover:bg-muted/60"
-            key={cp}
-            title={`U+${cp.toString(16).toUpperCase().padStart(4, "0")}`}
-          >
-            <span className="text-[26px] leading-none">
-              {String.fromCodePoint(cp)}
-            </span>
-            <span className="absolute inset-x-0 bottom-1 text-center font-mono text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
-              {cp.toString(16).toUpperCase().padStart(4, "0")}
-            </span>
-          </div>
-        ))}
+        One file, every weight in between.
       </div>
 
+      {showGlyphs ? (
+        <div
+          className="grid gap-px border-t bg-border p-px [grid-template-columns:repeat(auto-fill,minmax(84px,1fr))]"
+          style={previewStyle}
+        >
+          {CODEPOINTS.map((cp) => (
+            <div
+              className="group relative flex aspect-square items-center justify-center overflow-hidden bg-background p-3 hover:bg-muted/60"
+              key={cp}
+              title={`U+${cp.toString(16).toUpperCase().padStart(4, "0")}`}
+            >
+              <span className="text-[26px] leading-none">
+                {String.fromCodePoint(cp)}
+              </span>
+              <span className="absolute inset-x-0 bottom-1 text-center font-mono text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                {cp.toString(16).toUpperCase().padStart(4, "0")}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t px-4 py-3 text-muted-foreground text-xs sm:px-6">
-        <span>
+        <span className="flex items-center gap-1.5">
           {status === "error" && "We couldn't load this font. Try refreshing."}
           {status === "loading" && "loading…"}
+          {status === "ready" &&
+            font.instances.map((inst) => (
+              <Button
+                key={inst.name}
+                onClick={() => setWeight(inst.wght)}
+                size="xs"
+                variant={
+                  Math.round(weight) === inst.wght ? "secondary" : "ghost"
+                }
+              >
+                {inst.name} {inst.wght}
+              </Button>
+            ))}
         </span>
         <span className="flex gap-1.5">
           {pageHref ? (
