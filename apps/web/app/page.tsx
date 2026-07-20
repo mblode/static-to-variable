@@ -92,6 +92,12 @@ static-to-variable build`}</code>
         <div className="flex items-center gap-5">
           <a
             className="hover:text-foreground"
+            href="https://static-to-variable.blode.md"
+          >
+            Docs
+          </a>
+          <a
+            className="hover:text-foreground"
             href="https://github.com/mblode/static-to-variable"
           >
             GitHub
