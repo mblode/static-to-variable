@@ -1,5 +1,11 @@
 # static-to-variable
 
+## 0.3.2
+
+### Patch Changes
+
+- 971235e: Point the package homepage at variable.blode.co.
+
 ## 0.3.1
 
 ### Patch Changes
