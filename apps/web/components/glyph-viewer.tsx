@@ -60,11 +60,9 @@ async function activateFont(
 export function SingleGlyphViewer({
   font,
   selector,
-  pageHref,
 }: {
   font: DemoFont;
   selector?: ReactNode;
-  pageHref?: string;
 }) {
   const [weight, setWeight] = useState(font.axis.def);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
@@ -138,22 +136,10 @@ export function SingleGlyphViewer({
 
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t px-4 py-3 text-muted-foreground text-xs sm:px-6">
         <span>
-          {status === "error" ? (
-            "We couldn't load this font. Try refreshing."
-          ) : (
-            <>
-              {status === "ready" ? "" : "loading… "}
-              Google Fonts doesn&apos;t have a variable {font.name}. This one
-              was built from {font.builtFrom}.
-            </>
-          )}
+          {status === "error" && "We couldn't load this font. Try refreshing."}
+          {status === "loading" && "loading…"}
         </span>
         <span className="flex gap-1.5">
-          {pageHref ? (
-            <Button asChild size="xs" variant="ghost">
-              <Link href={pageHref}>View the {font.name} page</Link>
-            </Button>
-          ) : null}
           <Button asChild size="xs" variant="outline">
             <a download={`${font.id}-variable.ttf`} href={font.ttf}>
               <ArrowDownIcon />
@@ -181,7 +167,6 @@ export function GlyphViewer() {
     <div>
       <SingleGlyphViewer
         font={font}
-        pageHref={`/showcase/${font.id}`}
         selector={
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
             Font
