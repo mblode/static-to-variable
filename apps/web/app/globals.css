@@ -40,6 +40,16 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
+  /* Field tokens the Blode "input" button/select variant depends on. Without
+     them the input variant falls back to no radius, height, or shadow, which
+     renders the select trigger as a plain square box. */
+  --field-height: 3rem;
+  --field-height-sm: 2.5rem;
+  --field-padding-x: 1rem;
+  --field-padding-y: 0.75rem;
+  --field-radius: 0.75rem;
+  --input-hover: oklch(0.85 0 0);
+  --placeholder-foreground: oklch(0.708 0 0);
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -73,6 +83,8 @@ html {
   --color-chart-1: var(--chart-1);
   --color-ring: var(--ring);
   --color-input: var(--input);
+  --color-input-hover: var(--input-hover);
+  --color-placeholder-foreground: var(--placeholder-foreground);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
@@ -96,6 +108,11 @@ html {
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  /* Utility shadow for inputs/fields; soft diffuse shadow for popovers, menus,
+     and cards (referenced by the select trigger and dropdown). */
+  --shadow-input: 0 1px 2px 0 oklch(0 0 0 / 0.06);
+  --shadow-soft:
+    0 4px 24px -6px oklch(0 0 0 / 0.12), 0 2px 6px -2px oklch(0 0 0 / 0.08);
 }
 
 .dark {
@@ -116,6 +133,8 @@ html {
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
+  --input-hover: oklch(1 0 0 / 28%);
+  --placeholder-foreground: oklch(0.556 0 0);
   --ring: oklch(0.556 0 0);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
