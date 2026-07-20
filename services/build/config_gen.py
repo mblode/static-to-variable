@@ -1,8 +1,8 @@
 """Generate a validated v3 ``stv.config.json`` from a set of uploaded static fonts.
 
-Reuses the same font reads as ``variable_gen.discover`` (OS/2 usWeightClass + the
-name table) to map each dropped weight onto the wght axis, then assembles a config
-that satisfies ``variable_gen.config.load_config`` — the from-scratch build
+Reads OS/2 usWeightClass + the name table from each font to map each dropped
+weight onto the wght axis, then assembles a config that satisfies
+``variable_gen.config.load_config`` — the from-scratch build
 (bootstrap → rebuild → normalize → build → release) takes it from there.
 """
 
