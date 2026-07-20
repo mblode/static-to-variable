@@ -1,0 +1,20 @@
+# dependencies
+node_modules/
+
+# local env files
+.env*
+!.env.example
+
+# build and cache
+.next/
+.turbo/
+coverage/
+dist/
+.vercel/
+*.tsbuildinfo
+
+# logs
+*.log
+
+# misc
+.DS_Store

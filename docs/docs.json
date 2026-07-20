@@ -1,0 +1,23 @@
+{
+  "$schema": "https://blode.md/docs.json",
+  "appearance": {
+    "default": "system"
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude"]
+  },
+  "description": "Turn separate font weight files into one variable font.",
+  "metadata": {
+    "timestamp": true
+  },
+  "name": "Static To Variable",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": ["index", "quickstart", "cli-reference"]
+      }
+    ]
+  },
+  "slug": "static-to-variable"
+}
