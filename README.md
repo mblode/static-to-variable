@@ -4,9 +4,9 @@ Turn separate font weight files into one variable font.
 
 [![npm](https://img.shields.io/npm/v/static-to-variable)](https://www.npmjs.com/package/static-to-variable)
 
-Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. Or try it in your browser at [variable.blode.co](https://variable.blode.co), with live demos built from Google Fonts that never had a variable version.
+Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. See it working first at [variable.blode.co](https://variable.blode.co): live demos built from Google Fonts that never had a variable version.
 
-Normally you can't just merge the files because they don't line up: each weight is drawn separately. static-to-variable redraws them onto one shared structure so they blend, checks every letter, and skips anything it can't do cleanly instead of breaking it.
+You can't just merge the files, because each weight is drawn separately and nothing lines up. static-to-variable redraws them onto one shared structure so they blend, checks every letter, and skips anything it can't convert cleanly instead of breaking it.
 
 ## Install
 
@@ -14,56 +14,29 @@ Normally you can't just merge the files because they don't line up: each weight 
 npm install -g static-to-variable
 ```
 
-Needs [Node](https://nodejs.org) 24.11+, [Python](https://www.python.org) 3.11+, and [uv](https://docs.astral.sh/uv/). The font engine sets itself up on first run.
+Needs [Node](https://nodejs.org) 24.11+, [Python](https://www.python.org) 3.11+, and [uv](https://docs.astral.sh/uv/). The font engine sets itself up the first time you build.
 
 ## Use it
 
 ```bash
-# 1. Create a config
 static-to-variable init
-
-# 2. Edit stv.config.json: point it at your static fonts and set the weights
-
-# 3. Build the variable font
-static-to-variable build --config stv.config.json
 ```
 
-Run `static-to-variable doctor` if you want to check your setup first.
-
-## Try the example
-
-Builds a variable font from three static Inter weights, so you can see it work before wiring up your own fonts:
+That creates `stv.config.json` in the current folder. Open it and change two things: the paths to your font files, and the weight each one is (100 for thin, 400 for regular, 900 for black).
 
 ```bash
-static-to-variable build --config examples/minimal/stv.config.json
+static-to-variable build
 ```
 
-## Configure
+Done. Your variable font is in `build/`. When you're happy with it, `static-to-variable release` writes the final TTF and WOFF2.
 
-The `stv.config.json` describes your font: its name, the weight axis and named instances, each static file and the weight it maps to, any per-glyph fixes, and where to write the output. See the [schema](schemas/stv-config.schema.json) and a full worked [example](examples/glide).
+If anything complains, run `static-to-variable doctor`: it checks Node, Python, uv, and your config, then tells you what to fix.
 
-## Commands
+## Going further
 
-| Command   | What it does                                     |
-| --------- | ------------------------------------------------ |
-| `init`    | Create a starter `stv.config.json`.              |
-| `build`   | Rebuild the weights and build the variable font. |
-| `release` | Finalize the metadata and write TTF + WOFF2.     |
-| `doctor`  | Check Node, Python, uv, and your config.         |
-
-Add `--help` to any command for its options. `build`, `release`, and `doctor` take `--json` for a machine-readable summary on stdout (human progress always goes to stderr).
-
-Your config is validated against the [published schema](schemas/stv-config.schema.json) before any work starts: unknown keys and malformed fields fail fast with the offending path named.
-
-Exit codes: `0` success, `1` a pipeline step failed, `2` usage (bad flag, missing or invalid config), `3` environment not ready (no Python/uv), `130` interrupted.
-
-## Use with AI agents
-
-Install the skill so Claude Code, Cursor, Codex, and others know how to drive it:
-
-```bash
-npx skills add mblode/static-to-variable
-```
+- The config can do much more (italics, named instances, per-glyph fixes). See the [schema](schemas/stv-config.schema.json) and the worked [Glide example](examples/glide).
+- Using Claude Code, Cursor, or Codex? `npx skills add mblode/static-to-variable` teaches them the CLI.
+- Full command reference, `--json` output, and exit codes: [CLI docs](packages/cli/README.md).
 
 ## License
 
