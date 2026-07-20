@@ -557,28 +557,57 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
     ):
         return cc, {"stage": "reconstructed", "note": "counter-closing"}
 
-    # each variant is (outlines, reference_pos)
-    variants = [(outlines_by_pos, reference_pos)]
+    # each variant is (outlines, reference_pos, tag)
+    variants = [(outlines_by_pos, reference_pos, "")]
     counts = {len(c) for c in outlines_by_pos.values()}
     if len(counts) > 1:
         unioned = {pos: union_overlaps(c) for pos, c in outlines_by_pos.items()}
         if all(u is not None for u in unioned.values()):
-            variants.append((unioned, reference_pos))
+            variants.append((unioned, reference_pos, "union"))
         # merge-to-min: light weights of $ / ¢ / r.ss03 carry extra disjoint
         # contours (bar stubs / a single-weight stray) that join the body at
         # other weights. Bridge each master's contours down to the global-min
         # count so every master shares one topology, then reconstruct. Anchor the
         # reference on a master that NATIVELY has the min count (clean) — not a
         # bridged one, whose zero-width bridges would pollute every master.
+        # split-to-max first: when both directions can equalise the topology, a
+        # cut that liberates REAL geometry (K's leg, p's bowl) beats a synthetic
+        # zero-width bridge whose placement is a guess.
+        target_max = max(counts)
+        native_max = [p for p, c in outlines_by_pos.items() if len(c) == target_max]
+        sref = min(native_max, key=lambda p: abs(p - reference_pos))
+        template = outlines_by_pos[sref]
+        split = {pos: _split_to_n(c, template) for pos, c in outlines_by_pos.items()}
+        if all(s is not None for s in split.values()):
+            variants.append((split, sref, "split-to-max"))
         target = min(counts)
-        merged = {pos: _to_n_contours(c, target) for pos, c in outlines_by_pos.items()}
-        if all(m is not None for m in merged.values()):
-            native = [p for p, c in outlines_by_pos.items() if len(c) == target]
-            mref = min(native, key=lambda p: abs(p - reference_pos)) if native else reference_pos
-            variants.append((merged, mref))
+        native = [p for p, c in outlines_by_pos.items() if len(c) == target]
+        mref = min(native, key=lambda p: abs(p - reference_pos)) if native else reference_pos
+        merged_seen = set()
+        for pick in range(7):
+            merged = {pos: _to_n_contours(c, target, pick) for pos, c in outlines_by_pos.items()}
+            if any(m is None for m in merged.values()):
+                continue
+
+            # different picks can land on the same bridge — dedup on a light
+            # ORDER-sensitive fingerprint (all picks share the same point
+            # multiset and start point; only the splice position, and therefore
+            # the point sequence, differs)
+            def _fp_contour(con):
+                pts = _contour_pts(con)
+                return (len(pts), pts[len(pts) // 3], pts[(2 * len(pts)) // 3])
+
+            fp = tuple(
+                (pos, tuple(_fp_contour(con) for con in cons))
+                for pos, cons in sorted(merged.items())
+            )
+            if fp in merged_seen:
+                continue
+            merged_seen.add(fp)
+            variants.append((merged, mref, "merge-to-min" if pick == 0 else f"merge-to-min@{pick}"))
 
     last = {"stage": None, "note": "no angle worked"}
-    for vi, (variant, vref) in enumerate(variants):
+    for variant, vref, tag in variants:
         for angle in CORNER_ANGLE_SWEEP:
             out, info = _reconstruct_at(variant, vref, angle)
             if out is not None:
@@ -606,10 +635,8 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
                     last = {"stage": None, "note": "cu2qu gate: segment regroup"}
                     continue
                 tags = []
-                if vi == 1:
-                    tags.append("union")
-                elif vi >= 2:
-                    tags.append("merge-to-min")
+                if tag:
+                    tags.append(tag)
                 if angle != CORNER_ANGLE_SWEEP[0]:
                     tags.append(f"angle={round(math.degrees(angle))}")
                 if tags:
@@ -627,16 +654,30 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
     # topmost-anchored uniform stays as the final fallback for shapes where the
     # least-squares rotation itself mis-locks. Last resorts because resampling
     # rounds corners very slightly.
-    for fn, note in ((_uniform_aligned, "uniform-aligned"), (_uniform, "uniform")):
-        uni = fn(outlines_by_pos, reference_pos)
-        if (
-            uni is not None
-            and _struct_ok(uni)
-            and _cu2qu_safe(uni)
-            and not _quality_offenders(uni, outlines_by_pos)
-            and _interp_ok(uni)
-        ):
-            return uni, {"stage": "reconstructed", "note": note}
+    # Run the uniform fallbacks over every topology variant, not just the donor
+    # outlines: a split-to-max body (p's cut bowl) can carry corner counts too
+    # different for the corner paths, yet resample perfectly uniformly. With
+    # several bridge placements in play the first passing candidate isn't
+    # necessarily the right one — keep the passer whose mid-axis ink defect is
+    # lowest.
+    best_uni = None  # (ink score, out, note)
+    for v_outlines, vref, tag in variants:
+        for fn, note in ((_uniform_aligned, "uniform-aligned"), (_uniform, "uniform")):
+            uni = fn(v_outlines, vref)
+            if (
+                uni is not None
+                and _struct_ok(uni)
+                and _cu2qu_safe(uni)
+                and not _quality_offenders(uni, outlines_by_pos)
+                and _interp_ok(uni)
+            ):
+                ink = _ink_defect(uni, blur=2)
+                full = f"{note}+{tag}" if tag else note
+                if best_uni is None or ink < best_uni[0] - 1e-9:
+                    best_uni = (ink, uni, full)
+                break  # aligned passed for this variant; skip its plain uniform
+    if best_uni is not None:
+        return best_uni[1], {"stage": "reconstructed", "note": best_uni[2]}
     return None, last
 
 
@@ -712,20 +753,81 @@ QUALITY_AREA_TOL = 0.10
 
 
 def _glyph_area(contours):
+    """Containment-aware ink area: a contour nested at odd depth (a counter)
+    subtracts, everything else adds. Summing |area| per contour would make the
+    same shape measure differently depending on topology — an open-bowl p drawn
+    as ONE ring vs its split body+counter form — and summing SIGNED areas
+    trusts drawn winding, which donors don't keep consistent (Neuton's
+    ExtraBold winds the grave accent opposite to its lighter masters; a
+    disjoint piece renders identically either way under nonzero fill, so the
+    measure must not care)."""
+    rings = [to_ring(con)[0] for con in contours]
+    boxes = [_pts_bbox(r) if len(r) >= 3 else None for r in rings]
     total = 0.0
-    for con in contours:
-        ring = to_ring(con)[0]
-        total += abs(_signed_area(ring))
-    return total
+    for i, ring in enumerate(rings):
+        if len(ring) < 3:
+            continue
+        a = abs(_signed_area(ring))
+        # nested = wholly inside another ring (bbox containment + centroid
+        # test). A single boundary-point probe is unstable for ATTACHED pieces
+        # (an ogonek overlapping its A): donor and reconstruction would
+        # classify differently and the quality ratio would lie.
+        c = _centroid(ring)
+        depth = 0
+        for j, other in enumerate(rings):
+            if j == i or len(other) < 3 or boxes[j] is None or boxes[i] is None:
+                continue
+            bi, bj = boxes[i], boxes[j]
+            if (
+                bi[0] >= bj[0] - 1
+                and bi[1] >= bj[1] - 1
+                and bi[2] <= bj[2] + 1
+                and bi[3] <= bj[3] + 1
+                and _point_in_ring(c, other)
+            ):
+                depth += 1
+        total += a if depth % 2 == 0 else -a
+    return abs(total)
+
+
+def _point_in_ring(pt, ring):
+    """Even-odd crossing test: is pt inside the closed polyline ring?"""
+    x, y = pt
+    inside = False
+    n = len(ring)
+    for i in range(n):
+        x1, y1 = ring[i]
+        x2, y2 = ring[(i + 1) % n]
+        if (y1 <= y < y2) or (y2 <= y < y1):
+            if x < x1 + (y - y1) / (y2 - y1) * (x2 - x1):
+                inside = not inside
+    return inside
 
 
 def _quality_offenders(out, donor):
+    """Per-master ink comparison between reconstruction and donor, measured by
+    RASTERIZING both with nonzero winding on a shared grid — exactly what the
+    renderer does. Analytic per-contour area needs to classify which contours
+    are counters, and no classification (drawn winding, containment heuristics)
+    survives donors with flipped windings or attached/overlapping pieces
+    (Neuton's opposite-wound grave, Devanagari conjunct parts); pixel counts
+    just match reality, and quantization cancels because both sides share the
+    same bbox and resolution."""
     bad = {}
     for pos, contours in out.items():
-        da = _glyph_area(donor[pos])
+        # to_ring, not _contour_pts: donors carry curves, and rasterizing their
+        # control polygon instead of sampled curve points would skew the ratio
+        d_rings = [to_ring(c)[0] for c in donor[pos]]
+        o_rings = [to_ring(c)[0] for c in contours]
+        xs = [p[0] for r in d_rings + o_rings for p in r]
+        ys = [p[1] for r in d_rings + o_rings for p in r]
+        if not xs:
+            continue
+        bbox = (min(xs), min(ys), max(xs), max(ys))
+        da = sum(row.bit_count() for row in _rasterize(d_rings, bbox))
         if da <= 0:
             continue
-        ra = _glyph_area(contours)
+        ra = sum(row.bit_count() for row in _rasterize(o_rings, bbox))
         dev = abs(ra / da - 1.0)
         if dev > QUALITY_AREA_TOL:
             bad[pos] = round(dev, 2)
@@ -849,6 +951,20 @@ COUNTER_TAPER = 0.45  # geometric area shrink per extra missing-master step
 MIN_COUNTER_FRAC = 5e-4  # synth counter area floor as a fraction of the body
 
 
+def _map_bbox_point(pt, from_ring, to_ring_pts):
+    """Map a point through the affine transform between two rings' bboxes."""
+    fx = [p[0] for p in from_ring]
+    fy = [p[1] for p in from_ring]
+    tx = [p[0] for p in to_ring_pts]
+    ty = [p[1] for p in to_ring_pts]
+    fw = (max(fx) - min(fx)) or 1.0
+    fh = (max(fy) - min(fy)) or 1.0
+    return (
+        min(tx) + (pt[0] - min(fx)) / fw * ((max(tx) - min(tx)) or 1.0),
+        min(ty) + (pt[1] - min(fy)) / fh * ((max(ty) - min(ty)) or 1.0),
+    )
+
+
 def _synth_counter(template_ring, scale, center):
     """A tiny counter ring: shrink a template counter toward `center` by `scale`,
     keeping its shape/winding so it stays point-compatible with the real ones."""
@@ -908,6 +1024,12 @@ def _counter_closing(outlines_by_pos, reference_pos):
                 return None
             sign = 1 if _signed_area(ring) >= 0 else -1
             entries.append((con, ring, _centroid(ring), sign))
+        # normalise winding per master so the dominant (largest) contour is
+        # always +1: donors can flip overall orientation between masters
+        # (Neuton's light masters wind outers the other way), and slot matching
+        # by RAW sign would then map a light outline onto the heavy COUNTER slot.
+        dom = max(entries, key=lambda e: abs(_signed_area(e[1])))[3]
+        entries = [(c, r, ce, s * dom) for c, r, ce, s in entries]
         parts[pos] = entries
 
     if len({len(parts[p]) for p in positions}) == 1:
@@ -945,12 +1067,38 @@ def _counter_closing(outlines_by_pos, reference_pos):
         ),
         default=1.0,
     )
+    body_slot = max(range(nslot), key=lambda s2: abs(_signed_area(slots[s2][1])))
+    body_sign = slots[body_slot][3]
     for s in range(nslot):
         present = sorted(p for p in positions if p in fams[s])
         if not present:
             return None
         missing = [p for p in positions if p not in fams[s]]
         if not missing:
+            continue
+        near_pos = min(present, key=lambda p: min(abs(p - m) for m in missing))
+        near_ring = fams[s][near_pos][1]
+        near_area = abs(_signed_area(near_ring)) or 1.0
+        near_c = _centroid(near_ring)
+        if slots[s][3] != body_sign:
+            # A HOLE that only exists at some weights (p/q/thorn's bowl counter
+            # appears at ExtraBold). Unlike a bar stub, a zero-area hole is
+            # invisible, so the missing masters get a NEAR-ZERO synthetic ring
+            # and the hole grows from nothing across the span — the master
+            # renders exactly like its donor (no phantom counter, which the
+            # quality gate rightly rejected at 20-30% area deviation). Anchor it
+            # inside each master's own body by mapping the template centroid
+            # through the body rings' bboxes, so the emerging hole stays inside
+            # the lighter, narrower bowl.
+            for mp in missing:
+                center = near_c
+                if mp in fams[body_slot] and near_pos in fams[body_slot]:
+                    center = _map_bbox_point(
+                        near_c, fams[body_slot][near_pos][1], fams[body_slot][mp][1]
+                    )
+                ring = _synth_counter(near_ring, 0.02, near_c)
+                ring = [(p[0] - near_c[0] + center[0], p[1] - near_c[1] + center[1]) for p in ring]
+                fams[s][mp] = (_as_line_contour(ring), ring, center)
             continue
         pairs = [(p, abs(_signed_area(fams[s][p][1]))) for p in present]
         heaviest = present[-1]
@@ -967,14 +1115,33 @@ def _counter_closing(outlines_by_pos, reference_pos):
 
     # reconstruct each slot family to a shared structure (light ref keeps the
     # open-piece corners), then recombine in slot order
-    combined = {pos: [] for pos in positions}
+    fam_outs = []
     for s in range(nslot):
         fam = {pos: fams[s][pos][0] for pos in positions}
         out = _reconstruct_single_family(fam, positions, lightest)
         if out is None:
             return None
+        fam_outs.append(out)
+
+    # family resampling aligns winding WITHIN each family to its own reference,
+    # which can leave a hole slot wound the same way as the body — under
+    # nonzero winding that renders with no hole at all. Re-orient hole families
+    # against the body's output winding (reversing every master together keeps
+    # the family's point correspondence intact).
+    def _out_sign(out):
+        return 1 if _signed_area(to_ring(out[lightest])[0]) >= 0 else -1
+
+    body_out_sign = _out_sign(fam_outs[body_slot])
+    for s in range(nslot):
+        if slots[s][3] != body_sign and _out_sign(fam_outs[s]) == body_out_sign:
+            fam_outs[s] = {
+                pos: _as_line_contour(list(reversed(_contour_pts(con))))
+                for pos, con in fam_outs[s].items()
+            }
+    combined = {pos: [] for pos in positions}
+    for s in range(nslot):
         for pos in positions:
-            combined[pos].append(out[pos])
+            combined[pos].append(fam_outs[s][pos])
     return combined
 
 
@@ -1145,11 +1312,19 @@ def open_bar(glyph_outlines_by_pos, letter_outlines_by_pos, anchor, reference_po
     return {pos: [body_out[pos], *_bar_nubs(body_out[pos], bar_geom[pos])] for pos in positions}
 
 
-def _to_n_contours(contours, target):
+def _to_n_contours(contours, target, bridge_pick=0):
     """Bridge a master's contours down to `target` count: repeatedly splice the
     smallest-area contour into its nearest neighbour with a zero-width bridge
     (invisible under keep-overlaps), until `target` remain. Returns polyline
-    contours, or None if it can't (target larger than count)."""
+    contours, or None if it can't (target larger than count).
+
+    `bridge_pick` selects the bridge LOCATION for the final splice: 0 is the
+    closest point pair, higher values pick successively different spots around
+    the spliced ring. Where the bridge lands decides the merged ring's
+    correspondence with the other masters (a p bridged through the stem side
+    folds against a light master whose bowl opens elsewhere), and the caller
+    can't know the right spot a priori — it tries a few and lets the gates and
+    the ink score choose."""
     if len(contours) == target:
         return contours
     if len(contours) < target:
@@ -1164,20 +1339,146 @@ def _to_n_contours(contours, target):
         small = rings.pop(si)
         sc = _centroid(small)
         ti = min(range(len(rings)), key=lambda i: _dist(sc, _centroid(rings[i])))
-        rings[ti] = _bridge_rings(rings[ti], small)
+        pick = bridge_pick if len(rings) == target else 0
+        bridged = _bridge_rings(rings[ti], small, pick)
+        if bridged is None:
+            return None
+        rings[ti] = bridged
     return [_as_line_contour(r) for r in rings]
 
 
-def _bridge_rings(a, b):
-    """Splice ring b into ring a at their closest point pair, forming one ring."""
+def _bridge_rings(a, b, pick=0):
+    """Splice ring b into ring a, forming one ring. `pick` 0 uses the closest
+    point pair; higher values use the closest pair anchored at successively
+    different spots around ring b (its points bucketed into arcs), giving the
+    caller distinct bridge locations to try. Returns None when `pick` exceeds
+    the distinct locations available."""
+    nb = len(b)
+    if pick == 0:
+        buckets = [range(nb)]
+    else:
+        k = 6  # distinct arcs around the spliced ring
+        if pick > k:
+            return None
+        step = max(1, nb // k)
+        buckets = [range((pick - 1) * step, min(pick * step, nb))]
     best = (0, 0, float("inf"))
-    for i, pa in enumerate(a):
-        for j, pb in enumerate(b):
-            d = _dist(pa, pb)
-            if d < best[2]:
-                best = (i, j, d)
+    for j_range in buckets:
+        for j in j_range:
+            pb = b[j]
+            for i, pa in enumerate(a):
+                d = _dist(pa, pb)
+                if d < best[2]:
+                    best = (i, j, d)
     ia, ib, _ = best
+    if best[2] == float("inf"):
+        return None
     return a[: ia + 1] + b[ib:] + b[: ib + 1] + a[ia:]
+
+
+# A neck must be narrower than this fraction of the ring's bbox diagonal to cut
+# there. Generous on purpose: an ink-trap channel (p/q's bowl) is hairline, but
+# K's leg-stem contact is a real junction; bad cuts are vetoed by the quality
+# gates and the ink tournament downstream.
+NECK_MAX_FRAC = 0.16
+# Each side of the cut must carry at least this fraction of the ring's points,
+# so serif clefts and corner notches (tiny arcs) are never treated as necks.
+NECK_MIN_ARC = 0.15
+
+
+def _split_to_n(contours, target_contours):
+    """Split a master's contours UP to the target master's count by cutting one
+    ring across a neck: the inverse of _to_n_contours, for glyphs whose piece is
+    only attached at light weights (p/q/thorn's bowl reaches the stem through a
+    hairline channel, K's leg touches the stem). The cut CANNOT be chosen by
+    narrowness alone — in a thin master every stroke is a "neck", and cutting
+    across a stem slices the glyph in half. Instead the TARGET master (which
+    natively draws the pieces separately) defines what a correct split looks
+    like: candidate necks are scored by how well the resulting pieces' winding
+    signs and area fractions match the target's contours (an aperture cut yields
+    body + opposite-wound counter, a junction cut two same-wound pieces), and
+    the best-matching cut wins. Returns polyline contours, or None."""
+    target = len(target_contours)
+    if len(contours) == target:
+        return contours
+    if len(contours) != target - 1:
+        return None  # only a single-split difference is supported
+    rings = [to_ring(c)[0] for c in contours]
+    if any(len(r) < 8 for r in rings):
+        return None
+    t_sig = _area_signature([to_ring(c)[0] for c in target_contours])
+    best = None  # (score, ring index, i, j)
+    for ri, ring in enumerate(rings):
+        for width, i, j in _neck_candidates(ring):
+            pieces = [ring[i : j + 1], ring[j:] + ring[: i + 1]]
+            if any(len(p) < 3 for p in pieces):
+                continue
+            cand = rings[:ri] + pieces + rings[ri + 1 :]
+            score = _signature_distance(_area_signature(cand), t_sig)
+            if score is not None and (best is None or score < best[0]):
+                best = (score, ri, i, j)
+    if best is None:
+        return None
+    _, ri, i, j = best
+    ring = rings.pop(ri)
+    rings.insert(ri, ring[i : j + 1])
+    rings.insert(ri + 1, ring[j:] + ring[: i + 1])
+    return [_as_line_contour(r) for r in rings]
+
+
+def _area_signature(rings):
+    """Sorted (sign, |area| fraction) per ring; the glyph's topology fingerprint."""
+    areas = [_signed_area(r) for r in rings]
+    total = sum(abs(a) for a in areas) or 1.0
+    return sorted(((1 if a >= 0 else -1), abs(a) / total) for a in areas)
+
+
+def _signature_distance(sig, target_sig):
+    """Distance between two area signatures, or None if the winding-sign
+    patterns differ (in both global polarities)."""
+    if len(sig) != len(target_sig):
+        return None
+    for flip in (1, -1):
+        flipped = sorted((s * flip, f) for s, f in sig)
+        if [s for s, _ in flipped] == [s for s, _ in target_sig]:
+            return sum(abs(f1 - f2) for (_, f1), (_, f2) in zip(flipped, target_sig, strict=False))
+    return None
+
+
+def _neck_candidates(ring):
+    """(width, i, j) neck candidates of a dense ring: pairs whose connecting cut
+    is short relative to the ring's size while BOTH arcs stay substantial,
+    deduplicated to local minima, narrowest first. NOT capped: in a thin master
+    every stroke is narrow, so stroke cuts flood the narrow end of the list —
+    the aperture/junction cut the caller wants is often WIDER and only survives
+    on its piece-signature score, which is why every deduped candidate stays."""
+    n = len(ring)
+    min_arc = max(3, int(n * NECK_MIN_ARC))
+    xs = [p[0] for p in ring]
+    ys = [p[1] for p in ring]
+    diag = math.hypot(max(xs) - min(xs), max(ys) - min(ys))
+    limit = diag * NECK_MAX_FRAC
+    cands = []
+    for i in range(n):
+        for j in range(i + min_arc, n):
+            if n - j + i < min_arc:  # arc that wraps past index 0
+                continue
+            d = _dist(ring[i], ring[j])
+            if d <= limit:
+                cands.append((d, i, j))
+    cands.sort()
+    kept = []
+    for d, i, j in cands:
+        # skip candidates whose endpoints sit next to an already-kept narrower
+        # cut — they are the same neck a few samples over
+        near = int(n * 0.04) + 1
+        if any(
+            min(abs(i - ki), n - abs(i - ki)) <= near and min(abs(j - kj), n - abs(j - kj)) <= near
+            for _, ki, kj in kept
+        ):
+            continue
+        kept.append((d, i, j))
+    return kept
 
 
 def union_overlaps(contours):
@@ -1435,26 +1736,54 @@ def _project_contour_set(per, positions, ref):
         ref_first = rn[0]
         start = min(range(len(nd)), key=lambda i: _dist(nd[i], ref_first))
         nd = nd[start:] + nd[:start]
-        # place anchors at the reference's arc-length fractions on this master
-        anchor_idx = _idx_at_fracs(nd, ref_fracs)
-        # two anchors collapsing onto one node means this master can't hold the
-        # reference's anchor structure at this corner angle. Fail the angle
-        # (caller keeps sweeping toward one where corner counts agree and the
-        # clean resample path runs) rather than slice the runs anyway:
-        # _run_slice's a==b convention splices a full extra ring loop per
-        # collision, which multiplies the ink area and, once past the gates,
-        # ships glyphs that collapse at in-between weights.
-        if k > 1 and len(set(anchor_idx)) != k:
-            return None
+        # place anchors at the reference's EXACT arc-length fractions: inserting
+        # interpolated points (rather than snapping to the nearest existing node,
+        # which COLLIDES when the reference's corners cluster — serif corners a
+        # few units apart snap to the same node, and slicing runs between
+        # colliding indices spliced a full extra ring loop, multiplying the ink
+        # area). Exact positions cannot collide while the reference fracs are
+        # distinct; a genuinely duplicated frac just yields an empty run, which
+        # keeps its point budget as repeats of the anchor.
+        aug, anchor_idx = _insert_at_fracs(nd, ref_fracs)
         pts_out = []
         for r in range(k):
             a = anchor_idx[r]
             b = anchor_idx[(r + 1) % k]
-            seg = _run_slice(nd, a, b)
-            pts_out.append(nd[a])
+            seg = _run_slice(aug, a, b) if a != b else [aug[a], aug[a]]
+            pts_out.append(aug[a])
             pts_out.extend(_resample_polyline(seg, run_counts[r]))
         result[pos] = _as_line_contour(pts_out)
     return result
+
+
+def _insert_at_fracs(nodes, fracs):
+    """Insert interpolated points into a closed ring at the given arc-length
+    fractions. Returns (augmented ring, index of each frac's anchor point)."""
+    cum, total = _cumlen(nodes)
+    n = len(nodes)
+    # (arc position, original index) for every existing node
+    events = [(cum[i], 0, i) for i in range(n)]
+    for fi, f in enumerate(fracs):
+        events.append((min(f, 1.0) * total, 1, fi))
+    events.sort()
+    aug = []
+    anchor_idx = [0] * len(fracs)
+    for arc, kind, idx in events:
+        if kind == 0:
+            aug.append(nodes[idx])
+        else:
+            # interpolate the point at this arc position
+            i = 1
+            while i <= n and cum[i] < arc:
+                i += 1
+            i = min(i, n)
+            span = cum[i] - cum[i - 1]
+            t = 0.0 if span <= 0 else (arc - cum[i - 1]) / span
+            a = nodes[i - 1]
+            b = nodes[i % n]
+            anchor_idx[idx] = len(aug)
+            aug.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))
+    return aug, anchor_idx
 
 
 def _cumlen(nodes):
