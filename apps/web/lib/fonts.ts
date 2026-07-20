@@ -169,22 +169,6 @@ export const FONTS: DemoFont[] = [
     credit: "Mukta by Ek Type, OFL",
   },
   {
-    id: "passion-one",
-    name: "Passion One",
-    category: "display slab",
-    file: "/fonts/passion-one.woff2",
-    ttf: "/fonts/passion-one.ttf",
-    axis: w(400, 400, 900),
-    instances: [
-      { name: "Regular", wght: 400 },
-      { name: "Bold", wght: 700 },
-      { name: "Black", wght: 900 },
-    ],
-    builtFrom: "Regular 400 · Bold 700 · Black 900",
-    staticStyles: 3,
-    credit: "Passion One by Fontstage, OFL",
-  },
-  {
     id: "zilla-slab",
     name: "Zilla Slab",
     category: "slab serif",
