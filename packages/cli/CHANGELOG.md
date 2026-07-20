@@ -1,5 +1,11 @@
 # static-to-variable
 
+## 0.3.1
+
+### Patch Changes
+
+- 014597d: Fix the default (Regular) named instance in `build` output: fontmake leaves its fvar subfamily name empty and its PostScript name truncated (e.g. `Family-`), so font menus showed a blank entry. The name repair that already ran at `release` time now runs on the `build` artifact too.
+
 ## 0.3.0
 
 ### Minor Changes
