@@ -296,6 +296,7 @@ def reconstruct(outlines_by_pos, reference_pos=400):
         and _struct_ok(cc)
         and _cu2qu_safe(cc)
         and not _quality_offenders(cc, outlines_by_pos)
+        and _interp_ok(cc)
     ):
         return cc, {"stage": "reconstructed", "note": "counter-closing"}
 
@@ -360,37 +361,25 @@ def reconstruct(outlines_by_pos, reference_pos=400):
             last = info
     # Last resort before giving up: UNIFORM arc-length resampling — ignore corner
     # anchors and place dense, evenly-spaced points from a canonical (topmost)
-    # start on every contour. Corner-anchored runs can mis-correspond across
-    # masters (k's diagonal) and collapse at in-between weights; uniform
-    # arc-length correspondence interpolates cleanly (corners stay sharp enough at
-    # this density). Last because it rounds corners very slightly.
-    uni = _uniform(outlines_by_pos, reference_pos)
-    if (
-        uni is not None
-        and _struct_ok(uni)
-        and _cu2qu_safe(uni)
-        and not _quality_offenders(uni, outlines_by_pos)
-        and _interp_ok(uni)
-    ):
-        return uni, {"stage": "reconstructed", "note": "uniform"}
-
-    # Rotation-aligned uniform: round contours (o, O, zero, ring counters) get
-    # anchored at their "topmost" node, which lands at a different angular spot
-    # when masters carry different node counts (e.g. a 2-node vs 5-node oval), so
-    # the standard uniform above interpolates node->wrong-node and collapses at
-    # mid-weights. Re-resample uniformly, then cyclically rotate each master's
-    # ring to the offset that best matches the reference. Additive: only reached
-    # once every path above has failed, so it never changes a glyph that already
-    # reconstructs.
-    aligned = _uniform_aligned(outlines_by_pos, reference_pos)
-    if (
-        aligned is not None
-        and _struct_ok(aligned)
-        and _cu2qu_safe(aligned)
-        and not _quality_offenders(aligned, outlines_by_pos)
-        and _interp_ok(aligned)
-    ):
-        return aligned, {"stage": "reconstructed", "note": "uniform-aligned"}
+    # start on every contour, then cyclically rotate each master's ring to the
+    # offset that best matches the reference (least-squares). The rotation step
+    # matters beyond round contours: any glyph whose topmost node DRIFTS across
+    # masters (m's three near-level arch tops, a 2-node vs 5-node oval) otherwise
+    # interpolates node->wrong-node and goes lumpy at mid-weights, while a glyph
+    # whose anchoring already agrees gets rotation 0 and is unchanged. Plain
+    # topmost-anchored uniform stays as the final fallback for shapes where the
+    # least-squares rotation itself mis-locks. Last resorts because resampling
+    # rounds corners very slightly.
+    for fn, note in ((_uniform_aligned, "uniform-aligned"), (_uniform, "uniform")):
+        uni = fn(outlines_by_pos, reference_pos)
+        if (
+            uni is not None
+            and _struct_ok(uni)
+            and _cu2qu_safe(uni)
+            and not _quality_offenders(uni, outlines_by_pos)
+            and _interp_ok(uni)
+        ):
+            return uni, {"stage": "reconstructed", "note": note}
     return None, last
 
 
@@ -509,20 +498,35 @@ def _cu2qu_safe(out):
     return len(shapes) == 1
 
 
+def _ring_perimeter(pts):
+    n = len(pts)
+    return sum(_dist(pts[i], pts[(i + 1) % n]) for i in range(n))
+
+
 def _contour_pts(con):
-    """On/off-curve point list of a (op,[pts]) contour, in order."""
+    """On/off-curve point list of a (op,[pts]) contour, in order. All-off-curve
+    TrueType contours carry an implied-on-curve ``None`` in their qCurveTo (and
+    no moveTo) — expand them first so every entry is a real point."""
     pts = []
-    for op, p in con:
+    for op, p in _implied_oncurve_contour(con):
         pts.extend(p)
     return pts
 
 
-def _interp_ok(out, tol=0.18):
+def _interp_ok(out, tol=0.18, perim_tol=0.83):
     """A point-compatible reconstruction can still interpolate badly if point
     correspondence across masters is wrong (e.g. k's diagonal): the masters look
     fine but the in-between weights collapse. Lerp the points of each adjacent
     master pair at t=0.5 and require the midpoint ink area to stay near the mean
-    of the two endpoints — a collapse (points crossing) spikes it away."""
+    of the two endpoints — a collapse (points crossing) spikes it away.
+
+    Area alone misses a TWIST that conserves ink (Taviraj K's counter-closing
+    bridge): mis-corresponded points fold the midpoint ring onto itself without
+    much net area change. The fold shows in the midpoint PERIMETER, which by the
+    triangle inequality can only shrink relative to the mean of the endpoints —
+    a clean interpolation stays near 1.0, a fold drops sharply. Calibrated over
+    the showcase families: visually-broken twists sit <= ~0.82, healthy glyphs
+    >= ~0.85, so 0.83 freezes the egregious ones and spares the rest."""
     positions = sorted(out)
     for a, b in zip(positions, positions[1:], strict=False):
         ca, cb = out[a], out[b]
@@ -539,6 +543,13 @@ def _interp_ok(out, tol=0.18):
             midpts = [
                 ((pa[i][0] + pb[i][0]) / 2, (pa[i][1] + pb[i][1]) / 2) for i in range(len(pa))
             ]
+            if len(midpts) >= 3:
+                pm = _ring_perimeter(midpts)
+                pmean = (_ring_perimeter(pa) + _ring_perimeter(pb)) / 2
+                # ignore tiny contours (accent dots): a few units of rounding
+                # would dominate the ratio
+                if pmean > 500 and pm / pmean < perim_tol:
+                    return False
             con = (
                 [("moveTo", [midpts[0]])]
                 + [("lineTo", [p]) for p in midpts[1:]]
@@ -1169,6 +1180,15 @@ def _project_contour_set(per, positions, ref):
         nd = nd[start:] + nd[:start]
         # place anchors at the reference's arc-length fractions on this master
         anchor_idx = _idx_at_fracs(nd, ref_fracs)
+        # two anchors collapsing onto one node means this master can't hold the
+        # reference's anchor structure at this corner angle. Fail the angle
+        # (caller keeps sweeping toward one where corner counts agree and the
+        # clean resample path runs) rather than slice the runs anyway:
+        # _run_slice's a==b convention splices a full extra ring loop per
+        # collision, which multiplies the ink area and, once past the gates,
+        # ships glyphs that collapse at in-between weights.
+        if k > 1 and len(set(anchor_idx)) != k:
+            return None
         pts_out = []
         for r in range(k):
             a = anchor_idx[r]
