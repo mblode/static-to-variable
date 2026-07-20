@@ -1,5 +1,11 @@
 # static-to-variable
 
+## 0.4.2
+
+### Patch Changes
+
+- b2d7d4a: Glyphs whose contour count changes across masters now interpolate instead of freezing. A split-to-max variant cuts the low-count master's ring across the neck whose resulting pieces best match the target master's winding-sign and area signature (Spectral/Khand's K legs, k.sc), zero-width bridge placement is no longer fixed to the closest point pair but tried at several spots around the spliced ring with the ink score choosing (Neuton's p, q, thorn bowls), hole slots that only exist at some weights are synthesised at near-zero scale inside the body so the counter grows from nothing instead of rendering a phantom hole, and reference projection places anchors at exact interpolated arc positions rather than snapping to nodes, which collided for clustered serif corners and knocked out entire accent families (Neuton's Eacute through ntilde). The quality gate now rasterizes both sides with nonzero winding and compares pixel counts, replacing per-contour analytic area that misjudged donors with flipped windings (Neuton's ExtraBold grave) or attached pieces (ogonek, cedilla, Devanagari conjuncts). Remaining freezes are genuine design incompatibilities, like Neuton's 4 whose Regular master lacks the foot pedestal both other masters draw. Showcase builds run slower for the extra raster scoring.
+
 ## 0.4.1
 
 ### Patch Changes
