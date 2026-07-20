@@ -60,9 +60,11 @@ async function activateFont(
 export function SingleGlyphViewer({
   font,
   selector,
+  pageHref,
 }: {
   font: DemoFont;
   selector?: ReactNode;
+  pageHref?: string;
 }) {
   const [weight, setWeight] = useState(font.axis.def);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
@@ -140,6 +142,11 @@ export function SingleGlyphViewer({
           {status === "loading" && "loading…"}
         </span>
         <span className="flex gap-1.5">
+          {pageHref ? (
+            <Button asChild size="xs" variant="ghost">
+              <Link href={pageHref}>View the {font.name} page</Link>
+            </Button>
+          ) : null}
           <Button asChild size="xs" variant="outline">
             <a download={`${font.id}-variable.ttf`} href={font.ttf}>
               <ArrowDownIcon />
@@ -164,46 +171,33 @@ export function GlyphViewer() {
   const font = FONTS[index];
 
   return (
-    <div>
-      <SingleGlyphViewer
-        font={font}
-        selector={
-          <div className="flex items-center gap-2 text-muted-foreground text-sm">
-            Font
-            <Select
-              items={FONTS.map((f, i) => ({
-                label: `${f.name} (${f.category})`,
-                value: String(i),
-              }))}
-              onValueChange={(value) => setIndex(Number(value))}
-              value={String(index)}
-            >
-              <SelectTrigger className="w-fit" size="sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {FONTS.map((f, i) => (
-                  <SelectItem key={f.id} value={String(i)}>
-                    {f.name} ({f.category})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        }
-      />
-      <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground text-sm">
-        <span className="text-muted-foreground/70">All {FONTS.length}:</span>
-        {FONTS.map((f) => (
-          <Link
-            className="hover:text-foreground"
-            href={`/showcase/${f.id}`}
-            key={f.id}
+    <SingleGlyphViewer
+      font={font}
+      pageHref={`/showcase/${font.id}`}
+      selector={
+        <div className="flex items-center gap-2 text-muted-foreground text-sm">
+          Font
+          <Select
+            items={FONTS.map((f, i) => ({
+              label: `${f.name} (${f.category})`,
+              value: String(i),
+            }))}
+            onValueChange={(value) => setIndex(Number(value))}
+            value={String(index)}
           >
-            {f.name}
-          </Link>
-        ))}
-      </p>
-    </div>
+            <SelectTrigger className="w-fit" size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {FONTS.map((f, i) => (
+                <SelectItem key={f.id} value={String(i)}>
+                  {f.name} ({f.category})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      }
+    />
   );
 }

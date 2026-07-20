@@ -100,7 +100,7 @@ static-to-variable build`}</code>
             className="hover:text-foreground"
             href="https://www.npmjs.com/package/static-to-variable"
           >
-            npm
+            NPM
           </a>
         </div>
         <div className="flex items-center gap-1">
