@@ -34,7 +34,7 @@ from variable_gen.designspace import export_designspace
 SCRIPT_DIR = Path(__file__).resolve().parent
 PACKAGE_DIR = SCRIPT_DIR.parent
 
-DEFAULT_CONFIG = PACKAGE_DIR.parent.parent / "examples/glide/stv.config.json"
+DEFAULT_CONFIG = PACKAGE_DIR.parent.parent / "examples/minimal/stv.config.json"
 DEFAULT_REPORT_DIR = PACKAGE_DIR / "reports/audit"
 DEFAULT_BUILD_DIR = PACKAGE_DIR / "build/audit"
 DEFAULT_MIN_SEGMENT_THRESHOLD = 2.0

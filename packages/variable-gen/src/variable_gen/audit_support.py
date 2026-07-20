@@ -2,8 +2,7 @@
 
 Geometry metrics (ink area, point deviation, self-intersections), designspace
 interpolatable runs, UFO contour-order normalization, and fontmake variable
-builds. Extracted from the legacy Circular repair scripts so the audit gate can
-run against any config-driven project.
+builds. Runs against any config-driven project.
 """
 
 from __future__ import annotations

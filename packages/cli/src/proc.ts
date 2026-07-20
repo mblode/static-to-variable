@@ -24,3 +24,30 @@ export function spawnInherit(
     child.on("close", (code) => resolve(code ?? 1));
   });
 }
+
+/**
+ * Like {@link spawnInherit}, but captures the child's stdout instead of routing
+ * it to our stderr. Use when the child emits a machine-readable document the CLI
+ * must forward to its own stdout (e.g. `split --json`); the child's stderr still
+ * inherits so human progress stays visible.
+ */
+export function spawnCapture(
+  command: string,
+  args: readonly string[],
+  cwd: string
+): Promise<{ code: number; stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, [...args], {
+      cwd,
+      env: process.env,
+      stdio: ["inherit", "pipe", "inherit"],
+    });
+    let stdout = "";
+    child.stdout?.setEncoding("utf-8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code: code ?? 1, stdout }));
+  });
+}

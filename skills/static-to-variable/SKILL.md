@@ -165,9 +165,10 @@ To show every glyph, read the font's `cmap` and render one cell per codepoint, e
 | `init` | Write `stv.config.json`: detected from nearby fonts (TTY), or a starter template (non-TTY). |
 | `build` | Rebuild the masters and build the variable font. |
 | `release` | Finalize metadata and write TTF + WOFF2. |
+| `split <font>` | The reverse: split a variable font into static weight files (TTF + WOFF2), one per step along the wght axis. No config needed. |
 | `doctor` | Report Node, Python, uv, mode (checkout vs standalone), and config. |
 
-`build`, `release`, and `doctor` take `--json` for a machine-readable summary on stdout (progress goes to stderr). Exit codes are `0` ok, `1` failure, `2` usage (bad flag, missing or invalid config), `3` environment. Configs are validated against the JSON schema before any work starts.
+`build`, `release`, `split`, and `doctor` take `--json` for a machine-readable summary on stdout (progress goes to stderr). Exit codes are `0` ok, `1` failure, `2` usage (bad flag, missing or invalid config), `3` environment. Configs are validated against the JSON schema before any work starts.
 
 ## Gotchas
 

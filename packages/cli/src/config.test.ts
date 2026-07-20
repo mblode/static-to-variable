@@ -46,16 +46,16 @@ function tempConfig(contents: string): string {
 
 const allFixtures = [...loadFixtures("valid"), ...loadFixtures("invalid")];
 
-test("loads the Glide example config", () => {
+test("loads the Inter example config", () => {
   const config = loadProjectConfig(
-    path.join(repoRoot, "examples/glide/stv.config.json")
+    path.join(repoRoot, "examples/inter/stv.config.json")
   );
-  expect(config.id).toBe("glide");
-  expect(config.familyName).toBe("Glide");
+  expect(config.id).toBe("inter");
+  expect(config.familyName).toBe("Inter STV");
   expect(config.styleKeys).toEqual(["italic", "roman"]);
   expect(config.formats).toEqual(["ttf", "woff2"]);
-  expect(config.outputDir).toBe("packages/variable-gen/build");
-  expect(config.releaseDir).toBe("packages/variable-gen/build/release");
+  expect(config.outputDir).toBe("build");
+  expect(config.releaseDir).toBe("build/release");
 });
 
 test("loads the minimal example config", () => {

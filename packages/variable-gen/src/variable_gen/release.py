@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """Config-driven release packaging for a static-to-variable family.
 
-This is the generic form of the historical ``release_glide.py``: it finalizes the
-variable-font metadata (name table, RIBBI bits, STAT/fvar named instances,
-PostScript names, version stamp, vendor id) and emits TTF + WOFF2 into the
-configured release directory. Everything is sourced from the v3 ``ProjectConfig``
-family metadata + ``axes[].namedInstances``.
-
-The static Glide-Mono build that used to live here is Glide-specific and has been
-moved to ``examples/glide/extra/build_mono.py``.
+Finalizes the variable-font metadata (name table, RIBBI bits, STAT/fvar named
+instances, PostScript names, version stamp, vendor id) and emits TTF + WOFF2 into
+the configured release directory. Everything is sourced from the v3
+``ProjectConfig`` family metadata + ``axes[].namedInstances``.
 
 Run:  uv run python -m variable_gen.cli release --config <path> --style all
 """

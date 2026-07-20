@@ -15,7 +15,7 @@ if str(SRC_DIR) not in sys.path:
 from variable_gen.config import ConfigError, load_config  # noqa: E402
 
 REPO_ROOT = PACKAGE_ROOT.parents[1]
-CONFIG_PATH = REPO_ROOT / "examples" / "glide" / "stv.config.json"
+CONFIG_PATH = REPO_ROOT / "examples" / "inter" / "stv.config.json"
 
 
 def _load_raw() -> dict:
@@ -29,15 +29,15 @@ def _write_temp(data: dict) -> Path:
     return Path(tmp.name)
 
 
-def test_loads_glide_example() -> None:
+def test_loads_inter_example() -> None:
     config = load_config(CONFIG_PATH)
 
-    assert config.id == "glide"
+    assert config.id == "inter"
     assert config.version == 3
-    assert config.family.name == "Glide"
-    assert config.family.version == "2.000"
-    assert config.family.vendor == "MBLD"
-    assert config.family.designer == "Matthew Blode"
+    assert config.family.name == "Inter STV"
+    assert config.family.version == "1.000"
+    assert config.family.vendor == "STV"
+    assert config.family.designer == "The Inter Project Authors"
 
 
 def test_axis_range_and_named_instances() -> None:
@@ -45,10 +45,10 @@ def test_axis_range_and_named_instances() -> None:
 
     assert [axis.tag for axis in config.axes] == ["wght"]
     axis = config.axes[0]
-    assert (axis.minimum, axis.default, axis.maximum) == (100.0, 400.0, 950.0)
+    assert (axis.minimum, axis.default, axis.maximum) == (100.0, 400.0, 900.0)
     assert axis.named_instances[100.0] == "Thin"
-    assert axis.named_instances[950.0] == "ExtraBlack"
-    assert len(axis.named_instances) == 10
+    assert axis.named_instances[900.0] == "Black"
+    assert len(axis.named_instances) == 9
 
 
 def test_two_styles_with_ordered_masters() -> None:
@@ -56,8 +56,8 @@ def test_two_styles_with_ordered_masters() -> None:
 
     assert sorted(config.styles) == ["italic", "roman"]
     for style in config.styles.values():
-        assert [m.name for m in style.masters] == ["Thin", "Regular", "ExtraBlack"]
-        assert [m.location["wght"] for m in style.masters] == [100.0, 400.0, 950.0]
+        assert [m.name for m in style.masters] == ["Thin", "Regular", "Black"]
+        assert [m.location["wght"] for m in style.masters] == [100.0, 400.0, 900.0]
         assert sum(1 for m in style.masters if m.default) == 1
         default_master = next(m for m in style.masters if m.default)
         assert default_master.name == "Regular"
@@ -69,25 +69,14 @@ def test_vertical_metrics_and_glyph_strategies() -> None:
     config = load_config(CONFIG_PATH)
 
     assert config.vertical_metrics is not None
-    assert config.vertical_metrics.ascender == 986.0
-    assert config.vertical_metrics.descender == -277.0
-    assert config.vertical_metrics.cap_height == 709.0
-    assert config.vertical_metrics.x_height == 481.0
+    assert config.vertical_metrics.ascender == 1984.0
+    assert config.vertical_metrics.descender == -494.0
+    assert config.vertical_metrics.cap_height == 1456.0
+    assert config.vertical_metrics.x_height == 1118.0
 
-    assert "emacron" in config.glyphs.freeze
+    assert "periodcentered" in config.glyphs.freeze
     dollar = config.glyphs.strategies["dollar"]
-    assert dollar.strategy == "open_bar"
-    assert dollar.params["letter"] == "S"
-    assert "italic" in config.glyphs.seeds
-    assert "roman" in config.glyphs.seeds
-
-
-def test_rejects_v2_manifest() -> None:
-    data = _load_raw()
-    data["version"] = 2
-    path = _write_temp(data)
-    with pytest.raises(ConfigError, match="v2 manifest"):
-        load_config(path)
+    assert dollar.strategy == "interpolate_neighbors"
 
 
 def test_rejects_wrong_version() -> None:

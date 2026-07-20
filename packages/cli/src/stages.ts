@@ -3,36 +3,6 @@ import type { PipelineStage, StagePlanOptions } from "./types.js";
 
 export const PIPELINE_STAGES: readonly PipelineStage[] = [
   {
-    args: [
-      "--workspace",
-      "@static-to-variable/variable-gen",
-      "run",
-      "inventory",
-    ],
-    artifact: "packages/variable-gen/reports/donor-inventory.json",
-    command: "npm",
-    description:
-      "Discover the static donor fonts in the manifest and write the inventory report.",
-    id: "inventory",
-    kind: "blocking",
-    title: "Donor Inventory",
-  },
-  {
-    args: [
-      "--workspace",
-      "@static-to-variable/variable-gen",
-      "run",
-      "compatibility:raw",
-    ],
-    artifact: "packages/variable-gen/reports/compatibility-raw.json",
-    command: "npm",
-    description:
-      "Run fontTools interpolatable checks against raw static donors before repair.",
-    id: "raw_compatibility",
-    kind: "diagnostic",
-    title: "Raw Donor Compatibility",
-  },
-  {
     args: ["--workspace", "@static-to-variable/variable-gen", "run", "rebuild"],
     artifact: "packages/variable-gen/reports/reconstruction-report.json",
     command: "npm",
@@ -74,48 +44,6 @@ export const PIPELINE_STAGES: readonly PipelineStage[] = [
       "--workspace",
       "@static-to-variable/variable-gen",
       "run",
-      "residual:blockers",
-    ],
-    artifact:
-      "packages/variable-gen/reports/repair/blocker-residual-validation.md",
-    command: "npm",
-    description:
-      "Validate manifest-tracked blocker glyphs for source structure, area drift, and short segments.",
-    id: "blocker_residuals",
-    kind: "blocking",
-    title: "Blocker Residual Validation",
-  },
-  {
-    args: [
-      "--workspace",
-      "@static-to-variable/glyph-forge-engine",
-      "run",
-      "qa:build",
-    ],
-    artifact: "packages/glyph-forge-engine/manifests/broken-glyphs.json",
-    command: "npm",
-    description:
-      "Rebuild visual QA manifests, scores, recommendations, and solver outputs from variable-gen reports.",
-    id: "glyph_forge",
-    kind: "blocking",
-    title: "Glyph QA",
-  },
-  {
-    args: ["--workspace", "@static-to-variable/studio", "run", "predev"],
-    artifact: "apps/studio/public",
-    command: "npm",
-    defaultEnabled: false,
-    description:
-      "Sync the rebuilt visual QA cache into the Next.js studio app.",
-    id: "glyph_forge_sync",
-    kind: "sync",
-    title: "Studio Cache Sync",
-  },
-  {
-    args: [
-      "--workspace",
-      "@static-to-variable/variable-gen",
-      "run",
       "pipeline:status",
     ],
     artifact: "packages/variable-gen/reports/pipeline-status.json",
@@ -131,15 +59,9 @@ export const PIPELINE_STAGES: readonly PipelineStage[] = [
 const STAGE_ALIASES = new Map<string, string>([
   ["all", "all"],
   ["audit", "full_audit"],
-  ["blockers", "blocker_residuals"],
-  ["compatibility", "raw_compatibility"],
-  ["forge", "glyph_forge"],
-  ["glyph-forge", "glyph_forge"],
   ["interpolation", "audit_interpolation"],
-  ["raw", "raw_compatibility"],
   ["rebuild", "repair_build"],
   ["repair", "repair_build"],
-  ["residuals", "blocker_residuals"],
   ["status", "pipeline_status"],
 ]);
 

@@ -1,0 +1,6 @@
+# Download Inter's static instances here (see README) — not committed.
+donors/*.ttf
+donors/*.otf
+
+# Generated build artifacts.
+build/

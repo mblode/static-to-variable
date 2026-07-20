@@ -149,7 +149,7 @@ def build_designspace(
 
 def _ds_naming(config: ProjectConfig, style_key: str) -> tuple[str, str]:
     """(designspace filename, UFO prefix) for a style — the family name with an
-    ``Italic`` suffix for italic styles (matching the historical Glide names)."""
+    ``Italic`` suffix for italic styles."""
     prefix = config.family.name.replace(" ", "")
     if config.styles[style_key].italic:
         prefix = f"{prefix}Italic"

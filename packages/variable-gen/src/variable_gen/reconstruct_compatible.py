@@ -2,10 +2,10 @@
 """Glyph compatibility reconstruction engine.
 
 Given a glyph's outlines at several weights drawn as INDEPENDENT statics (so they
-disagree on contour count / order / start point / node count — like the Circular
-XX cut, where 477/755 glyphs are structurally incompatible), produce per-master
-outlines that share ONE point structure, so they interpolate into a variable
-font, while each master still matches its own weight's shape.
+disagree on contour count / order / start point / node count — common when donor
+weights are drawn separately and many glyphs are structurally incompatible),
+produce per-master outlines that share ONE point structure, so they interpolate
+into a variable font, while each master still matches its own weight's shape.
 
 Contours use the donor_outline format from variable_gen.outlines:
     contours = [ [ (op, [pt,...]), ... ], ... ]   op in moveTo/lineTo/curveTo/

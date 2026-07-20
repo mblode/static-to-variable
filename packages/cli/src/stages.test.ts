@@ -14,7 +14,7 @@ test("stage ids are unique", () => {
 });
 
 test("stage aliases normalize to status ids", () => {
-  expect(normalizeStageId("raw-compatibility")).toBe("raw_compatibility");
+  expect(normalizeStageId("audit")).toBe("full_audit");
   expect(resolveStage("repair").id).toBe("repair_build");
   expect(resolveStage("rebuild").id).toBe("repair_build");
   expect(resolveStage("status").id).toBe("pipeline_status");
@@ -26,13 +26,9 @@ test("resolveStage throws a typed usage error for unknown stages", () => {
 
 test("default plan runs the exact expected sequence", () => {
   expect(defaultStages().map((stage) => stage.id)).toEqual([
-    "inventory",
-    "raw_compatibility",
     "repair_build",
     "audit_interpolation",
     "full_audit",
-    "blocker_residuals",
-    "glyph_forge",
     "pipeline_status",
   ]);
 });
@@ -48,13 +44,7 @@ test("the rebuild stage runs the config-driven engine command", () => {
 
 test("blocking plan keeps reporting and excludes diagnostics", () => {
   const stages = buildStagePlan({ blockingOnly: true });
-  expect(stages.map((stage) => stage.kind)).toEqual([
-    "blocking",
-    "blocking",
-    "blocking",
-    "blocking",
-    "reporting",
-  ]);
+  expect(stages.map((stage) => stage.kind)).toEqual(["blocking", "reporting"]);
 });
 
 test("range plans respect --from/--to and reject empty ranges", () => {
@@ -64,7 +54,7 @@ test("range plans respect --from/--to and reject empty ranges", () => {
     "audit_interpolation",
     "full_audit",
   ]);
-  expect(() => buildStagePlan({ from: "full_audit", to: "inventory" })).toThrow(
-    /range is empty/i
-  );
+  expect(() =>
+    buildStagePlan({ from: "full_audit", to: "repair_build" })
+  ).toThrow(/range is empty/i);
 });

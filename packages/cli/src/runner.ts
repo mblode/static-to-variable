@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,12 +7,10 @@ import { color, colorErr, progress } from "./output.js";
 import { spawnInherit } from "./proc.js";
 import { formatCommand } from "./stages.js";
 import type {
-  HandoffMode,
   PipelineStage,
   PipelineStatusReport,
   RunOptions,
   StageRunResult,
-  StatusPrintOptions,
 } from "./types.js";
 
 /** Repo root if we're inside a static-to-variable checkout, else null. */
@@ -114,11 +111,7 @@ export function readPipelineStatus(
   return JSON.parse(readFileSync(reportPath, "utf-8")) as PipelineStatusReport;
 }
 
-export function printPipelineStatus(
-  report: PipelineStatusReport,
-  options: StatusPrintOptions = {},
-  repoRoot = findRepoRoot()
-): void {
+export function printPipelineStatus(report: PipelineStatusReport): void {
   const verdict =
     report.verdict === "pass" ? color("green", "pass") : color("red", "fail");
   console.log(`\nStatic-to-variable pipeline: ${verdict}`);
@@ -148,10 +141,6 @@ export function printPipelineStatus(
     for (const observation of stage.observations ?? []) {
       console.log(`  observation: ${observation}`);
     }
-  }
-
-  if (report.verdict !== "pass") {
-    printHandoff(report, options, repoRoot);
   }
 }
 
@@ -193,205 +182,4 @@ function spawnCommand(stage: PipelineStage, cwd: string): Promise<number> {
       ? "npm.cmd"
       : stage.command;
   return spawnInherit(command, stage.args, cwd);
-}
-
-function printHandoff(
-  report: PipelineStatusReport,
-  options: StatusPrintOptions,
-  repoRoot: string
-): void {
-  const mode: HandoffMode = options.handoff ?? "prompt";
-  if (mode === "off") {
-    return;
-  }
-
-  const top = options.top ?? 5;
-  const targets = loadHandoffTargets(repoRoot, top);
-  const automaticCount = glyphForgeSummaryNumber(
-    report,
-    "automatic_decision_candidate_count"
-  );
-  if (targets.length === 0) {
-    if (automaticCount > 0) {
-      console.log("\nautomatic glyph decisions pending:");
-      console.log(
-        `- ${automaticCount} non-reconstruction glyphs can be staged automatically`
-      );
-      console.log(
-        "- run: npm --workspace @static-to-variable/glyph-forge-engine run auto-stage"
-      );
-      console.log(
-        "- then: npm --workspace @static-to-variable/glyph-forge-engine run apply"
-      );
-      console.log(
-        "- then rerun from repair: npm run pipeline -- run all --from repair_build"
-      );
-    } else {
-      console.log(
-        "\nno reconstruction handoff targets found; fix the failing pipeline stage and rerun status."
-      );
-    }
-    return;
-  }
-
-  const workspaceUrl = "https://static-to-variable.localhost/interventions";
-  const fallbackUrl = "http://localhost:3333/interventions";
-
-  console.log("\nhuman intervention workspace:");
-  console.log(`- ${workspaceUrl}`);
-  console.log(`- ${fallbackUrl}`);
-  console.log("start it with: npm run pipeline:app");
-
-  console.log(
-    `\ntop ${targets.length} reconstruction target${targets.length === 1 ? "" : "s"}:`
-  );
-  for (const target of targets) {
-    const pathPart = `/g/${target.family}/${encodeURIComponent(target.name)}`;
-    const worst =
-      target.worstComposite === null
-        ? "worst unknown"
-        : `worst ${Math.round(target.worstComposite * 100)}@${target.worstWght ?? "?"}`;
-    const gain =
-      target.gain === null
-        ? "gain unknown"
-        : `gain +${Math.round(target.gain * 100)}`;
-    const best = target.best ? `best ${target.best}` : "best unknown";
-    console.log(
-      `- ${pathPart} (${target.verdict}, ${worst}, ${gain}, ${best})`
-    );
-  }
-
-  if (mode === "auto") {
-    openUrl(workspaceUrl);
-  }
-}
-
-function glyphForgeSummaryNumber(
-  report: PipelineStatusReport,
-  key: string
-): number {
-  const glyphForge = report.stages?.find((stage) => stage.id === "glyph_forge");
-  const value = glyphForge?.summary?.[key];
-  return typeof value === "number" ? value : 0;
-}
-
-export interface HandoffTarget {
-  family: string;
-  name: string;
-  verdict: string;
-  worstComposite: number | null;
-  worstWght: number | null;
-  gain: number | null;
-  best: string | null;
-}
-
-export function loadHandoffTargets(
-  repoRoot: string,
-  limit: number
-): HandoffTarget[] {
-  const manifest = readJson<Record<string, unknown>[]>(
-    path.join(
-      repoRoot,
-      "packages/glyph-forge-engine/manifests/broken-glyphs.json"
-    ),
-    []
-  );
-  const scores = readJson<Record<string, Record<string, unknown>>>(
-    path.join(
-      repoRoot,
-      "packages/glyph-forge-engine/manifests/glyph-scores.json"
-    ),
-    {}
-  );
-  const solver = readJson<Record<string, Record<string, unknown>>>(
-    path.join(
-      repoRoot,
-      "packages/glyph-forge-engine/manifests/solver-results.json"
-    ),
-    {}
-  );
-
-  return manifest
-    .map((glyph): HandoffTarget | null => {
-      const family = asString(glyph.family);
-      const name = asString(glyph.name);
-      const verdict = asString(glyph.auditVerdict);
-      if (!family || !name || !verdict) {
-        return null;
-      }
-      if (!["blocker", "unknown", "high"].includes(verdict)) {
-        return null;
-      }
-
-      const key = `${family}/${name}`;
-      const score = scores[key] ?? {};
-      const solve = solver[key] ?? {};
-      if (solve.requiresReconstruction !== true) {
-        return null;
-      }
-      const gain = asNumber(solve.gain);
-
-      return {
-        best: asString(solve.best),
-        family,
-        gain,
-        name,
-        verdict,
-        worstComposite: asNumber(score.worstComposite),
-        worstWght: asNumber(score.worstWght),
-      };
-    })
-    .filter((target): target is HandoffTarget => target !== null)
-    .toSorted(compareHandoffTargets)
-    .slice(0, limit);
-}
-
-export function compareHandoffTargets(
-  a: HandoffTarget,
-  b: HandoffTarget
-): number {
-  return (
-    verdictRank(a.verdict) - verdictRank(b.verdict) ||
-    (a.worstComposite ?? Number.POSITIVE_INFINITY) -
-      (b.worstComposite ?? Number.POSITIVE_INFINITY) ||
-    (b.gain ?? Number.NEGATIVE_INFINITY) -
-      (a.gain ?? Number.NEGATIVE_INFINITY) ||
-    `${a.family}/${a.name}`.localeCompare(`${b.family}/${b.name}`)
-  );
-}
-
-export function verdictRank(verdict: string): number {
-  if (verdict === "blocker") {
-    return 0;
-  }
-  if (verdict === "unknown") {
-    return 1;
-  }
-  if (verdict === "high") {
-    return 2;
-  }
-  return 3;
-}
-
-function readJson<T>(filePath: string, fallback: T): T {
-  try {
-    return JSON.parse(readFileSync(filePath, "utf-8")) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function openUrl(url: string): void {
-  if (process.platform !== "darwin") {
-    return;
-  }
-  spawnSync("open", [url], { stdio: "ignore" });
 }

@@ -1,7 +1,6 @@
 node_modules/
 .next/
 .turbo/
-.pipeline-jobs/
 .baseline-snapshot/
 .venv/
 __pycache__/
@@ -18,25 +17,14 @@ packages/cli/skills/
 # Local agent + editor state.
 .claude/
 
-# Runtime source inputs. Upload through the app or place locally when needed.
-# cabinet/Circular/ is the licensed-donor drop-in location for the Glide
-# example config; it must never be committed.
-glide-variable.glyphs
-glide-variable-italic.glyphs
+# Local font sources and donor drops — never commit font binaries or sources.
+*.glyphs
 cabinet/
+/fonts/
 
 # Generated pipeline outputs.
-/fonts/
 master_ufo/
 packages/variable-gen/build/
 examples/*/build/
 examples/*/packages/
 packages/variable-gen/reports/
-packages/glyph-forge-engine/public-cache/
-packages/glyph-forge-engine/manifests/broken-glyphs.json
-packages/glyph-forge-engine/manifests/cell-scores.json
-packages/glyph-forge-engine/manifests/glyph-scores.json
-packages/glyph-forge-engine/manifests/pending-triage-edits.json
-packages/glyph-forge-engine/manifests/solver-results.json
-packages/glyph-forge-engine/manifests/strategy-suggestions.json
-apps/studio/public/

@@ -1,0 +1,146 @@
+{
+  "$schema": "../../schemas/stv-config.schema.json",
+  "version": 3,
+  "id": "inter",
+  "family": {
+    "name": "Inter STV",
+    "version": "1.000",
+    "vendor": "STV",
+    "designer": "The Inter Project Authors",
+    "designerUrl": "https://github.com/rsms/inter",
+    "vendorUrl": "https://github.com/mblode/static-to-variable",
+    "license": "OFL-1.1",
+    "licenseUrl": "https://openfontlicense.org"
+  },
+  "axes": [
+    {
+      "tag": "wght",
+      "name": "Weight",
+      "minimum": 100,
+      "default": 400,
+      "maximum": 900,
+      "namedInstances": {
+        "100": "Thin",
+        "200": "ExtraLight",
+        "300": "Light",
+        "400": "Regular",
+        "500": "Medium",
+        "600": "SemiBold",
+        "700": "Bold",
+        "800": "ExtraBold",
+        "900": "Black"
+      }
+    }
+  ],
+  "styles": {
+    "roman": {
+      "italic": false,
+      "source": "build/inter.glyphs",
+      "output": "build/roman/inter-vf.ttf",
+      "donors": [
+        {
+          "id": "roman-thin",
+          "name": "Thin",
+          "path": "donors/Inter-Thin.ttf",
+          "location": { "wght": 100 }
+        },
+        {
+          "id": "roman-regular",
+          "name": "Regular",
+          "path": "donors/Inter-Regular.ttf",
+          "location": { "wght": 400 }
+        },
+        {
+          "id": "roman-black",
+          "name": "Black",
+          "path": "donors/Inter-Black.ttf",
+          "location": { "wght": 900 }
+        }
+      ],
+      "masters": [
+        {
+          "name": "Thin",
+          "donorId": "roman-thin",
+          "location": { "wght": 100 }
+        },
+        {
+          "name": "Regular",
+          "donorId": "roman-regular",
+          "location": { "wght": 400 },
+          "default": true
+        },
+        {
+          "name": "Black",
+          "donorId": "roman-black",
+          "location": { "wght": 900 }
+        }
+      ]
+    },
+    "italic": {
+      "italic": true,
+      "source": "build/inter-italic.glyphs",
+      "output": "build/italic/inter-italic-vf.ttf",
+      "donors": [
+        {
+          "id": "italic-thin",
+          "name": "Thin Italic",
+          "path": "donors/Inter-ThinItalic.ttf",
+          "location": { "wght": 100 }
+        },
+        {
+          "id": "italic-regular",
+          "name": "Regular Italic",
+          "path": "donors/Inter-Italic.ttf",
+          "location": { "wght": 400 }
+        },
+        {
+          "id": "italic-black",
+          "name": "Black Italic",
+          "path": "donors/Inter-BlackItalic.ttf",
+          "location": { "wght": 900 }
+        }
+      ],
+      "masters": [
+        {
+          "name": "Thin",
+          "donorId": "italic-thin",
+          "location": { "wght": 100 }
+        },
+        {
+          "name": "Regular",
+          "donorId": "italic-regular",
+          "location": { "wght": 400 },
+          "default": true
+        },
+        {
+          "name": "Black",
+          "donorId": "italic-black",
+          "location": { "wght": 900 }
+        }
+      ]
+    }
+  },
+  "verticalMetrics": {
+    "ascender": 1984,
+    "descender": -494,
+    "capHeight": 1456,
+    "xHeight": 1118
+  },
+  "glyphs": {
+    "freeze": ["periodcentered"],
+    "strategies": {
+      "dollar": {
+        "strategy": "interpolate_neighbors"
+      }
+    }
+  },
+  "normalize": {
+    "heights": true,
+    "monotonicInk": true
+  },
+  "output": {
+    "dir": "build",
+    "formats": ["ttf", "woff2"],
+    "releaseDir": "build/release"
+  }
+}

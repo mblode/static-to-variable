@@ -24,6 +24,7 @@ Your variable font is in `build/`. Needs [Node](https://nodejs.org) 24.11+, [Pyt
 static-to-variable init      # detect fonts, write ./stv.config.json
 static-to-variable build     # rebuild -> normalize -> build
 static-to-variable release   # finalize + WOFF2
+static-to-variable split <font>  # variable font -> static weights (the reverse)
 static-to-variable doctor    # environment readiness
 static-to-variable --version
 static-to-variable --help
@@ -31,16 +32,28 @@ static-to-variable --help
 
 `build` and `release` read `./stv.config.json` by default; pass `--config <path>` to use another. Inside a repo checkout, `list` / `run` / `step` / `status` drive the advanced QA pipeline.
 
+### Split a variable font back into static weights
+
+Already have a variable font and want the individual weights? `split` is the reverse of `build`: it pins the font at each step along its `wght` axis and writes one static TTF + WOFF2 per weight, each named so they install side by side.
+
+```bash
+static-to-variable split MyFamily-VF.ttf              # -> ./static/*.ttf + *.woff2
+static-to-variable split MyFamily-VF.ttf --out dist   # choose the output directory
+static-to-variable split MyFamily-VF.ttf --step 50    # finer weight steps (default 100)
+```
+
+No config needed. Any other axes are pinned to their default. Pass `--json` for a machine-readable summary.
+
 ## Conventions
 
-- `build`, `release`, and `doctor` take `--json` for a machine-readable summary on stdout; human progress always goes to stderr, so piped stdout stays clean.
+- `build`, `release`, `split`, and `doctor` take `--json` for a machine-readable summary on stdout; human progress always goes to stderr, so piped stdout stays clean.
 - Configs are validated against `schemas/stv-config.schema.json` before any engine work starts; violations name the offending path.
 - Exit codes: `0` success, `1` failure, `2` usage error (bad flag, missing or invalid config), `3` environment error, `130` interrupted.
 - Errors carry a stable `STV_*` code and a suggested fix; `NO_COLOR` is respected on both streams.
 
 ## Configuration
 
-Everything font-specific lives in `stv.config.json` (schema v3): family metadata, axes and named instances, per-style donors and masters, vertical metrics, per-glyph repair strategies, and output paths. See [`schemas/stv-config.schema.json`](https://github.com/mblode/static-to-variable/blob/main/schemas/stv-config.schema.json) and the [`examples/glide/`](https://github.com/mblode/static-to-variable/tree/main/examples/glide) worked example.
+Everything font-specific lives in `stv.config.json` (schema v3): family metadata, axes and named instances, per-style donors and masters, vertical metrics, per-glyph repair strategies, and output paths. See [`schemas/stv-config.schema.json`](https://github.com/mblode/static-to-variable/blob/main/schemas/stv-config.schema.json) and the [`examples/inter/`](https://github.com/mblode/static-to-variable/tree/main/examples/inter) worked example.
 
 ## License
 

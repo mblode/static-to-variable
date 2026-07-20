@@ -1,30 +1,12 @@
 from __future__ import annotations
 
 import json
-import re
-from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from . import __version__
 from .common import display_path, write_json_report
-
-STRATEGY_RIGOUR = {
-    "manual_review": 0,
-    "reference_fallback": 1,
-    "weighted_fallback": 2,
-    "inherit_base_contours": 3,
-    "structural_fallback": 4,
-    "donor_copy": 5,
-    "rebuild_notdef": 6,
-}
-
-# Minimum solver-projected gain for an "upgrade" to be a worth-acting-on
-# automatic decision. A more-rigorous suggestion that the solver projects no
-# meaningful improvement from is not actionable, so it must not block promotion.
-# Matches the default `--min-gain` of bulk_stage / forge:converge.
-AUTOMATIC_MIN_GAIN = 0.1
 
 
 @dataclass(frozen=True)
@@ -43,12 +25,8 @@ class Stage:
 def build_pipeline_status(repo_root: Path) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     stages = [
-        _inventory_stage(repo_root),
-        _raw_compatibility_stage(repo_root),
         _repair_stage(repo_root),
         _audit_stage(repo_root),
-        _residual_stage(repo_root),
-        _glyph_forge_stage(repo_root),
     ]
     blocking_failures = [stage for stage in stages if stage.blocking and stage.status != "pass"]
     return {
@@ -137,62 +115,6 @@ def write_pipeline_markdown(report: dict[str, Any], output_path: str | Path) -> 
     return path
 
 
-def _inventory_stage(repo_root: Path) -> Stage:
-    path = repo_root / "packages/variable-gen/reports/donor-inventory.json"
-    data, error = _read_json(path)
-    if error:
-        return _invalid_stage("inventory", "Donor Inventory", "blocking", path, error)
-    if data is None:
-        return _missing_stage("inventory", "Donor Inventory", "blocking", path)
-    status = data.get("hard_gates", {}).get("status", "fail")
-    summary = dict(data.get("summary", {}))
-    return Stage(
-        id="inventory",
-        name="Donor Inventory",
-        kind="blocking",
-        status=status,
-        blocking=True,
-        artifact=path.as_posix(),
-        summary=summary,
-        failures=_blocking_reasons(data),
-    )
-
-
-def _raw_compatibility_stage(repo_root: Path) -> Stage:
-    path = repo_root / "packages/variable-gen/reports/compatibility-raw.json"
-    data, error = _read_json(path)
-    if error:
-        return _invalid_stage(
-            "raw_compatibility",
-            "Raw Donor Compatibility",
-            "diagnostic",
-            path,
-            error,
-            blocking=False,
-        )
-    if data is None:
-        return _missing_stage(
-            "raw_compatibility",
-            "Raw Donor Compatibility",
-            "diagnostic",
-            path,
-            blocking=False,
-        )
-    summary = dict(data.get("summary", {}))
-    observations = _blocking_reasons(data)
-    return Stage(
-        id="raw_compatibility",
-        name="Raw Donor Compatibility",
-        kind="diagnostic",
-        status="pass",
-        blocking=False,
-        artifact=path.as_posix(),
-        summary=summary,
-        failures=[],
-        observations=observations,
-    )
-
-
 def _repair_stage(repo_root: Path) -> Stage:
     path = repo_root / "packages/variable-gen/reports/reconstruction-report.json"
     data, error = _read_json(path)
@@ -211,8 +133,8 @@ def _repair_stage(repo_root: Path) -> Stage:
             continue
         for key in ("donor", "reconstructed", "sampled", "frozen"):
             summary[f"{style_key}_{key}"] = stats.get(key, 0)
-        ai_pending = stats.get("ai_pending") or []
-        summary[f"{style_key}_ai_pending"] = len(ai_pending)
+        frozen_incompatible = stats.get("frozen_incompatible") or []
+        summary[f"{style_key}_frozen_incompatible"] = len(frozen_incompatible)
 
     return Stage(
         id="repair_build",
@@ -272,242 +194,6 @@ def _audit_stage(repo_root: Path) -> Stage:
         failures=[],
         observations=failures,
     )
-
-
-def _residual_stage(repo_root: Path) -> Stage:
-    path = repo_root / "packages/variable-gen/reports/repair/blocker-residual-validation.md"
-    verdict_path = path.with_suffix(".json")
-
-    # Prefer the validator's authoritative JSON verdict. Its `status` mirrors the
-    # validator's own exit code, so the gate cannot report `pass` for failures
-    # (interpolatable errors, disallowed-frozen glyphs) that the markdown summary
-    # does not surface as one of its three counter fields.
-    if verdict_path.exists():
-        verdict, error = _read_json(verdict_path)
-        if error or verdict is None:
-            return _invalid_stage(
-                "blocker_residuals",
-                "Blocker Residual Validation",
-                "blocking",
-                verdict_path,
-                error or "verdict file is empty",
-            )
-        failures = list(verdict.get("failures", []))
-        summary: dict[str, int] = {
-            "failure_count": int(verdict.get("failure_count", len(failures)))
-        }
-        for family, family_counts in (verdict.get("counts_by_family") or {}).items():
-            for key, value in family_counts.items():
-                summary[f"{family}_{key}"] = int(value)
-        status = "fail" if (verdict.get("status") == "fail" or failures) else "pass"
-        return Stage(
-            id="blocker_residuals",
-            name="Blocker Residual Validation",
-            kind="blocking",
-            status=status,
-            blocking=True,
-            artifact=path.as_posix(),
-            summary=summary,
-            failures=failures,
-        )
-
-    if not path.exists():
-        return _missing_stage("blocker_residuals", "Blocker Residual Validation", "blocking", path)
-
-    # Backward-compatible fallback: parse the markdown summary. Hardened to also
-    # fail on `interpolatable`, which the validator treats as a hard failure.
-    text = path.read_text()
-    failures = []
-    summary = {}
-    summary_lines = _summary_lines(text)
-    for expected_family in ("roman", "italic"):
-        if expected_family not in summary_lines:
-            failures.append(f"{expected_family} summary missing")
-
-    for family, line in summary_lines.items():
-        parsed = _parse_key_values(line)
-        for key in (
-            "sourceStructureFailures",
-            "areaDriftFailures",
-            "minSegmentFailures",
-            "interpolatable",
-        ):
-            value = int(parsed.get(key, 0))
-            summary[f"{family}_{key}"] = value
-            if value:
-                failures.append(f"{family} {key}={value}")
-        summary[f"{family}_frozen"] = int(parsed.get("frozen", 0))
-
-    return Stage(
-        id="blocker_residuals",
-        name="Blocker Residual Validation",
-        kind="blocking",
-        status="fail" if failures else "pass",
-        blocking=True,
-        artifact=path.as_posix(),
-        summary=summary,
-        failures=failures,
-    )
-
-
-def _glyph_forge_stage(repo_root: Path) -> Stage:
-    manifest_path = repo_root / "packages/glyph-forge-engine/manifests/broken-glyphs.json"
-    scores_path = repo_root / "packages/glyph-forge-engine/manifests/glyph-scores.json"
-    solver_path = repo_root / "packages/glyph-forge-engine/manifests/solver-results.json"
-    suggestions_path = repo_root / "packages/glyph-forge-engine/manifests/strategy-suggestions.json"
-    broken_glyphs, broken_error = _read_json(manifest_path)
-    glyph_scores, scores_error = _read_json(scores_path)
-    solver_results, solver_error = _read_json(solver_path)
-    suggestions, suggestions_error = _read_json(suggestions_path)
-    parse_error = broken_error or scores_error or solver_error or suggestions_error
-    if parse_error:
-        return _invalid_stage(
-            "glyph_forge",
-            "Glyph QA",
-            "blocking",
-            manifest_path,
-            parse_error,
-        )
-    if (
-        broken_glyphs is None
-        or glyph_scores is None
-        or solver_results is None
-        or suggestions is None
-    ):
-        return _missing_stage(
-            "glyph_forge",
-            "Glyph QA",
-            "blocking",
-            manifest_path,
-        )
-
-    verdict_counts = Counter(item.get("auditVerdict", "unknown") for item in broken_glyphs)
-    solver_gain_count = sum(
-        1 for item in solver_results.values() if (item.get("gain") or 0) > AUTOMATIC_MIN_GAIN
-    )
-    failures: list[str] = []
-    reconstruction_required = [
-        item for item in broken_glyphs if _requires_reconstruction(item, solver_results)
-    ]
-    unresolved_reconstruction = [
-        item for item in reconstruction_required if item.get("existingStrategy") != "manual_review"
-    ]
-    automatic_candidates = []
-    automatic_action_counts: Counter[str] = Counter()
-    for item in broken_glyphs:
-        action_kind = _automatic_decision_kind(item, solver_results, suggestions)
-        if action_kind is None:
-            continue
-        automatic_candidates.append(item)
-        automatic_action_counts[action_kind] += 1
-    automatic_verdict_counts = Counter(
-        item.get("auditVerdict", "unknown") for item in automatic_candidates
-    )
-    blocker_count = int(verdict_counts.get("blocker", 0))
-    unknown_count = int(verdict_counts.get("unknown", 0))
-    unresolved_blocker_count = int(automatic_verdict_counts.get("blocker", 0))
-    unresolved_unknown_count = int(automatic_verdict_counts.get("unknown", 0))
-    automatic_candidate_count = len(automatic_candidates)
-    unresolved_reconstruction_count = len(unresolved_reconstruction)
-    if automatic_candidate_count:
-        failures.append(f"unapplied automatic glyph decisions={automatic_candidate_count}")
-    if unresolved_reconstruction_count:
-        failures.append(
-            f"unresolved reconstruction-required glyphs={unresolved_reconstruction_count}"
-        )
-
-    return Stage(
-        id="glyph_forge",
-        name="Glyph QA",
-        kind="blocking",
-        status="fail" if failures else "pass",
-        blocking=True,
-        artifact=manifest_path.as_posix(),
-        summary={
-            "broken_glyph_count": len(broken_glyphs),
-            "glyph_score_count": len(glyph_scores),
-            "solver_result_count": len(solver_results),
-            "solver_gain_gt_0_1": solver_gain_count,
-            "blocking_verdict_counts": {
-                "blocker": blocker_count,
-                "unknown": unknown_count,
-            },
-            "unresolved_blocking_verdict_counts": {
-                "blocker": unresolved_blocker_count,
-                "unknown": unresolved_unknown_count,
-            },
-            "triaged_blocking_verdict_count": blocker_count
-            + unknown_count
-            - unresolved_blocker_count
-            - unresolved_unknown_count,
-            "automatic_decision_candidate_count": automatic_candidate_count,
-            "automatic_decision_action_counts": {
-                str(key): value for key, value in sorted(automatic_action_counts.items())
-            },
-            "automatic_decision_verdict_counts": {
-                str(key): value for key, value in sorted(automatic_verdict_counts.items())
-            },
-            "reconstruction_required_count": len(reconstruction_required),
-            "unresolved_reconstruction_required_count": unresolved_reconstruction_count,
-            "backlog_verdict_counts": {
-                key: value
-                for key, value in sorted(verdict_counts.items())
-                if key not in {"blocker", "unknown"}
-            },
-        },
-        failures=failures,
-    )
-
-
-def _requires_reconstruction(
-    item: dict[str, Any],
-    solver_results: dict[str, Any],
-) -> bool:
-    key = f"{item.get('family')}/{item.get('name')}"
-    solver = solver_results.get(key, {})
-    return bool(solver.get("requiresReconstruction") is True)
-
-
-def _automatic_decision_kind(
-    item: dict[str, Any],
-    solver_results: dict[str, Any],
-    suggestions: dict[str, Any],
-) -> str | None:
-    if _requires_reconstruction(item, solver_results):
-        return None
-
-    family = item.get("family")
-    name = item.get("name")
-    if not family or not name:
-        return None
-
-    current = item.get("existingStrategy")
-    if current and (item.get("allowFrozen") is True or item.get("allowStaticOutline") is True):
-        return None
-
-    suggestion = suggestions.get(f"{family}/{name}")
-    if not isinstance(suggestion, dict):
-        return "untriaged" if not current else None
-
-    proposed = suggestion.get("strategy")
-    if not isinstance(proposed, str) or proposed == "manual_review":
-        return "untriaged" if not current else None
-
-    if not isinstance(current, str) or not current:
-        return "untriaged"
-
-    current_rigour = STRATEGY_RIGOUR.get(current, -1)
-    proposed_rigour = STRATEGY_RIGOUR.get(proposed, -1)
-    if proposed_rigour > current_rigour:
-        # Only actionable if the solver projects a meaningful gain. A
-        # higher-rigour suggestion with no projected benefit is a treadmill, not
-        # a decision, and must not block promotion forever.
-        solver_entry = solver_results.get(f"{family}/{name}")
-        gain = solver_entry.get("gain") if isinstance(solver_entry, dict) else None
-        if gain is not None and gain <= AUTOMATIC_MIN_GAIN:
-            return None
-        return "upgrade"
-    return None
 
 
 def _missing_stage(
@@ -572,31 +258,6 @@ def _read_json(path: Path) -> tuple[Any | None, str | None]:
         return json.loads(path.read_text()), None
     except json.JSONDecodeError as exc:
         return None, str(exc)
-
-
-def _blocking_reasons(data: dict[str, Any]) -> list[str]:
-    reasons = data.get("hard_gates", {}).get("blocking_reasons", [])
-    return [
-        f"{reason.get('field')}={reason.get('value')} threshold={reason.get('threshold')}"
-        for reason in reasons
-    ]
-
-
-def _summary_lines(text: str) -> dict[str, str]:
-    current_family: str | None = None
-    summaries: dict[str, str] = {}
-    for line in text.splitlines():
-        if line == "## Roman":
-            current_family = "roman"
-        elif line == "## Italic":
-            current_family = "italic"
-        elif current_family and line.startswith("- summary:"):
-            summaries[current_family] = line
-    return summaries
-
-
-def _parse_key_values(line: str) -> dict[str, int]:
-    return {key: int(value) for key, value in re.findall(r"([A-Za-z]+)=([0-9]+)", line)}
 
 
 def _display_path(path: Path, repo_root: Path) -> str:
