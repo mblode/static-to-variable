@@ -51,6 +51,33 @@ def _cubic(p0, p1, p2, p3, t):
     )
 
 
+def _implied_oncurve_contour(contour):
+    """Expand an all-off-curve TrueType quadratic contour into explicit on-curve
+    nodes so :func:`to_ring` can parse it.
+
+    Such a contour is recorded (by DecomposingRecordingPen) as a single leading
+    ``qCurveTo`` of off-curve points ending in an implied ``None`` on-curve point,
+    with NO ``moveTo`` — common for round glyphs (o, O, zero) in TrueType donors
+    like Titillium. Its real on-curve points sit at the midpoints of consecutive
+    off-curve points. Contours that already start on-curve (a ``moveTo``) are
+    returned unchanged, so normal glyphs are untouched."""
+    if not contour or contour[0][0] == "moveTo":
+        return contour
+    offs = [p for op, pts in contour if op == "qCurveTo" for p in pts if p is not None]
+    k = len(offs)
+    if k < 2:
+        return contour
+    mids = [
+        ((offs[i][0] + offs[(i + 1) % k][0]) / 2, (offs[i][1] + offs[(i + 1) % k][1]) / 2)
+        for i in range(k)
+    ]
+    out = [("moveTo", [mids[-1]])]
+    for i in range(k):
+        out.append(("qCurveTo", [offs[i], mids[i]]))
+    out.append(("closePath", []))
+    return out
+
+
 def to_ring(contour, corner_angle=CORNER_ANGLE):
     """Flatten a contour to an ordered ring of on-curve nodes, returning
     (nodes, seg_samples, corners). `seg_samples[i]` are the densely-sampled curve
@@ -62,6 +89,7 @@ def to_ring(contour, corner_angle=CORNER_ANGLE):
     Two-pass: first build the closed node ring with one EDGE descriptor per
     consecutive node pair (kind + control points), then derive per-node tangents
     and samples from the edges."""
+    contour = _implied_oncurve_contour(contour)
     start = contour[0][1][0]
     nodes = [start]
     edges = []  # edge i connects nodes[i] -> nodes[i+1]; (kind, controls)
@@ -345,7 +373,66 @@ def reconstruct(outlines_by_pos, reference_pos=400):
         and _interp_ok(uni)
     ):
         return uni, {"stage": "reconstructed", "note": "uniform"}
+
+    # Rotation-aligned uniform: round contours (o, O, zero, ring counters) get
+    # anchored at their "topmost" node, which lands at a different angular spot
+    # when masters carry different node counts (e.g. a 2-node vs 5-node oval), so
+    # the standard uniform above interpolates node->wrong-node and collapses at
+    # mid-weights. Re-resample uniformly, then cyclically rotate each master's
+    # ring to the offset that best matches the reference. Additive: only reached
+    # once every path above has failed, so it never changes a glyph that already
+    # reconstructs.
+    aligned = _uniform_aligned(outlines_by_pos, reference_pos)
+    if (
+        aligned is not None
+        and _struct_ok(aligned)
+        and _cu2qu_safe(aligned)
+        and not _quality_offenders(aligned, outlines_by_pos)
+        and _interp_ok(aligned)
+    ):
+        return aligned, {"stage": "reconstructed", "note": "uniform-aligned"}
     return None, last
+
+
+def _line_pts(contour):
+    """Ordered point list of an all-line (moveTo + lineTo*) contour."""
+    return [p[0] for op, p in contour if op in ("moveTo", "lineTo")]
+
+
+def _best_rotation(pts, ref):
+    """Cyclic offset r minimising sum |pts[(i+r)%n] - ref[i]|^2."""
+    n = len(pts)
+    best_r, best_cost = 0, None
+    for r in range(n):
+        cost = sum(
+            (pts[(i + r) % n][0] - ref[i][0]) ** 2 + (pts[(i + r) % n][1] - ref[i][1]) ** 2
+            for i in range(n)
+        )
+        if best_cost is None or cost < best_cost:
+            best_cost, best_r = cost, r
+    return best_r
+
+
+def _uniform_aligned(outlines_by_pos, reference_pos):
+    uni = _uniform(outlines_by_pos, reference_pos)
+    if uni is None:
+        return None
+    positions = sorted(uni)
+    ref = reference_pos if reference_pos in uni else positions[len(positions) // 2]
+    ncon = len(uni[ref])
+    out = {p: [] for p in positions}
+    for ci in range(ncon):
+        ref_pts = _line_pts(uni[ref][ci])
+        for p in positions:
+            pts = _line_pts(uni[p][ci])
+            if len(pts) != len(ref_pts):
+                return None
+            if p == ref:
+                out[p].append(_as_line_contour(pts))
+                continue
+            r = _best_rotation(pts, ref_pts)
+            out[p].append(_as_line_contour(pts[r:] + pts[:r]))
+    return out
 
 
 def _uniform(outlines_by_pos, reference_pos):
