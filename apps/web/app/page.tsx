@@ -33,7 +33,7 @@ export default function Home() {
         <h2 className="font-semibold text-xl">How it works</h2>
         <p className="mt-3 max-w-2xl text-pretty text-muted-foreground">
           Static fonts in a family are usually drawn independently, so the same
-          glyph has a different number of points and contours in each weight —
+          glyph has a different number of points and contours in each weight,
           which is exactly why they won&apos;t interpolate. This isn&apos;t a
           magic &ldquo;interpolate anything&rdquo; button: it reconciles what it
           can deterministically, freezes what it can&apos;t, and tells you
@@ -43,8 +43,8 @@ export default function Home() {
           <div>
             <p className="font-medium">Rebuilt onto one structure</p>
             <p className="mt-1.5 text-muted-foreground text-sm">
-              Each weight is redrawn onto a shared point structure — matched
-              contour order, start points, and node counts — so the outlines
+              Each weight is redrawn onto a shared point structure, with matched
+              contour order, start points, and node counts, so the outlines
               actually interpolate.
             </p>
           </div>
@@ -60,7 +60,7 @@ export default function Home() {
             <p className="font-medium">Frozen, never faked</p>
             <p className="mt-1.5 text-muted-foreground text-sm">
               A glyph that can&apos;t be reconciled cleanly is pinned to a
-              single master — constant and correct — and reported, so nothing
+              single master, constant and correct, and reported, so nothing
               deformed ever ships silently.
             </p>
           </div>
