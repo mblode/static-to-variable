@@ -16,6 +16,13 @@ const nextConfig: NextConfig = {
   },
   // Type safety is enforced by `turbo typecheck` (tsc --noEmit) in CI, not here.
   typescript: { ignoreBuildErrors: true },
+  // The per-family pages live at /showcase/<id>; there is no index page (the
+  // homepage is the hub), so send the bare /showcase to home instead of a 404.
+  redirects() {
+    return Promise.resolve([
+      { source: "/showcase", destination: "/", permanent: false },
+    ]);
+  },
   // Define the `@/*` alias for Turbopack directly so it resolves without relying
   // on tsconfig paths.
   turbopack: {
