@@ -179,7 +179,7 @@ export function GlyphViewer() {
           Font
           <Select
             items={FONTS.map((f, i) => ({
-              label: `${f.name} (${f.category})`,
+              label: f.name,
               value: String(i),
             }))}
             onValueChange={(value) => setIndex(Number(value))}
@@ -191,7 +191,7 @@ export function GlyphViewer() {
             <SelectContent>
               {FONTS.map((f, i) => (
                 <SelectItem key={f.id} value={String(i)}>
-                  {f.name} ({f.category})
+                  {f.name}
                 </SelectItem>
               ))}
             </SelectContent>
