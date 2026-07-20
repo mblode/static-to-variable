@@ -116,7 +116,12 @@ class Master:
         self.wght = wght
         self.path = path
         self.font = TTFont(str(path))
-        self.glyphset = self.font.getGlyphSet()
+        # Outlines are read from a pristine second load, never from self.font:
+        # reconcile() rewrites glyphs into self.font as it goes, and a live
+        # glyphset over it would decompose later composites (gcircumflex = g +
+        # circumflex) against already-rewritten bases, which then fail the
+        # quality gate and freeze even though the donor outlines reconstruct.
+        self.glyphset = TTFont(str(path)).getGlyphSet()
 
     def outline(self, name: str):
         """Decomposed donor contours for ``name`` (or None if undrawable)."""
