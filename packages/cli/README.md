@@ -1,27 +1,36 @@
 # static-to-variable
 
-Convert a family of static fonts into a single variable font, guided by an `stv.config.json`. The CLI rebuilds interpolation-compatible masters, normalizes them, builds the variable font with fontmake, checks per-weight fidelity, and finalizes the OpenType metadata — orchestrating a Python engine (fontTools / glyphsLib / fontmake).
+Turn separate font weight files into one variable font.
 
-> Runs inside a `static-to-variable` checkout, where it locates the engine and the uv-managed Python environment. See the [repository README](https://github.com/mblode/static-to-variable#readme) for setup.
+Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. See it working first at [variable.blode.co](https://variable.blode.co): live demos built from Google Fonts that never had a variable version.
+
+## Quick start
+
+```bash
+npm install -g static-to-variable
+static-to-variable init    # creates ./stv.config.json
+```
+
+Open `stv.config.json` and change two things: the paths to your font files, and the weight each one is (100 for thin, 400 for regular, 900 for black). Then:
+
+```bash
+static-to-variable build
+```
+
+Your variable font is in `build/`. Needs [Node](https://nodejs.org) 24.11+, [Python](https://www.python.org) 3.11+, and [uv](https://docs.astral.sh/uv/); the bundled font engine sets itself up the first time you build. Run `static-to-variable doctor` to check your setup.
 
 ## Commands
 
 ```bash
-static-to-variable init                         # scaffold ./stv.config.json
-static-to-variable build   --config stv.config.json   # rebuild -> normalize -> build
-static-to-variable release --config stv.config.json   # finalize + WOFF2
-static-to-variable doctor                        # environment readiness
+static-to-variable init      # scaffold ./stv.config.json
+static-to-variable build     # rebuild -> normalize -> build
+static-to-variable release   # finalize + WOFF2
+static-to-variable doctor    # environment readiness
 static-to-variable --version
 static-to-variable --help
 ```
 
-| Command | Purpose |
-| --- | --- |
-| `init` | Scaffold a starter `stv.config.json`. |
-| `build` | Rebuild masters, normalize, and build the variable font(s). |
-| `release` | Finalize metadata and emit release TTF + WOFF2. |
-| `doctor` | Report environment readiness (node, python, uv, config). |
-| `list` / `run` / `step` / `status` | Advanced QA pipeline (repo checkout only): inventory, compatibility, rebuild, audit, and a promotion-gate report. |
+`build` and `release` read `./stv.config.json` by default; pass `--config <path>` to use another. Inside a repo checkout, `list` / `run` / `step` / `status` drive the advanced QA pipeline.
 
 ## Conventions
 
