@@ -267,9 +267,266 @@ CORNER_ANGLE_SWEEP = [
 def reconstruct(outlines_by_pos, reference_pos=400):
     """outlines_by_pos: {axis_pos: contours}. Returns (compatible|None, info).
     Tries a sweep of corner-detection thresholds; returns the first that yields a
-    fully interpolation-compatible result. If masters disagree on contour COUNT,
-    first unions overlapping contours per master (handles glyphs like $ / ¢ whose
+    fully interpolation-compatible result, then (for 3+ masters) swaps in the
+    rotation-aligned uniform resample when it predicts the interior master
+    better — see _interior_dev. If masters disagree on contour COUNT, first
+    unions overlapping contours per master (handles glyphs like $ / ¢ whose
     separate bar stubs merge into the body at heavy weights)."""
+    out, info = _reconstruct_base(outlines_by_pos, reference_pos)
+    return _ink_tournament(out, info, outlines_by_pos, reference_pos)
+
+
+# A candidate whose best-available coarse ink-defect ratio exceeds this is
+# catastrophically broken at in-between weights (contours swapping places, e.g.
+# dieresisacute's dots at 2.7, Neuton Ecircumflex at 1.9, Titillium onehalf's
+# folding "1" at 1.54); freeze rather than ship it. Deliberately high: features
+# that legitimately TRAVEL far between masters (Poppins' quote ticks quadruple
+# in size: 1.05, Mukta's ellipsis dots: 1.46, Titillium's circumflex: 0.96)
+# leak past the fixed blur while rendering fine, so sub-threshold scores only
+# ever decide the RELATIVE choice between candidates, never a freeze.
+INK_FREEZE_TOL = 1.5
+# Raster resolution for the ink-defect measure. 72px keeps a ±2px blur at
+# roughly stroke-modulation scale, so legitimate weight gain scores 0.0.
+INK_RES = 72
+
+
+def _ink_tournament(out, info, outlines_by_pos, reference_pos):
+    """Pick between the winning reconstruction and the rotation-aligned uniform
+    candidate by what the eye actually sees mid-axis.
+
+    Corner-anchored resampling and reference projection can pass every
+    point-space gate yet still carry subtly wrong correspondence: Barlow's v/w
+    wobble, Barlow Condensed's G loses its spur, Crimson's A/W apexes notch —
+    all clean AT the masters, broken only BETWEEN them, and too local for the
+    area/perimeter gates. The honest measure is raster ink: at span midpoints, a
+    defect is ink that both endpoint masters have but the midpoint loses, or ink
+    appearing beyond both (see _ink_defect). Legitimate interpolation scores 0.0
+    at the coarse (±2px) blur, so any nonzero coarse score is suspicious;
+    wobble too fine for the coarse scale still separates at ±1px, where
+    candidates are compared RELATIVELY (absolute fine scores also pick up
+    legitimate stroke-edge shift, so no absolute fine threshold exists).
+    Whichever candidate keeps mid-axis ink closest to its endpoints wins; a
+    coarse tie breaks on the fine score, and a full tie keeps the original
+    (corner-anchored results keep corners crisper). If even the winner is
+    severely broken, freeze clean instead of shipping it."""
+    if out is None:
+        return out, info
+    cross = _disjoint_cross(out)
+    coarse = _ink_defect(out, blur=2)
+    chosen, chosen_info, chosen_coarse, chosen_cross = out, info, coarse, cross
+    if cross or not info.get("note", "").startswith("uniform"):
+        aligned = _uniform_aligned(outlines_by_pos, reference_pos)
+        if (
+            aligned is not None
+            and _struct_ok(aligned)
+            and _cu2qu_safe(aligned)
+            and not _quality_offenders(aligned, outlines_by_pos)
+            and _interp_ok(aligned)
+        ):
+            a_cross = _disjoint_cross(aligned)
+            a_coarse = _ink_defect(aligned, blur=2)
+            better = (cross and not a_cross) or (cross == a_cross and a_coarse < coarse - 1e-9)
+            if not better and cross == a_cross and abs(a_coarse - coarse) <= 1e-9:
+                better = _ink_defect(aligned, blur=1) < _ink_defect(out, blur=1) - 1e-9
+            if better:
+                chosen = aligned
+                chosen_info = {"stage": "reconstructed", "note": "uniform-aligned (ink)"}
+                chosen_coarse, chosen_cross = a_coarse, a_cross
+    if chosen_cross:
+        # separate pieces passing through each other mid-axis (Titillium's quote
+        # ticks merging into one blob): no ink is lost so the defect ratio can't
+        # see it — freeze clean instead.
+        return None, {"stage": None, "note": "ink gate: contour cross"}
+    if chosen_coarse > INK_FREEZE_TOL:
+        return None, {"stage": None, "note": f"ink gate: {chosen_coarse:.3f}"}
+    return chosen, chosen_info
+
+
+def _disjoint_cross(out):
+    """True if any two contours that are cleanly separate at BOTH ends of a span
+    overlap at its midpoint — pieces travelling through each other (a swapped
+    quote-tick pair renders as one blob mid-axis). Counters always overlap
+    their body's bbox at the endpoints too, so they are never flagged."""
+    positions = sorted(out)
+    for a, b in zip(positions, positions[1:], strict=False):
+        ca, cb = out[a], out[b]
+        n = min(len(ca), len(cb))
+        if n < 2:
+            continue
+        pts_a = [_contour_pts(c) for c in ca[:n]]
+        pts_b = [_contour_pts(c) for c in cb[:n]]
+        boxes_a = [_pts_bbox(p) for p in pts_a]
+        boxes_b = [_pts_bbox(p) for p in pts_b]
+        boxes_m = []
+        for pa, pb in zip(pts_a, pts_b, strict=False):
+            if len(pa) != len(pb):
+                boxes_m.append(None)
+                continue
+            mid = [((p[0] + q[0]) / 2, (p[1] + q[1]) / 2) for p, q in zip(pa, pb, strict=False)]
+            boxes_m.append(_pts_bbox(mid))
+        for i in range(n):
+            for j in range(i + 1, n):
+                if boxes_m[i] is None or boxes_m[j] is None:
+                    continue
+                if (
+                    _boxes_overlap(boxes_m[i], boxes_m[j], margin=-2.0)
+                    and not _boxes_overlap(boxes_a[i], boxes_a[j], margin=1.0)
+                    and not _boxes_overlap(boxes_b[i], boxes_b[j], margin=1.0)
+                ):
+                    # bbox overlap alone is too coarse: an accent legitimately
+                    # closing its vertical gap to the letter (udieresis at heavy
+                    # weights) trips it without the pieces ever touching.
+                    # Confirm with actual ink: rasterize both mid contours on a
+                    # shared grid and require real shared pixels.
+                    mid_i = [
+                        ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
+                        for p, q in zip(pts_a[i], pts_b[i], strict=False)
+                    ]
+                    mid_j = [
+                        ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
+                        for p, q in zip(pts_a[j], pts_b[j], strict=False)
+                    ]
+                    bbox = (
+                        min(boxes_m[i][0], boxes_m[j][0]),
+                        min(boxes_m[i][1], boxes_m[j][1]),
+                        max(boxes_m[i][2], boxes_m[j][2]),
+                        max(boxes_m[i][3], boxes_m[j][3]),
+                    )
+                    gi = _rasterize([mid_i], bbox)
+                    gj = _rasterize([mid_j], bbox)
+                    if sum((ri & rj).bit_count() for ri, rj in zip(gi, gj, strict=False)) >= 3:
+                        return True
+    return False
+
+
+def _pts_bbox(pts):
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _boxes_overlap(a, b, margin=0.0):
+    """Axis-aligned overlap test; positive margin inflates the boxes (detects
+    near-touching), negative margin requires real interpenetration."""
+    return (
+        a[0] - margin < b[2]
+        and b[0] - margin < a[2]
+        and a[1] - margin < b[3]
+        and b[1] - margin < a[3]
+    )
+
+
+def _ink_defect(out, blur):
+    """Worst-case mid-axis ink defect ratio across adjacent master spans.
+
+    For each span, rasterize both endpoint masters (nonzero winding) on a shared
+    bbox grid, then rasterize the point-lerp at several interior t. Defective
+    pixels are ink present in the (blur-eroded) intersection of both endpoints
+    but absent from the (blur-dilated) midpoint — a feature vanishing mid-axis —
+    plus midpoint ink beyond the (blur-dilated) union — a fold poking out.
+    Returned as a fraction of the endpoints' shared ink."""
+    positions = sorted(out)
+    worst = 0.0
+    for a, b in zip(positions, positions[1:], strict=False):
+        rings_a = [_contour_pts(c) for c in out[a]]
+        rings_b = [_contour_pts(c) for c in out[b]]
+        xs = [p[0] for r in rings_a + rings_b for p in r]
+        ys = [p[1] for r in rings_a + rings_b for p in r]
+        if not xs:
+            continue
+        bbox = (min(xs), min(ys), max(xs), max(ys))
+        ga = _rasterize(rings_a, bbox)
+        gb = _rasterize(rings_b, bbox)
+        inter = [ra & rb for ra, rb in zip(ga, gb, strict=False)]
+        union = [ra | rb for ra, rb in zip(ga, gb, strict=False)]
+        union_count = sum(row.bit_count() for row in union)
+        for _ in range(blur):
+            inter = _erode(inter)
+            union = _dilate(union)
+        # thin strokes can erode the endpoints' shared ink to almost nothing,
+        # which would let a few noise pixels explode the ratio — floor the
+        # denominator at a fraction of the (pre-blur) union ink instead.
+        denom = max(sum(row.bit_count() for row in inter), union_count // 10, 1)
+        for t in (0.25, 0.5, 0.75):
+            mid_rings = [
+                [
+                    (p[0] * (1 - t) + q[0] * t, p[1] * (1 - t) + q[1] * t)
+                    for p, q in zip(ra, rb, strict=False)
+                ]
+                for ra, rb in zip(rings_a, rings_b, strict=False)
+                if len(ra) == len(rb)
+            ]
+            gm = _rasterize(mid_rings, bbox)
+            gm_d = list(gm)
+            for _ in range(blur):
+                gm_d = _dilate(gm_d)
+            lost = sum((i & ~m).bit_count() for i, m in zip(inter, gm_d, strict=False))
+            gained = sum((m & ~u).bit_count() for m, u in zip(gm, union, strict=False))
+            ratio = (lost + gained) / denom
+            if ratio > worst:
+                worst = ratio
+    return worst
+
+
+_INK_MASK = (1 << INK_RES) - 1
+
+
+def _rasterize(rings, bbox):
+    """Nonzero-winding scanline raster of point rings onto an INK_RES grid.
+    Each row is an int bitmask (bit c set = ink at column c)."""
+    x0, y0, x1, y1 = bbox
+    s = (INK_RES - 2) / (max(x1 - x0, y1 - y0) or 1.0)
+    rows = [0] * INK_RES
+    for row in range(INK_RES):
+        yy = y0 + (row + 0.5) / s
+        crossings = []
+        for ring in rings:
+            n = len(ring)
+            for i in range(n):
+                ax, ay = ring[i]
+                bx, by = ring[(i + 1) % n]
+                if (ay <= yy < by) or (by <= yy < ay):
+                    t = (yy - ay) / (by - ay)
+                    crossings.append((ax + (bx - ax) * t, 1 if by > ay else -1))
+        crossings.sort()
+        wind = 0
+        prev = 0.0
+        bits = 0
+        for x, w in crossings:
+            if wind != 0:
+                c0 = max(0, int((prev - x0) * s))
+                c1 = min(INK_RES - 1, int((x - x0) * s))
+                if c1 >= c0:
+                    bits |= ((1 << (c1 - c0 + 1)) - 1) << c0
+            wind += w
+            prev = x
+        rows[row] = bits
+    return rows
+
+
+def _erode(rows):
+    n = len(rows)
+    out = [0] * n
+    for r in range(1, n - 1):
+        bits = rows[r]
+        out[r] = bits & (bits >> 1) & (bits << 1) & rows[r - 1] & rows[r + 1] & _INK_MASK
+    return out
+
+
+def _dilate(rows):
+    n = len(rows)
+    out = [0] * n
+    for r in range(n):
+        bits = rows[r]
+        if r > 0:
+            bits |= rows[r - 1]
+        if r < n - 1:
+            bits |= rows[r + 1]
+        out[r] = (bits | (bits >> 1) | (bits << 1)) & _INK_MASK
+    return out
+
+
+def _reconstruct_base(outlines_by_pos, reference_pos=400):
     if _already_compatible(outlines_by_pos) and _starts_aligned(outlines_by_pos):
         # normalise contour order first — donor order can flip across weights and
         # still pass signature(), then interpolate to the wrong contour (B).
