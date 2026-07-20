@@ -1,5 +1,13 @@
 # static-to-variable
 
+## 0.4.1
+
+### Patch Changes
+
+- bb3604d: Three reconstruction fixes that stop glyphs freezing at one weight or collapsing at in-between weights. All-off-curve dot contours (Khand's period, i, colon, exclam) no longer crash the interpolation gate and freeze: the midpoint check now expands the implied on-curve point instead of tripping over it. Reference projection no longer splices a full extra ring loop when two anchors collapse onto one node — it fails that corner angle so the sweep can find a clean one; this both unfreezes serif accents (Neuton Eacute, ntilde) and stops mis-corresponded projections (Spectral K, Cyrillic К) slipping past the quality gates and shipping glyphs that collapse mid-axis. The uniform resample fallback now tries the rotation-aligned variant first, so glyphs whose topmost node drifts across masters (Neuton m, E, x) interpolate cleanly instead of going lumpy between masters. And the interpolation gate now also checks the midpoint ring perimeter — a twist that conserves ink area but folds the outline onto itself (Taviraj K, Neuton registered) drops the perimeter sharply, so those reconstructions are rejected in favour of a cleaner path or a clean freeze.
+
+  Every reconstruction now also runs an ink tournament: the winning candidate and the rotation-aligned uniform candidate are rasterized at span midpoints, scored on ink that both endpoint masters share but the midpoint loses (or ink appearing beyond both), and the candidate whose mid-axis ink stays closest to its endpoints wins. This catches correspondence defects too local for every point-space gate — Barlow's v/w wobble, Barlow Condensed's G losing its spur mid-axis, Crimson Text's A/W apexes notching — and swaps in the clean rotation-aligned result. Catastrophic scores (contours swapping places, like dieresisacute's dots) freeze the glyph clean instead. A companion check catches separate pieces travelling through each other mid-axis (Titillium's double-quote ticks merged into one blob at mid weights, invisible to the ink score because no ink is lost): contours cleanly disjoint at both ends of a span but overlapping at its midpoint disqualify the candidate, freezing the glyph clean if no candidate avoids the cross.
+
 ## 0.4.0
 
 ### Minor Changes
