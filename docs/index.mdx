@@ -1,0 +1,27 @@
+---
+title: Overview
+description: Turn separate font weight files into one variable font.
+---
+
+# static-to-variable
+
+Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between.
+
+You can't just merge the files, because each weight is drawn separately and nothing lines up. static-to-variable redraws them onto one shared structure so they blend, checks every letter, and skips anything it can't convert cleanly instead of breaking it.
+
+## Try it in the browser
+
+Head to [variable.blode.co](https://variable.blode.co): drop your fonts in and build right in the browser, or explore demos built from Google Fonts that never had a variable version.
+
+## Install
+
+```bash
+npm install -g static-to-variable
+```
+
+Needs [Node](https://nodejs.org) 24.11+, [Python](https://www.python.org) 3.11+, and [uv](https://docs.astral.sh/uv/). The font engine sets itself up the first time you build.
+
+## Next steps
+
+- [Quickstart](quickstart) — go from separate weights to one variable font.
+- [CLI reference](cli-reference) — every command, flag, and exit code.

@@ -1,0 +1,44 @@
+---
+title: Quickstart
+description: Go from separate weights to one variable font.
+---
+
+# Quickstart
+
+## 1. Point it at your fonts
+
+Go to a folder with your font files and run:
+
+```bash
+static-to-variable init
+```
+
+It finds your fonts, reads their weights, and writes an `stv.config.json` for you. Confirm the list and name the family. In a non-interactive shell (CI, agents) it writes a starter template to edit instead.
+
+## 2. Build
+
+```bash
+static-to-variable build
+```
+
+Your variable font lands in `build/`. When you're happy with it, write the final TTF and WOFF2:
+
+```bash
+static-to-variable release
+```
+
+## Going the other way
+
+Already have a variable font and want the individual weights? `split` runs it in reverse: one static TTF + WOFF2 per weight, in `static/`.
+
+```bash
+static-to-variable split MyFamily-VF.ttf
+```
+
+## If anything complains
+
+Run the environment check. It verifies Node, Python, uv, and your config, then tells you what to fix.
+
+```bash
+static-to-variable doctor
+```

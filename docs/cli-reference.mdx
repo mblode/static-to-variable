@@ -1,0 +1,50 @@
+---
+title: CLI reference
+description: Every command, flag, and exit code.
+---
+
+# CLI reference
+
+## Commands
+
+```bash
+static-to-variable init          # detect fonts, write ./stv.config.json
+static-to-variable build         # rebuild -> normalize -> build
+static-to-variable release       # finalize + WOFF2
+static-to-variable split <font>  # variable font -> static weights (the reverse)
+static-to-variable doctor        # environment readiness
+static-to-variable --version
+static-to-variable --help
+```
+
+`build` and `release` read `./stv.config.json` by default. Pass `--config <path>` to use another.
+
+## Split a variable font back into static weights
+
+`split` is the reverse of `build`: it pins the font at each step along its `wght` axis and writes one static TTF + WOFF2 per weight, each named so they install side by side. No config needed. Any other axes are pinned to their default.
+
+```bash
+static-to-variable split MyFamily-VF.ttf            # -> ./static/*.ttf + *.woff2
+static-to-variable split MyFamily-VF.ttf --out dist # choose the output directory
+static-to-variable split MyFamily-VF.ttf --step 50  # finer weight steps (default 100)
+```
+
+## Conventions
+
+- `build`, `release`, `split`, and `doctor` take `--json` for a machine-readable summary on stdout. Human progress always goes to stderr, so piped stdout stays clean.
+- Configs are validated against `schemas/stv-config.schema.json` before any engine work starts. Violations name the offending path.
+- Errors carry a stable `STV_*` code and a suggested fix. `NO_COLOR` is respected on both streams.
+
+## Exit codes
+
+| Code  | Meaning                                           |
+| ----- | ------------------------------------------------- |
+| `0`   | Success                                           |
+| `1`   | Failure                                           |
+| `2`   | Usage error (bad flag, missing or invalid config) |
+| `3`   | Environment error                                 |
+| `130` | Interrupted                                       |
+
+## Configuration
+
+Everything font-specific lives in `stv.config.json` (schema v3): family metadata, axes and named instances, per-style donors and masters, vertical metrics, per-glyph repair strategies, and output paths. See the [schema](https://github.com/mblode/static-to-variable/blob/main/schemas/stv-config.schema.json) and the worked [Inter example](https://github.com/mblode/static-to-variable/tree/main/examples/inter).
