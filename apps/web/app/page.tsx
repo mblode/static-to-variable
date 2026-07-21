@@ -89,6 +89,11 @@ static-to-variable build`}</code>
       </section>
 
       <footer className="mt-16 flex flex-col items-center gap-3 border-t pt-8 text-muted-foreground text-sm">
+        <p className="max-w-xl text-balance text-center">
+          The demo fonts are open licensed (OFL). Converting your own fonts
+          counts as modifying them, so check that their license allows it. Most
+          commercial font licenses don&apos;t.
+        </p>
         <div className="flex items-center gap-5">
           <a
             className="hover:text-foreground"

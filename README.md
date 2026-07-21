@@ -42,9 +42,13 @@ If anything complains, run `static-to-variable doctor`: it checks Node, Python, 
 - Using Claude Code, Cursor, or Codex? `npx skills add mblode/static-to-variable` teaches them the CLI.
 - Full command reference, `--json` output, and exit codes: [CLI docs](packages/cli/README.md).
 
+## Font licenses
+
+Converting a font counts as modifying it, and most commercial font EULAs forbid modification even if you never distribute the result. Using this on a commercial font needs written permission from the foundry. Open licenses like the [SIL OFL](https://openfontlicense.org), which covers most of Google Fonts, allow both modification and redistribution of modified versions (watch for Reserved Font Names, which require renaming derivatives). Fonts you made yourself are of course fine. The showcase families on [variable.blode.co](https://variable.blode.co) are all OFL.
+
 ## License
 
-[MIT](LICENSE.md)
+The code is [MIT](LICENSE.md). The fonts you build with it keep their own licenses.
 
 ---
 
