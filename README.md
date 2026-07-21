@@ -4,12 +4,9 @@ Turn static fonts into one variable font.
 
 [![npm](https://img.shields.io/npm/v/static-to-variable)](https://www.npmjs.com/package/static-to-variable)
 
-Got thin, regular, and bold font files? Get back one file you can slide between. You can't just merge them: each weight is drawn separately and nothing lines up. static-to-variable redraws them onto one shared structure, checks every letter, and skips what it can't convert.
+Point it at your separate thin, regular, and bold files and it builds one variable font that slides across every weight in between. Bundling them doesn't work, the outlines don't line up, so it redraws each weight onto a shared skeleton and skips any glyph it can't convert cleanly.
 
 <p>
-<a href="https://static-to-variable.blode.md">
-<img alt="Read the static-to-variable docs" src=".github/assets/documentation.svg" width="200" />
-</a>
 <a href="https://variable.blode.co">
 <img alt="View the static-to-variable demo" src=".github/assets/demo.svg" width="200" />
 </a>
