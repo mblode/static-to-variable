@@ -41,6 +41,7 @@ import argparse
 import logging
 import time
 import urllib.request
+from io import BytesIO
 from pathlib import Path
 
 from fontTools.designspaceLib import (
@@ -305,16 +306,24 @@ def build_variable(
     stats: BuildStats,
 ) -> TTFont:
     """Merge the masters, layout included when varLib can (variable kerning);
-    on a layout merge failure, retry without layout and port the default
-    master's tables statically afterwards."""
+    otherwise retry without layout and port the default master's tables
+    statically. A varLib merge can SUCCEED yet leave layout that references
+    glyphs outside the merged order (e.g. a non-default master's GDEF class of
+    'ogonek.cap'), which only blows up at compile — so the variable path is
+    accepted only if the font actually compiles, else it falls to the port."""
+    varfont = None
     try:
-        varfont, _, _ = varlib_build(_designspace(masters, axis_name, default_wght))
+        candidate, _, _ = varlib_build(_designspace(masters, axis_name, default_wght))
+        candidate.save(BytesIO())  # compile gate: dangling layout refs fail here
+        varfont = candidate
         stats.layout = LayoutReport(
             mode="variable",
             tables=tuple(t for t in LAYOUT_TABLES if t in varfont),
         )
     except Exception as exc:  # noqa: BLE001 (varLib layout merge is best-effort)
-        log.info("variable layout merge failed (%s); falling back to static port", exc)
+        log.info("variable layout merge unusable (%s); falling back to static port", exc)
+
+    if varfont is None:
         for m in masters:
             for tag in LAYOUT_TABLES:
                 if tag in m.font:
@@ -322,6 +331,7 @@ def build_variable(
         varfont, _, _ = varlib_build(_designspace(masters, axis_name, default_wght))
         default = next(m for m in masters if m.wght == default_wght)
         stats.layout = port_layout(varfont, default.path)
+
     for tag in DROP_AFTER_BUILD:
         if tag in varfont:
             del varfont[tag]
