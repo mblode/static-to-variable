@@ -1,0 +1,5 @@
+---
+"static-to-variable": patch
+---
+
+Contour pairing is now crossing-proof. Contours are matched across masters by optimal assignment (all permutations for small counts) instead of greedy nearest-centroid; the match cost normalizes each contour's centroid to its own master's bbox (so counters that travel with weight, like g's, still pair correctly) and normalizes winding per master before comparing signs (donors flip overall orientation between weights, which otherwise steered a body onto a counter slot). The uniform resample paths now order-normalize contours by geometry instead of pairing by raw draw index — donors are free to draw a quote's two ticks in opposite orders at different weights, and index pairing interpolated the pieces through each other. Together these unfreeze Titillium Web's double quotes and dieresis carriers, Rajdhani's breve accents, Mukta's less/greater-equal, Kanit's peseta, and Neuton's g, ampersand, and small-cap ae/eth. The mid-axis ink score also remeasures small thin glyphs at doubled resolution so accent-sized shapes are judged as reliably as letters, and empty-master edge cases no longer crash the topology variants.
