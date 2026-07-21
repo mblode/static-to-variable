@@ -54,18 +54,18 @@ from fontTools.subset import Options as SubsetOptions
 from fontTools.subset import Subsetter
 from fontTools.ttLib import TTFont
 from fontTools.varLib import build as varlib_build
+from variable_gen.layout import LayoutReport, port_layout
 from variable_gen.outlines import donor_outline
 from variable_gen.reconstruct_compatible import reconstruct
 
-# Tables dropped from every master before the merge. OpenType layout (GSUB/GPOS/
-# ...) cannot be merged across independently-drawn statics and is not needed for a
-# weight-only showcase font. TrueType hinting (fpgm/prep/cvt/gasp) is dropped too:
-# every glyph is redrawn here, so the default master's instructions are stale and
-# would otherwise leave orphaned cvar/hinting tables in the output.
+# Tables dropped from every master before the merge. TrueType hinting
+# (fpgm/prep/cvt/gasp) is dropped because every glyph is redrawn here, so the
+# default master's instructions are stale and would otherwise leave orphaned
+# cvar/hinting tables in the output. OpenType layout (GDEF/GSUB/GPOS) is NOT
+# dropped: same-source statics usually merge into real variable layout
+# (weight-varying kerning); when varLib refuses, build_variable retries without
+# layout and the default master's tables are ported statically instead.
 DROP_TABLES = (
-    "GSUB",
-    "GPOS",
-    "GDEF",
     "BASE",
     "JSTF",
     "kern",
@@ -75,6 +75,8 @@ DROP_TABLES = (
     "cvt ",
     "gasp",
 )
+
+LAYOUT_TABLES = ("GDEF", "GSUB", "GPOS")
 
 # Tables varLib may synthesise that the showcase fonts do not ship.
 DROP_AFTER_BUILD = ("MVAR", "cvar")
@@ -199,6 +201,7 @@ class BuildStats:
         self.reconstructed = 0  # reconciled by the engine
         self.frozen: list[str] = []  # left static at the default master shape
         self.total = 0
+        self.layout: LayoutReport | None = None
 
 
 def reconcile(masters: list[Master], default_wght: float, stats: BuildStats) -> None:
@@ -251,7 +254,8 @@ def reconcile(masters: list[Master], default_wght: float, stats: BuildStats) -> 
 
 def prepare_masters(masters: list[Master], default_wght: float) -> None:
     """Drop unmergeable tables and force every master onto the default glyph
-    order so varLib sees one consistent, layout-free master set."""
+    order so varLib sees one consistent master set (layout stays in for the
+    variable merge attempt; build_variable strips it only if that fails)."""
     default = next(m for m in masters if m.wght == default_wght)
     order = default.font.getGlyphOrder()
     for m in masters:
@@ -261,18 +265,13 @@ def prepare_masters(masters: list[Master], default_wght: float) -> None:
         m.font.setGlyphOrder(order)
 
 
-def build_variable(
-    masters: list[Master],
-    axis_name: str,
-    default_wght: float,
-) -> TTFont:
-    lo = min(m.wght for m in masters)
-    hi = max(m.wght for m in masters)
-
+def _designspace(masters: list[Master], axis_name: str, default_wght: float):
     doc = DesignSpaceDocument()
     axis = AxisDescriptor()
     axis.tag, axis.name = "wght", axis_name
-    axis.minimum, axis.default, axis.maximum = lo, default_wght, hi
+    axis.minimum = min(m.wght for m in masters)
+    axis.default = default_wght
+    axis.maximum = max(m.wght for m in masters)
     doc.addAxis(axis)
 
     for m in masters:
@@ -289,8 +288,33 @@ def build_variable(
         inst.location = {axis_name: m.wght}
         inst.styleName = m.style
         doc.addInstance(inst)
+    return doc
 
-    varfont, _, _ = varlib_build(doc)
+
+def build_variable(
+    masters: list[Master],
+    axis_name: str,
+    default_wght: float,
+    stats: BuildStats,
+) -> TTFont:
+    """Merge the masters, layout included when varLib can (variable kerning);
+    on a layout merge failure, retry without layout and port the default
+    master's tables statically afterwards."""
+    try:
+        varfont, _, _ = varlib_build(_designspace(masters, axis_name, default_wght))
+        stats.layout = LayoutReport(
+            mode="variable",
+            tables=tuple(t for t in LAYOUT_TABLES if t in varfont),
+        )
+    except Exception as exc:  # noqa: BLE001 (varLib layout merge is best-effort)
+        log.info("variable layout merge failed (%s); falling back to static port", exc)
+        for m in masters:
+            for tag in LAYOUT_TABLES:
+                if tag in m.font:
+                    del m.font[tag]
+        varfont, _, _ = varlib_build(_designspace(masters, axis_name, default_wght))
+        default = next(m for m in masters if m.wght == default_wght)
+        stats.layout = port_layout(varfont, default.path)
     for tag in DROP_AFTER_BUILD:
         if tag in varfont:
             del varfont[tag]
@@ -326,6 +350,9 @@ def write_woff2(font: TTFont, out: Path, subset_latin: bool) -> Path:
         opts.name_IDs = ["*"]
         opts.recalc_bounds = True
         opts.retain_gids = False
+        # keep ALL layout features, not the subsetter's default shortlist, so
+        # the ported GSUB/GPOS survive intact (pruned to the kept glyphs)
+        opts.layout_features = ["*"]
         subsetter = Subsetter(options=opts)
         subsetter.populate(unicodes=SUBSET_CODEPOINTS)
         subsetter.subset(font)
@@ -386,7 +413,7 @@ def main(argv: list[str] | None = None) -> int:
     stats = BuildStats()
     reconcile(masters, args.default, stats)
     prepare_masters(masters, args.default)
-    varfont = build_variable(masters, args.axis_name, args.default)
+    varfont = build_variable(masters, args.axis_name, args.default, stats)
     finalize(varfont, args.family, args.version, args.default)
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -406,6 +433,8 @@ def main(argv: list[str] | None = None) -> int:
         f"  (native {stats.native}, reconstructed {stats.reconstructed})"
     )
     print(f"  frozen: {len(stats.frozen)}" + (f"  {stats.frozen}" if stats.frozen else ""))
+    if stats.layout is not None:
+        print(f"  {stats.layout.summary()}")
     print(f"  ttf:    {ttf}  ({ttf.stat().st_size / 1024:.0f} KB)")
     label = "Latin+Latin-1 subset" if args.woff2_subset else "full"
     print(f"  woff2:  {woff2}  ({woff2.stat().st_size / 1024:.0f} KB, {label})")
