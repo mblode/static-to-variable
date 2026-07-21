@@ -17,6 +17,7 @@ import copy
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+from typing import Literal
 
 from fontTools.subset import Options as SubsetOptions
 from fontTools.subset import Subsetter
@@ -29,7 +30,7 @@ LAYOUT_TABLES = ("GDEF", "GSUB", "GPOS")
 class LayoutReport:
     """What happened to the donor's layout tables."""
 
-    mode: str  # "variable" | "static" | "none"
+    mode: Literal["variable", "static", "none"]
     tables: tuple[str, ...] = ()
     note: str = ""
 
@@ -86,6 +87,48 @@ def _subset_to(donor: TTFont, keep: set[str]) -> None:
     subsetter.subset(donor)
 
 
+def _prune_glyphs(obj, keep: set[str], _seen: set[int]) -> None:
+    """Recursively strip glyph names outside ``keep`` from every Coverage and
+    ClassDef reachable from ``obj``.
+
+    The subsetter is *supposed* to leave the donor's GDEF/GSUB/GPOS referencing
+    only retained glyphs, but its internal dedup keys subtables by object
+    identity, so on some process runs it leaves a class def entry for a dropped
+    glyph (classically GDEF's GlyphClassDef of an unencoded ``ogonek.cap``).
+    That dangling ref only raises at *compile*, and the compile gate can miss it
+    (a false pass), so the crash surfaces at the final save instead. Walking the
+    ported tables and dropping stragglers ourselves makes the port deterministic
+    regardless of the subsetter's identity-hash order."""
+    from fontTools.ttLib.tables.otTables import ClassDef, Coverage  # noqa: PLC0415
+
+    oid = id(obj)
+    if oid in _seen:
+        return
+    _seen.add(oid)
+    if isinstance(obj, Coverage):
+        obj.glyphs = [g for g in obj.glyphs if g in keep]
+        return
+    if isinstance(obj, ClassDef):
+        obj.classDefs = {g: c for g, c in obj.classDefs.items() if g in keep}
+        return
+    converters = getattr(obj, "getConverters", None)
+    if converters is None:
+        return
+    for conv in obj.getConverters():
+        value = getattr(obj, conv.name, None)
+        if value is None:
+            continue
+        for child in value if isinstance(value, list) else (value,):
+            if hasattr(child, "getConverters") or isinstance(child, (Coverage, ClassDef)):
+                _prune_glyphs(child, keep, _seen)
+
+
+def _prune_layout(varfont: TTFont, keep: set[str]) -> None:
+    for tag in LAYOUT_TABLES:
+        if tag in varfont and getattr(varfont[tag], "table", None) is not None:
+            _prune_glyphs(varfont[tag].table, keep, set())
+
+
 def _compiles(font: TTFont) -> bool:
     try:
         font.save(BytesIO())
@@ -125,6 +168,10 @@ def port_layout(varfont: TTFont, donor_path: Path) -> LayoutReport:
             ported.append(tag)
     if not ported:
         return LayoutReport(mode="none", note="nothing survived pruning")
+    # deterministically drop any straggler glyph refs the subsetter left behind
+    # (its identity-hash dedup is not stable across runs), so the port never
+    # crashes the final save with a dangling class-def entry
+    _prune_layout(varfont, vf_names)
     if not _compiles(varfont):
         for tag in LAYOUT_TABLES:
             if tag in varfont:
