@@ -94,6 +94,10 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
                 "-o",
                 "variable",
                 "--keep-overlaps",
+                # keep the donors' own glyph names (ufo2ft would rename to
+                # production names, e.g. Gcommaaccent -> uni0122, and the
+                # layout port then loses every unencoded glyph's lookups)
+                "--no-production-names",
                 "--output-path",
                 str(out),
             ],
