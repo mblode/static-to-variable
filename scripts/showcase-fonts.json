@@ -1,0 +1,214 @@
+{
+  "out": "apps/web/public/fonts",
+  "fonts": [
+    {
+      "id": "poppins",
+      "family": "Poppins",
+      "ofl": "poppins",
+      "default": 400,
+      "masters": {
+        "Thin": 100,
+        "ExtraLight": 200,
+        "Light": 300,
+        "Regular": 400,
+        "Medium": 500,
+        "SemiBold": 600,
+        "Bold": 700,
+        "ExtraBold": 800,
+        "Black": 900
+      }
+    },
+    {
+      "id": "lato",
+      "family": "Lato",
+      "ofl": "lato",
+      "default": 400,
+      "masters": {
+        "Thin": 100,
+        "ExtraLight": 200,
+        "Light": 300,
+        "Regular": 400,
+        "Medium": 500,
+        "SemiBold": 600,
+        "Bold": 700,
+        "ExtraBold": 800,
+        "Black": 900
+      }
+    },
+    {
+      "id": "barlow",
+      "family": "Barlow",
+      "ofl": "barlow",
+      "default": 400,
+      "masters": {
+        "Thin": 100,
+        "ExtraLight": 200,
+        "Light": 300,
+        "Regular": 400,
+        "Medium": 500,
+        "SemiBold": 600,
+        "Bold": 700,
+        "ExtraBold": 800,
+        "Black": 900
+      }
+    },
+    {
+      "id": "kanit",
+      "family": "Kanit",
+      "ofl": "kanit",
+      "default": 400,
+      "masters": {
+        "Thin": 100,
+        "ExtraLight": 200,
+        "Light": 300,
+        "Regular": 400,
+        "Medium": 500,
+        "SemiBold": 600,
+        "Bold": 700,
+        "ExtraBold": 800,
+        "Black": 900
+      }
+    },
+    {
+      "id": "titillium-web",
+      "family": "Titillium Web",
+      "ofl": "titilliumweb",
+      "default": 400,
+      "masters": {
+        "ExtraLight": 200,
+        "Light": 300,
+        "Regular": 400,
+        "SemiBold": 600,
+        "Bold": 700,
+        "Black": 900
+      }
+    },
+    {
+      "id": "barlow-condensed",
+      "family": "Barlow Condensed",
+      "ofl": "barlowcondensed",
+      "default": 400,
+      "masters": {
+        "Thin": 100,
+        "ExtraLight": 200,
+        "Light": 300,
+        "Regular": 400,
+        "Medium": 500,
+        "SemiBold": 600,
+        "Bold": 700,
+        "ExtraBold": 800,
+        "Black": 900
+      }
+    },
+    {
+      "id": "rajdhani",
+      "family": "Rajdhani",
+      "ofl": "rajdhani",
+      "default": 400,
+      "masters": {
+        "Light": 300,
+        "Regular": 400,
+        "Medium": 500,
+        "SemiBold": 600,
+        "Bold": 700
+      }
+    },
+    {
+      "id": "khand",
+      "family": "Khand",
+      "ofl": "khand",
+      "default": 400,
+      "masters": {
+        "Light": 300,
+        "Regular": 400,
+        "Medium": 500,
+        "SemiBold": 600,
+        "Bold": 700
+      }
+    },
+    {
+      "id": "mukta",
+      "family": "Mukta",
+      "ofl": "mukta",
+      "default": 400,
+      "masters": {
+        "ExtraLight": 200,
+        "Light": 300,
+        "Regular": 400,
+        "Medium": 500,
+        "SemiBold": 600,
+        "Bold": 700,
+        "ExtraBold": 800
+      }
+    },
+    {
+      "id": "zilla-slab",
+      "family": "Zilla Slab",
+      "ofl": "zillaslab",
+      "default": 400,
+      "masters": {
+        "Light": 300,
+        "Regular": 400,
+        "Medium": 500,
+        "SemiBold": 600,
+        "Bold": 700
+      }
+    },
+    {
+      "id": "spectral",
+      "family": "Spectral",
+      "ofl": "spectral",
+      "default": 400,
+      "masters": {
+        "ExtraLight": 200,
+        "Light": 300,
+        "Regular": 400,
+        "Medium": 500,
+        "SemiBold": 600,
+        "Bold": 700,
+        "ExtraBold": 800
+      }
+    },
+    {
+      "id": "crimson-text",
+      "family": "Crimson Text",
+      "ofl": "crimsontext",
+      "default": 400,
+      "masters": {
+        "Regular": 400,
+        "SemiBold": 600,
+        "Bold": 700
+      }
+    },
+    {
+      "id": "neuton",
+      "family": "Neuton",
+      "ofl": "neuton",
+      "default": 400,
+      "masters": {
+        "ExtraLight": 200,
+        "Light": 300,
+        "Regular": 400,
+        "Bold": 700,
+        "ExtraBold": 800
+      }
+    },
+    {
+      "id": "taviraj",
+      "family": "Taviraj",
+      "ofl": "taviraj",
+      "default": 400,
+      "masters": {
+        "Thin": 100,
+        "ExtraLight": 200,
+        "Light": 300,
+        "Regular": 400,
+        "Medium": 500,
+        "SemiBold": 600,
+        "Bold": 700,
+        "ExtraBold": 800,
+        "Black": 900
+      }
+    }
+  ]
+}
