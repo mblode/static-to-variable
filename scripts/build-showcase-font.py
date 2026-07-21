@@ -262,6 +262,13 @@ def prepare_masters(masters: list[Master], default_wght: float) -> None:
         for tag in DROP_TABLES:
             if tag in m.font:
                 del m.font[tag]
+        # decompile layout BEFORE the glyph-order swap: these tables are lazy,
+        # and decompiling after setGlyphOrder would resolve their glyph IDs
+        # against the default master's order, silently scrambling coverage
+        # whenever a master's own order differs
+        for tag in LAYOUT_TABLES:
+            if tag in m.font:
+                _ = m.font[tag]
         m.font.setGlyphOrder(order)
 
 
