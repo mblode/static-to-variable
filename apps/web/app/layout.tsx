@@ -2,24 +2,14 @@ import { GoogleAnalytics } from "@next/third-parties/google";
 import type { Metadata } from "next";
 
 import "./globals.css";
-import localFont from "next/font/local";
+import { Inter } from "next/font/google";
 
 import { cn } from "@/lib/utils";
 
-const glide = localFont({
-  src: [
-    { path: "../public/glide-variable.woff2", style: "normal" },
-    { path: "../public/glide-variable-italic.woff2", style: "italic" },
-  ],
-  variable: "--font-glide",
-  weight: "100 950",
-  display: "swap",
-});
-
-const glideMono = localFont({
-  src: [{ path: "../public/glide-mono.woff2", style: "normal" }],
-  variable: "--font-glide-mono",
-  weight: "400",
+const inter = Inter({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  variable: "--font-inter",
   display: "swap",
 });
 
@@ -59,10 +49,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html
-      className={cn("dark font-sans", glide.variable, glideMono.variable)}
-      lang="en"
-    >
+    <html className={cn("dark font-sans", inter.variable)} lang="en">
       <body className="min-h-dvh antialiased">{children}</body>
       {process.env.NODE_ENV === "production" ? (
         <GoogleAnalytics gaId="G-1E6KD4YTJ8" />

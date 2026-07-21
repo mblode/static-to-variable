@@ -6,7 +6,7 @@ export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
 // Neutral, dark, mono-eyebrow card matching the site. Uses the default
-// font (next/og cannot embed the Glide .woff2), so brand comes from
+// font (the site's webfont is not embedded), so brand comes from
 // layout and a weight-axis motif rather than the typeface itself.
 export default function OpengraphImage() {
   const ticks = [100, 200, 300, 400, 500, 600, 700, 800, 900];
