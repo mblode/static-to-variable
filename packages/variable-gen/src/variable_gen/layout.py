@@ -14,7 +14,7 @@ still cannot compile the font is left exactly as it was.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
@@ -32,8 +32,6 @@ class LayoutReport:
     mode: str  # "variable" | "static" | "none"
     tables: tuple[str, ...] = ()
     note: str = ""
-    remapped: int = 0  # glyphs renamed donor -> VF via cmap
-    dropped: list[str] = field(default_factory=list)  # tables that could not port
 
     def summary(self) -> str:
         if self.mode == "none":
@@ -100,19 +98,15 @@ def port_layout(varfont: TTFont, donor_path: Path) -> LayoutReport:
     """Statically copy GDEF/GSUB/GPOS from the donor at ``donor_path`` into
     ``varfont``. Never raises for layout reasons and never leaves ``varfont``
     broken: on any failure the font is returned to its prior state."""
-    probe = TTFont(str(donor_path), lazy=True)
-    present = tuple(t for t in LAYOUT_TABLES if t in probe)
-    probe.close()
-    if not any(t in ("GSUB", "GPOS") for t in present):
-        return LayoutReport(mode="none", note="donor has no layout tables")
-
-    vf_names = set(varfont.getGlyphOrder())
     plain = TTFont(str(donor_path))
+    if not any(t in plain for t in ("GSUB", "GPOS")):
+        plain.close()
+        return LayoutReport(mode="none", note="donor has no layout tables")
+    vf_names = set(varfont.getGlyphOrder())
     mapping = _name_map(plain, varfont)
     plain.close()
     if not mapping:
         return LayoutReport(mode="none", note="no donor glyphs map onto the font")
-    remapped = sum(1 for src, dst in mapping.items() if src != dst)
 
     donor = _load_renamed(donor_path, mapping)
     keep = set(donor.getGlyphOrder()) & vf_names
@@ -138,4 +132,4 @@ def port_layout(varfont: TTFont, donor_path: Path) -> LayoutReport:
         for tag, table in saved.items():
             varfont[tag] = table
         return LayoutReport(mode="none", note="ported tables failed to compile")
-    return LayoutReport(mode="static", tables=tuple(ported), remapped=remapped)
+    return LayoutReport(mode="static", tables=tuple(ported))
