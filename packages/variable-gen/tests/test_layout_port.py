@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
+from unittest import mock
 
 PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(PACKAGE_SRC))
@@ -35,17 +36,16 @@ class PortLayoutTests(unittest.TestCase):
         self.assertIn("GSUB", report.tables)
         vf.save(BytesIO())
 
-    def test_ported_gsub_only_references_font_glyphs(self):
+    def test_compile_failure_rolls_back_and_keeps_original_layout(self):
+        # If the ported tables copy in but won't compile, the VF must be left
+        # with its own layout untouched, not stripped.
         vf = TTFont(str(FIXTURE))
-        port_layout(vf, DONOR)
-        names = set(vf.getGlyphOrder())
-        coverage = set()
-        for lookup in vf["GSUB"].table.LookupList.Lookup:
-            for sub in lookup.SubTable:
-                cov = getattr(sub, "Coverage", None)
-                if cov is not None:
-                    coverage.update(cov.glyphs)
-        self.assertTrue(coverage <= names)
+        original_gpos = vf["GPOS"]
+        with mock.patch("variable_gen.layout._compiles", return_value=False):
+            report = port_layout(vf, DONOR)
+        self.assertEqual(report.mode, "none")
+        self.assertEqual(report.note, "ported tables failed to compile")
+        self.assertIs(vf["GPOS"], original_gpos)
 
     def test_donor_without_layout_reports_none_and_leaves_font_alone(self):
         with tempfile.TemporaryDirectory() as tmp:
