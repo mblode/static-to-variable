@@ -13,15 +13,16 @@ const inter = Inter({
   display: "swap",
 });
 
-const title = "static-to-variable";
+const siteName = "static-to-variable";
+const title = "Turn static fonts into one variable font";
 const description =
-  "Turn separate font weight files into one variable font you can slide between. Try it on real Google Fonts that never had a variable version.";
+  "Turn static font files into one variable font with every weight in between. Upload thin, regular, and bold weights online, then download TTF and WOFF2 files.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://variable.blode.co"),
   title: {
-    default: `${title}: static weights into one variable font`,
-    template: `%s · ${title}`,
+    default: title,
+    template: `%s · ${siteName}`,
   },
   description,
   keywords: [
@@ -34,13 +35,13 @@ export const metadata: Metadata = {
     "static to variable",
   ],
   openGraph: {
-    title: `${title}: static weights into one variable font`,
+    title,
     description,
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: `${title}: static weights into one variable font`,
+    title,
     description,
   },
 };

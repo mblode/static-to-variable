@@ -12,10 +12,10 @@ export default function Home() {
           static-to-variable
         </p>
         <h1 className="text-balance font-semibold text-4xl leading-[1.1] tracking-tight sm:text-5xl">
-          Turn separate font files into one variable font.
+          Turn static fonts into one variable font.
         </h1>
         <p className="mt-5 text-pretty text-lg text-muted-foreground">
-          Drop in thin, regular, and bold. Get back one file you can slide
+          Upload thin, regular, and bold. Get one file with every weight in
           between.
         </p>
       </header>

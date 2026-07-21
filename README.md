@@ -1,6 +1,6 @@
 # static-to-variable
 
-Turn separate font weight files into one variable font.
+Turn static fonts into one variable font.
 
 [![npm](https://img.shields.io/npm/v/static-to-variable)](https://www.npmjs.com/package/static-to-variable)
 
