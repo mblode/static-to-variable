@@ -55,9 +55,10 @@ from fontTools.subset import Options as SubsetOptions
 from fontTools.subset import Subsetter
 from fontTools.ttLib import TTFont
 from fontTools.varLib import build as varlib_build
-from variable_gen.layout import LayoutReport, port_layout
+from variable_gen.layout import LAYOUT_TABLES, LayoutReport, port_layout
 from variable_gen.outlines import donor_outline
 from variable_gen.reconstruct_compatible import reconstruct
+from variable_gen.release import setname
 
 # Tables dropped from every master before the merge. TrueType hinting
 # (fpgm/prep/cvt/gasp) is dropped because every glyph is redrawn here, so the
@@ -76,8 +77,6 @@ DROP_TABLES = (
     "cvt ",
     "gasp",
 )
-
-LAYOUT_TABLES = ("GDEF", "GSUB", "GPOS")
 
 # Tables varLib may synthesise that the showcase fonts do not ship.
 DROP_AFTER_BUILD = ("MVAR", "cvar")
@@ -127,9 +126,9 @@ class Master:
         self.glyphset = TTFont(str(path)).getGlyphSet()
 
     def outline(self, name: str):
-        """Decomposed donor contours for ``name`` (or None if undrawable)."""
-        got = donor_outline(self.glyphset, name)
-        return None if got is None else got  # (contours, width)
+        """Decomposed donor contours for ``name`` as (contours, width), or None
+        if undrawable."""
+        return donor_outline(self.glyphset, name)
 
 
 def parse_master(spec: str) -> tuple[str, float]:
@@ -338,20 +337,15 @@ def build_variable(
     return varfont
 
 
-def _set_name(font: TTFont, value: str, name_id: int) -> None:
-    font["name"].setName(value, name_id, 3, 1, 0x409)  # Windows Unicode English
-    font["name"].setName(value, name_id, 1, 0, 0)  # Mac Roman English
-
-
 def finalize(font: TTFont, family: str, version: str, default_wght: float) -> None:
     ps_family = family.replace(" ", "")
-    _set_name(font, family, 1)  # family
-    _set_name(font, "Regular", 2)  # subfamily
-    _set_name(font, family, 4)  # full name
-    _set_name(font, f"{ps_family}-Regular", 6)  # PostScript name
-    _set_name(font, f"Version {version}", 5)
-    _set_name(font, family, 16)  # typographic family
-    _set_name(font, "Regular", 17)  # typographic subfamily
+    setname(font, family, 1)  # family
+    setname(font, "Regular", 2)  # subfamily
+    setname(font, family, 4)  # full name
+    setname(font, f"{ps_family}-Regular", 6)  # PostScript name
+    setname(font, f"Version {version}", 5)
+    setname(font, family, 16)  # typographic family
+    setname(font, "Regular", 17)  # typographic subfamily
 
     os2 = font["OS/2"]
     os2.usWeightClass = int(default_wght)
