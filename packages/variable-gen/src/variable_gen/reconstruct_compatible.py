@@ -28,6 +28,7 @@ number of CORNERS across weights — a genuine structural difference), it return
 
 from __future__ import annotations
 
+import itertools
 import math
 
 from variable_gen.outlines import signature
@@ -435,49 +436,62 @@ def _ink_defect(out, blur):
         if not xs:
             continue
         bbox = (min(xs), min(ys), max(xs), max(ys))
-        ga = _rasterize(rings_a, bbox)
-        gb = _rasterize(rings_b, bbox)
-        inter = [ra & rb for ra, rb in zip(ga, gb, strict=False)]
-        union = [ra | rb for ra, rb in zip(ga, gb, strict=False)]
-        union_count = sum(row.bit_count() for row in union)
-        for _ in range(blur):
-            inter = _erode(inter)
-            union = _dilate(union)
-        # thin strokes can erode the endpoints' shared ink to almost nothing,
-        # which would let a few noise pixels explode the ratio — floor the
-        # denominator at a fraction of the (pre-blur) union ink instead.
-        denom = max(sum(row.bit_count() for row in inter), union_count // 10, 1)
-        for t in (0.25, 0.5, 0.75):
-            mid_rings = [
-                [
-                    (p[0] * (1 - t) + q[0] * t, p[1] * (1 - t) + q[1] * t)
-                    for p, q in zip(ra, rb, strict=False)
-                ]
-                for ra, rb in zip(rings_a, rings_b, strict=False)
-                if len(ra) == len(rb)
-            ]
-            gm = _rasterize(mid_rings, bbox)
-            gm_d = list(gm)
-            for _ in range(blur):
-                gm_d = _dilate(gm_d)
-            lost = sum((i & ~m).bit_count() for i, m in zip(inter, gm_d, strict=False))
-            gained = sum((m & ~u).bit_count() for m, u in zip(gm, union, strict=False))
-            ratio = (lost + gained) / denom
-            if ratio > worst:
-                worst = ratio
+        span, union_count = _span_defect(rings_a, rings_b, bbox, blur, INK_RES)
+        if union_count < 500:
+            # thin small glyphs (accents, quote ticks) cover too few pixels at
+            # the base resolution for the ratio to mean anything — remeasure
+            # with doubled resolution and proportionally scaled blur so the
+            # physical tolerance stays the same.
+            span, _ = _span_defect(rings_a, rings_b, bbox, blur * 2, INK_RES * 2)
+        if span > worst:
+            worst = span
     return worst
 
 
-_INK_MASK = (1 << INK_RES) - 1
+def _span_defect(rings_a, rings_b, bbox, blur, res):
+    """Defect ratio for one span at a given raster resolution; returns
+    (worst ratio over interior t, pre-blur union pixel count)."""
+    ga = _rasterize(rings_a, bbox, res)
+    gb = _rasterize(rings_b, bbox, res)
+    inter = [ra & rb for ra, rb in zip(ga, gb, strict=False)]
+    union = [ra | rb for ra, rb in zip(ga, gb, strict=False)]
+    union_count = sum(row.bit_count() for row in union)
+    for _ in range(blur):
+        inter = _erode(inter, res)
+        union = _dilate(union, res)
+    # thin strokes can erode the endpoints' shared ink to almost nothing, which
+    # would let a few noise pixels explode the ratio — floor the denominator at
+    # a fraction of the (pre-blur) union ink instead.
+    denom = max(sum(row.bit_count() for row in inter), union_count // 10, 1)
+    worst = 0.0
+    for t in (0.25, 0.5, 0.75):
+        mid_rings = [
+            [
+                (p[0] * (1 - t) + q[0] * t, p[1] * (1 - t) + q[1] * t)
+                for p, q in zip(ra, rb, strict=False)
+            ]
+            for ra, rb in zip(rings_a, rings_b, strict=False)
+            if len(ra) == len(rb)
+        ]
+        gm = _rasterize(mid_rings, bbox, res)
+        gm_d = list(gm)
+        for _ in range(blur):
+            gm_d = _dilate(gm_d, res)
+        lost = sum((i & ~m).bit_count() for i, m in zip(inter, gm_d, strict=False))
+        gained = sum((m & ~u).bit_count() for m, u in zip(gm, union, strict=False))
+        ratio = (lost + gained) / denom
+        if ratio > worst:
+            worst = ratio
+    return worst, union_count
 
 
-def _rasterize(rings, bbox):
-    """Nonzero-winding scanline raster of point rings onto an INK_RES grid.
+def _rasterize(rings, bbox, res=INK_RES):
+    """Nonzero-winding scanline raster of point rings onto a res-square grid.
     Each row is an int bitmask (bit c set = ink at column c)."""
     x0, y0, x1, y1 = bbox
-    s = (INK_RES - 2) / (max(x1 - x0, y1 - y0) or 1.0)
-    rows = [0] * INK_RES
-    for row in range(INK_RES):
+    s = (res - 2) / (max(x1 - x0, y1 - y0) or 1.0)
+    rows = [0] * res
+    for row in range(res):
         yy = y0 + (row + 0.5) / s
         crossings = []
         for ring in rings:
@@ -495,7 +509,7 @@ def _rasterize(rings, bbox):
         for x, w in crossings:
             if wind != 0:
                 c0 = max(0, int((prev - x0) * s))
-                c1 = min(INK_RES - 1, int((x - x0) * s))
+                c1 = min(res - 1, int((x - x0) * s))
                 if c1 >= c0:
                     bits |= ((1 << (c1 - c0 + 1)) - 1) << c0
             wind += w
@@ -504,16 +518,18 @@ def _rasterize(rings, bbox):
     return rows
 
 
-def _erode(rows):
+def _erode(rows, res=INK_RES):
+    mask = (1 << res) - 1
     n = len(rows)
     out = [0] * n
     for r in range(1, n - 1):
         bits = rows[r]
-        out[r] = bits & (bits >> 1) & (bits << 1) & rows[r - 1] & rows[r + 1] & _INK_MASK
+        out[r] = bits & (bits >> 1) & (bits << 1) & rows[r - 1] & rows[r + 1] & mask
     return out
 
 
-def _dilate(rows):
+def _dilate(rows, res=INK_RES):
+    mask = (1 << res) - 1
     n = len(rows)
     out = [0] * n
     for r in range(n):
@@ -522,7 +538,7 @@ def _dilate(rows):
             bits |= rows[r - 1]
         if r < n - 1:
             bits |= rows[r + 1]
-        out[r] = (bits | (bits >> 1) | (bits << 1)) & _INK_MASK
+        out[r] = (bits | (bits >> 1) | (bits << 1)) & mask
     return out
 
 
@@ -726,6 +742,12 @@ def _uniform(outlines_by_pos, reference_pos):
     positions = sorted(outlines_by_pos)
     if len({len(outlines_by_pos[p]) for p in positions}) != 1:
         return None
+    # match contours across masters by geometry, NOT raw index: donors are free
+    # to draw a quote's two ticks in opposite orders at different weights, and
+    # index pairing then interpolates the pieces through each other.
+    ordered = _order_normalize(outlines_by_pos, reference_pos)
+    if ordered is not None:
+        outlines_by_pos = ordered
     ref = reference_pos if reference_pos in outlines_by_pos else positions[len(positions) // 2]
     ncon = len(outlines_by_pos[positions[0]])
     out = {p: [] for p in positions}
@@ -1028,6 +1050,8 @@ def _counter_closing(outlines_by_pos, reference_pos):
         # always +1: donors can flip overall orientation between masters
         # (Neuton's light masters wind outers the other way), and slot matching
         # by RAW sign would then map a light outline onto the heavy COUNTER slot.
+        if not entries:
+            return None
         dom = max(entries, key=lambda e: abs(_signed_area(e[1])))[3]
         entries = [(c, r, ce, s * dom) for c, r, ce, s in entries]
         parts[pos] = entries
@@ -1325,6 +1349,8 @@ def _to_n_contours(contours, target, bridge_pick=0):
     folds against a light master whose bowl opens elsewhere), and the caller
     can't know the right spot a priori — it tries a few and lets the gates and
     the ink score choose."""
+    if target < 1:
+        return None
     if len(contours) == target:
         return contours
     if len(contours) < target:
@@ -1579,18 +1605,58 @@ def _reconstruct_at(outlines_by_pos, reference_pos, corner_angle):
 
 
 def _match_order(master_rings, ref_rings):
-    """Greedy nearest match of master contours to reference contours by centroid
-    distance with same-sign area preference."""
-    ref_feats = [(_centroid(r[0]), _signed_area(r[0])) for r in ref_rings]
-    m_feats = [(_centroid(r[0]), _signed_area(r[0])) for r in master_rings]
+    """Match master contours to reference contours by centroid distance with
+    same-sign area preference. Optimal assignment (all permutations) for small
+    contour counts: greedy matching can assign a CROSSING pairing (left quote
+    tick to right tick) when the ref contour it visits first sits between two
+    candidates, and a crossed pairing interpolates pieces through each other.
+    Greedy remains the fallback for many-contour glyphs."""
+
+    def feats(rings):
+        pts = [p for r in rings for p in r[0]]
+        if not pts:
+            return []
+        x0, y0, x1, y1 = _pts_bbox(pts)
+        w = (x1 - x0) or 1.0
+        h = (y1 - y0) or 1.0
+        areas = [_signed_area(r[0]) for r in rings]
+        # normalise winding so the dominant (largest) contour is +1: donors flip
+        # overall orientation between masters (Neuton's ExtraBold), and raw
+        # signs then steer the body to pair with a COUNTER whose flipped sign
+        # happens to "match"
+        dom = 1 if areas[max(range(len(rings)), key=lambda i: abs(areas[i]))] >= 0 else -1
+        out = []
+        for r, a in zip(rings, areas, strict=False):
+            c = _centroid(r[0])
+            # centroid NORMALIZED to this master's own bbox: absolute positions
+            # shift with weight (g's counters travel), and absolute distance
+            # then prefers a semantically crossed pairing
+            out.append((((c[0] - x0) / w * 1000, (c[1] - y0) / h * 1000), a * dom))
+        return out
+
+    ref_feats = feats(ref_rings)
+    m_feats = feats(master_rings)
+    n = len(ref_feats)
+
+    def cost(ri, mi):
+        (rc, ra), (mc, ma) = ref_feats[ri], m_feats[mi]
+        return _dist(rc, mc) + (0 if (ra >= 0) == (ma >= 0) else 100000)
+
+    if n <= 7:
+        best_order, best_cost = None, None
+        for perm in itertools.permutations(range(n)):
+            c = sum(cost(ri, mi) for ri, mi in enumerate(perm))
+            if best_cost is None or c < best_cost:
+                best_cost, best_order = c, list(perm)
+        return best_order
     used = set()
-    order = [None] * len(ref_rings)
-    for ri, (rc, ra) in enumerate(ref_feats):
+    order = [None] * n
+    for ri in range(n):
         best, bestd = None, None
-        for mi, (mc, ma) in enumerate(m_feats):
+        for mi in range(n):
             if mi in used:
                 continue
-            d = _dist(rc, mc) + (0 if (ra >= 0) == (ma >= 0) else 400)
+            d = cost(ri, mi)
             if bestd is None or d < bestd:
                 best, bestd = mi, d
         if best is None:
