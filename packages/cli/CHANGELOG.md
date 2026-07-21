@@ -1,5 +1,12 @@
 # static-to-variable
 
+## 0.4.3
+
+### Patch Changes
+
+- 82c8b6f: Make the static layout port deterministic. When varLib's variable layout merge is unusable and the build falls back to statically porting the default master's GDEF/GSUB/GPOS, the subsetter that prunes the donor's layout to the built glyph set keys its work by object identity, so on some process runs it left a class-def entry for a dropped glyph (an unencoded `ogonek.cap` in Titillium Web's GDEF). That dangling reference slipped past the compile gate and crashed the final font save intermittently. The port now walks every ported Coverage and ClassDef and drops any straggler glyph the built font doesn't have, so the same input always produces the same font and the build never crashes on a leftover reference. Kerning and ligatures are unaffected.
+- ae787af: Contour pairing is now crossing-proof. Contours are matched across masters by optimal assignment (all permutations for small counts) instead of greedy nearest-centroid; the match cost normalizes each contour's centroid to its own master's bbox (so counters that travel with weight, like g's, still pair correctly) and normalizes winding per master before comparing signs (donors flip overall orientation between weights, which otherwise steered a body onto a counter slot). The uniform resample paths now order-normalize contours by geometry instead of pairing by raw draw index — donors are free to draw a quote's two ticks in opposite orders at different weights, and index pairing interpolated the pieces through each other. Together these unfreeze Titillium Web's double quotes and dieresis carriers, Rajdhani's breve accents, Mukta's less/greater-equal, Kanit's peseta, and Neuton's g, ampersand, and small-cap ae/eth. The mid-axis ink score also remeasures small thin glyphs at doubled resolution so accent-sized shapes are judged as reliably as letters, and empty-master edge cases no longer crash the topology variants.
+
 ## 0.4.2
 
 ### Patch Changes
