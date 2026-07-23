@@ -11,14 +11,75 @@ Run:  uv run python -m variable_gen.cli release --config <path> --style all
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
+from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 
 from variable_gen.config import ProjectConfig
 
 WIN = (3, 1, 0x409)
 MAC = (1, 0, 0)
+
+USE_TYPO_METRICS = 1 << 7
+
+# Reference glyphs whose ink defines the family's true ascender / descender.
+_ASCENDER_GLYPHS = "bdfhklt"
+_DESCENDER_GLYPHS = "gjpqy"
+
+
+def _glyph_extent(font: TTFont, chars: str) -> tuple[float | None, float | None]:
+    """Return (max top, min bottom) of the given characters' outlines."""
+    cmap = font.getBestCmap()
+    glyph_set = font.getGlyphSet()
+    tops: list[float] = []
+    bottoms: list[float] = []
+    for char in chars:
+        name = cmap.get(ord(char))
+        if not name:
+            continue
+        pen = BoundsPen(glyph_set)
+        glyph_set[name].draw(pen)
+        if pen.bounds:
+            tops.append(pen.bounds[3])
+            bottoms.append(pen.bounds[1])
+    return (max(tops) if tops else None, min(bottoms) if bottoms else None)
+
+
+def normalize_vertical_metrics(font: TTFont) -> None:
+    """Make the typo/hhea line box hug the glyphs.
+
+    glyphsLib/fontmake default the vertical metrics to an ascent well above the
+    cap/ascender line plus a large line gap. Because platforms size the text
+    insertion caret and the default line box to those metrics, the caret towers
+    above the glyphs and line spacing runs loose. Rebuild the metrics from the
+    font's own ink: the ascender line at the top of the ascender glyphs, the
+    descender line at the bottom of the descender glyphs (and any lower marks),
+    a zero line gap, and USE_TYPO_METRICS so every platform agrees. The win
+    metrics stay wide enough to cover accents/marks so nothing clips.
+    """
+    head = font["head"]
+    os2 = font["OS/2"]
+    hhea = font["hhea"]
+
+    asc_top, _ = _glyph_extent(font, _ASCENDER_GLYPHS)
+    _, desc_bottom = _glyph_extent(font, _DESCENDER_GLYPHS)
+
+    ascent = int(math.ceil((asc_top if asc_top is not None else head.yMax) / 10) * 10)
+    lowest = min(desc_bottom if desc_bottom is not None else head.yMin, head.yMin)
+    descent = int(math.floor(lowest / 10) * 10)
+
+    os2.sTypoAscender = ascent
+    os2.sTypoDescender = descent
+    os2.sTypoLineGap = 0
+    hhea.ascent = ascent
+    hhea.descent = descent
+    hhea.lineGap = 0
+    # Keep the win box wide enough for accents/marks so tall glyphs never clip.
+    os2.usWinAscent = max(head.yMax, ascent)
+    os2.usWinDescent = -min(head.yMin, descent)
+    os2.fsSelection |= USE_TYPO_METRICS
 
 
 def _ps_family(config: ProjectConfig) -> str:
@@ -110,6 +171,7 @@ def finalize_vf(config: ProjectConfig, src: Path, out: Path, italic: bool) -> Pa
     else:
         os2.fsSelection = (os2.fsSelection | 0x040) & ~0x001  # REGULAR, not ITALIC
         head.macStyle &= ~0x2
+    normalize_vertical_metrics(font)
     fix_instances(font, config, italic)
     out.parent.mkdir(parents=True, exist_ok=True)
     font.save(str(out))
