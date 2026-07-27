@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Inter } from "next/font/google";
 
-import { siteUrl } from "@/lib/config";
+import { siteName, siteUrl } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
 const inter = Inter({
@@ -13,7 +13,6 @@ const inter = Inter({
   display: "swap",
 });
 
-const siteName = "static-to-variable";
 const title = "Turn static fonts into one variable font";
 const description =
   "Turn static font files into one variable font with every weight in between. Upload thin, regular, and bold weights online, then download TTF and WOFF2 files.";
@@ -45,6 +44,8 @@ export const metadata: Metadata = {
     title,
     description,
     type: "website",
+    siteName,
+    url: siteUrl,
   },
   twitter: {
     card: "summary_large_image",

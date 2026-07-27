@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { SingleGlyphViewer } from "@/components/glyph-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { siteName } from "@/lib/config";
 import { FONTS } from "@/lib/fonts";
 
 interface Params {
@@ -26,18 +27,23 @@ export function generateMetadata({
     if (!font) {
       return {};
     }
-    const styles = font.staticStyles
-      ? `${font.staticStyles} static styles`
-      : "static styles";
-    const description = `${font.name} rebuilt as a single variable font. Google Fonts only ships ${font.name} as ${styles} with no variable version, so we redrew every weight onto one shared structure. Scrub the wght axis from ${font.axis.min} to ${font.axis.max} and download the WOFF2 or TTF.`;
+    const styles = font.staticStyles ? `${font.staticStyles} ` : "";
+    // Renders at 143-155 chars across the whole FONTS list, inside the ~160
+    // char SERP limit. Reword only if the longest name still fits.
+    const description = `${font.name} rebuilt as one variable font. Google Fonts only ships ${styles}static styles, no variable version. Scrub wght ${font.axis.min} to ${font.axis.max}, download WOFF2 or TTF.`;
+    const canonical = `/showcase/${font.id}`;
     return {
       title: `${font.name} variable font`,
       description,
-      alternates: { canonical: `/showcase/${font.id}` },
+      alternates: { canonical },
       openGraph: {
         title: `${font.name} variable font`,
         description,
         type: "website",
+        url: canonical,
+        // This block replaces the root layout's openGraph rather than merging
+        // into it, so the site name has to be repeated here.
+        siteName,
       },
       twitter: {
         card: "summary_large_image",
