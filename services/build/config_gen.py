@@ -230,8 +230,8 @@ def generate_config(
             "version": "1.000",
             "vendor": "STV",
             "designer": "static-to-variable",
-            "designerUrl": "https://variable.blode.co",
-            "vendorUrl": "https://variable.blode.co",
+            "designerUrl": "https://blode.co/variable",
+            "vendorUrl": "https://blode.co/variable",
         },
         "axes": [
             {

@@ -25,6 +25,8 @@ cabinet/
 # Generated pipeline outputs.
 master_ufo/
 packages/variable-gen/build/
+.vercel
+.env*
 examples/*/build/
 examples/*/packages/
 packages/variable-gen/reports/

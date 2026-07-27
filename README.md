@@ -7,7 +7,7 @@ Turn static fonts into one variable font.
 Point it at your separate thin, regular, and bold files and it builds one variable font that slides across every weight in between. Bundling them doesn't work, the outlines don't line up, so it redraws each weight onto a shared skeleton and skips any glyph it can't convert cleanly.
 
 <p>
-<a href="https://variable.blode.co">
+<a href="https://blode.co/variable">
 <img alt="View the static-to-variable demo" src=".github/assets/demo.svg" width="200" />
 </a>
 </p>
@@ -44,4 +44,4 @@ The code is [MIT](LICENSE.md). Your fonts keep their own licenses, and that matt
 
 ---
 
-Crafted by [<img src="https://matthewblode.com/avatar-circle.png" width="20" align="top" />](https://matthewblode.com) [Matthew Blode](https://matthewblode.com)
+Crafted by [<img src="https://blode.co/avatar-circle.png" width="20" align="top" />](https://blode.co) [Matthew Blode](https://blode.co)

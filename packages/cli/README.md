@@ -2,7 +2,7 @@
 
 Turn static fonts into one variable font.
 
-Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. Try it first at [variable.blode.co](https://variable.blode.co): drop your fonts in and build right in the browser.
+Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. Try it first at [blode.co/variable](https://blode.co/variable): drop your fonts in and build right in the browser.
 
 ## Quick start
 

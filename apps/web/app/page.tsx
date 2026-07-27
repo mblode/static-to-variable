@@ -3,6 +3,7 @@ import { ArrowUpRightIcon, GithubIcon } from "blode-icons-react";
 import { BuildTool } from "@/components/build-tool";
 import { GlyphViewer } from "@/components/glyph-viewer";
 import { Button } from "@/components/ui/button";
+import { asset } from "@/lib/config";
 
 export default function Home() {
   return (
@@ -130,7 +131,7 @@ static-to-variable build`}</code>
           Crafted by
           <a
             className="flex items-center gap-2 rounded-full py-1.5 pr-2.5 pl-1.5 hover:text-foreground"
-            href="https://matthewblode.com"
+            href="https://blode.co"
             rel="author noreferrer"
             target="_blank"
           >
@@ -139,7 +140,7 @@ static-to-variable build`}</code>
               alt="Avatar of Matthew Blode"
               className="rounded-full"
               height={20}
-              src="/avatar-sm.png"
+              src={asset("/avatar-sm.png")}
               width={20}
             />
             Matthew Blode

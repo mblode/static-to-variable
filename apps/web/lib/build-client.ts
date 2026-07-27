@@ -2,6 +2,8 @@
 // streamed SSE progress to typed handlers. Returns a function that aborts the
 // in-flight build. Runs in the browser only (uses fetch/atob/URL/FormData).
 
+import { asset } from "./config";
+
 export interface BuildStageInfo {
   id: string;
   title: string;
@@ -161,7 +163,9 @@ async function run(
   handlers: BuildHandlers,
   signal: AbortSignal
 ): Promise<void> {
-  const url = process.env.NEXT_PUBLIC_BUILD_API_URL ?? "/api/build";
+  // asset(): a client-side fetch is not basePath-prefixed, so without this the
+  // font build POSTs to blode.co/api/build and 404s.
+  const url = process.env.NEXT_PUBLIC_BUILD_API_URL ?? asset("/api/build");
   const body = new FormData();
   for (const file of files) {
     body.append("files", file);
