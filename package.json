@@ -22,7 +22,7 @@
     "build:example": "uv run python -m variable_gen.cli build --config examples/minimal/stv.config.json --style all",
     "check": "ultracite check",
     "fix": "ultracite fix",
-    "prepare": "lefthook install"
+    "prepare": "lefthook install || true"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",

@@ -1,8 +1,9 @@
 import type { MetadataRoute } from "next";
 
+import { siteUrl } from "@/lib/config";
 import { FONTS } from "@/lib/fonts";
 
-const BASE = "https://variable.blode.co";
+const BASE = siteUrl;
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const lastModified = new Date();
