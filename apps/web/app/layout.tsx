@@ -60,8 +60,7 @@ export default function RootLayout({
   return (
     <html className={cn("dark font-sans", inter.variable)} lang="en">
       <head>
-        <link href="https://us.i.posthog.com" rel="preconnect" />
-        <link href="https://us-assets.i.posthog.com" rel="dns-prefetch" />
+        <link href="https://r.blode.co" rel="preconnect" />
       </head>
       <body className="min-h-dvh antialiased">{children}</body>
     </html>
