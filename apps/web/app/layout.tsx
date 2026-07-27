@@ -60,7 +60,7 @@ export default function RootLayout({
   return (
     <html className={cn("dark font-sans", inter.variable)} lang="en">
       <head>
-        <link href="https://r.blode.co" rel="preconnect" />
+        <link href={process.env.NEXT_PUBLIC_POSTHOG_HOST} rel="preconnect" />
       </head>
       <body className="min-h-dvh antialiased">{children}</body>
     </html>
