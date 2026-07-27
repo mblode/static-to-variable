@@ -13,3 +13,5 @@ export const basePath = "/variable";
 export const asset = (path: string) => `${basePath}${path}`;
 
 export const siteUrl = `https://blode.co${basePath}`;
+
+export const siteName = "static-to-variable";
