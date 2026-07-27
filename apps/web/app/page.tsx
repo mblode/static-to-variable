@@ -1,9 +1,11 @@
 import { ArrowUpRightIcon, GithubIcon } from "blode-icons-react";
+import Link from "next/link";
 
 import { BuildTool } from "@/components/build-tool";
 import { GlyphViewer } from "@/components/glyph-viewer";
 import { Button } from "@/components/ui/button";
 import { asset } from "@/lib/config";
+import { FONTS } from "@/lib/fonts";
 
 export default function Home() {
   return (
@@ -45,9 +47,15 @@ export default function Home() {
           <h2 className="font-semibold text-xl">
             Variable fonts that didn&apos;t exist
           </h2>
-          <p className="text-muted-foreground text-sm">
-            Google Fonts doesn&apos;t have these
-          </p>
+          {/* The viewer below only ever links to the family currently selected
+              in its client-side switcher, so this is the crawl path — and the
+              JS-off path — to all of them. */}
+          <Link
+            className="text-muted-foreground text-sm hover:text-foreground"
+            href="/showcase"
+          >
+            See all {FONTS.length} families
+          </Link>
         </div>
         <GlyphViewer />
       </section>
