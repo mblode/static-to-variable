@@ -47,11 +47,14 @@ static-to-variable init
 static-to-variable build`}</code>
         </pre>
         <p className="mt-4 max-w-[56ch] text-pretty text-muted-foreground">
-          Running <code className="font-mono text-sm">init</code> finds the .ttf
-          and .otf files in the folder, reads each one&apos;s weight, and writes
-          a config you can edit. Then{" "}
-          <code className="font-mono text-sm">build</code> produces the variable
-          TTF and WOFF2.
+          {/* Explicit string literals: JSX trims whitespace around elements
+              inconsistently, which ate the space after the first <code>. */}
+          <code className="font-mono text-sm">init</code>
+          {
+            " finds the .ttf and .otf files in the folder, reads each one's weight, and writes a config you can edit. "
+          }
+          <code className="font-mono text-sm">build</code>
+          {" produces the variable TTF and WOFF2."}
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <Button asChild variant="outline">
