@@ -23,7 +23,9 @@ Then: uv run python -m variable_gen.cli build --config <path> --style all
 
 from __future__ import annotations
 
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -152,6 +154,45 @@ def _vertical_metrics(config: ProjectConfig, default_donor_path: Path) -> dict[s
     }
 
 
+def reconstruct_workers(job_count: int) -> int:
+    """How many processes to reconstruct with.
+
+    ``STV_JOBS`` overrides (1 disables the pool, which keeps tracebacks readable
+    when debugging a single glyph). Otherwise one per core, capped at the number
+    of glyphs so a tiny font doesn't pay to spawn 8 interpreters.
+    """
+    override = os.environ.get("STV_JOBS")
+    if override:
+        try:
+            requested = int(override)
+        except ValueError:
+            requested = 0
+        if requested > 0:
+            return min(requested, max(1, job_count))
+    return max(1, min(os.cpu_count() or 1, job_count))
+
+
+def reconstruct_all(jobs: dict[str, dict], reference_pos, workers: int) -> dict[str, tuple]:
+    """``reconstruct`` every glyph's donor outlines, across processes.
+
+    Reconstruction dominates the whole pipeline (measured in production: 35.6s of
+    a 44.5s build) and it ran on a single core, which is what put real families
+    out of reach of the build timeout. It is a pure function of plain coordinate
+    lists with no shared state, so it parallelises exactly.
+
+    Results are keyed by glyph name, so the caller applies them in the source's
+    own order and the output is identical to the serial path.
+    """
+    if workers <= 1:
+        return {name: reconstruct(o, reference_pos=reference_pos) for name, o in jobs.items()}
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            name: pool.submit(reconstruct, outlines, reference_pos)
+            for name, outlines in jobs.items()
+        }
+        return {name: future.result() for name, future in futures.items()}
+
+
 def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
     """Rebuild one style's ``.glyphs`` source in place, returning reconstruction
     stats. Mirrors ``rebuild_8master.rebuild_family`` exactly, config-driven."""
@@ -209,6 +250,28 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
             setattr(m, attr, val)
     font.instances = []
 
+    # Resolve every glyph's donor outlines up front (cheap table lookups), then
+    # reconstruct them all in one parallel pass before the serial write-back loop
+    # below. Covers every glyph present in all donors, including the few the
+    # strategy table handles specially, because those paths fall through to the
+    # normal reconstruction when their own handling doesn't apply.
+    donor_outlines: dict[str, dict] = {}
+    for glyph in font.glyphs:
+        dn = donor_name_for(glyph)
+        if dn is None:
+            continue
+        resolved = {name: donor_outline(donors[name], dn) for name, _, _ in plan}
+        if all(o is not None for o in resolved.values()):
+            donor_outlines[glyph.name] = resolved
+
+    recon_jobs = {
+        name: {pos_by_name[master]: outs[master][0] for master, _, _ in plan}
+        for name, outs in donor_outlines.items()
+    }
+    workers = reconstruct_workers(len(recon_jobs))
+    print(f"[{style_key}] reconstructing {len(recon_jobs)} glyphs on {workers} core(s)")
+    reconstructed = reconstruct_all(recon_jobs, reference_pos, workers)
+
     stats = RebuildStats()
     for glyph in font.glyphs:
         strat = strategies.get(glyph.name)
@@ -229,11 +292,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
                 stats.glyphs[glyph.name] = "frozen"
                 continue
 
-        dn = donor_name_for(glyph)
-        maybe_outlines = {
-            name: (donor_outline(donors[name], dn) if dn else None) for name, _, _ in plan
-        }
-        outlines = {name: o for name, o in maybe_outlines.items() if o is not None}
+        outlines = donor_outlines.get(glyph.name, {})
         in_donors = len(outlines) == len(plan)
 
         if in_donors:
@@ -272,8 +331,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
             # truly interpolate, and reconstructs to a shared structure otherwise.
             # If it can't reconcile the glyph (genuine topology change), leave the
             # donor outlines and flag for freeze.
-            pos_outlines = {pos_by_name[name]: outlines[name][0] for name, _, _ in plan}
-            rec, info = reconstruct(pos_outlines, reference_pos=reference_pos)
+            rec, info = reconstructed[glyph.name]
             if rec is not None:
                 out8 = {name: (rec[pos_by_name[name]], outlines[name][1]) for name, _, _ in plan}
                 if info["stage"] == "reconstructed":

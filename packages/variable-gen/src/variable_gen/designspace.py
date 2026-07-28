@@ -97,6 +97,44 @@ def fix_designspace_axis(
     print(f"  Wrote {len(ds.instances)} named instances ({'italic' if is_italic else 'roman'})")
 
 
+# glyphsLib writes this into every UFO it emits; ufo2ft then runs the listed
+# filters during the fontmake build.
+UFO2FT_FILTERS_KEY = "com.github.googlei18n.ufo2ft.filters"
+
+
+def drop_open_corner_filter(ufo) -> bool:
+    """Remove glyphsLib's ``eraseOpenCorners`` pre-filter from one UFO's lib.
+
+    An "open corner" is a Glyphs *drawing* convention: the designer overlaps two
+    strokes at a joint and leaves a small crossing loop, which the filter erases
+    at compile time. Our masters are not drawn that way. They are reconstructed
+    from already-compiled static TTFs, whose outlines never contain that
+    convention, so the filter has nothing legitimate to erase here.
+
+    What it does instead is misread the acute junctions of diagonal strokes as
+    open corners. Worse, ufo2ft applies it to each master independently, so the
+    same glyph gets a different point count per weight and the masters stop
+    interpolating. Measured on Inter Thin/Regular/Black, it broke every diagonal
+    glyph in the font (A M N W X Y Z w x y, plus their accented forms) while
+    leaving curve-only glyphs (B o e n) untouched. fontmake then rejected them as
+    incompatible and ``build_style`` froze them to the default master, which is
+    why they rendered at one fixed weight across the whole axis.
+
+    Returns whether the filter was present.
+    """
+    filters = ufo.lib.get(UFO2FT_FILTERS_KEY)
+    if not filters:
+        return False
+    kept = [f for f in filters if f.get("name") != "eraseOpenCorners"]
+    if len(kept) == len(filters):
+        return False
+    if kept:
+        ufo.lib[UFO2FT_FILTERS_KEY] = kept
+    else:
+        del ufo.lib[UFO2FT_FILTERS_KEY]
+    return True
+
+
 def build_designspace(
     glyphs_path: Path,
     ds_name: str,
@@ -130,16 +168,21 @@ def build_designspace(
     )
 
     master_ufo_dir.mkdir(parents=True, exist_ok=True)
+    dropped = 0
     for src in ds.sources:
         safe_name = src.name.replace(" ", "_").replace("/", "_")
         ufo_filename = f"{ufo_prefix}_{safe_name}.ufo"
         ufo_path = master_ufo_dir / ufo_filename
         if ufo_path.exists():
             shutil.rmtree(ufo_path)
+        dropped += drop_open_corner_filter(src.font)
         print(f"  Saving {ufo_filename}...")
         src.font.save(str(ufo_path))
         src.filename = ufo_filename
         src.path = str(ufo_path)
+
+    if dropped:
+        print(f"  Dropped glyphsLib's eraseOpenCorners filter from {dropped} master(s)")
 
     ds_path = master_ufo_dir / ds_name
     ds.write(str(ds_path))

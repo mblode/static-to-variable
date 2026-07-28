@@ -24,9 +24,12 @@ import {
 // be statically optimized.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Setup (uv venv + native-wheel install) plus the pipeline can approach a few
-// minutes; give the function headroom above the in-build wall-clock guard.
-export const maxDuration = 300;
+// Reconstruction cost scales with glyphs x masters, and real families are far
+// bigger than the 3-master toys: Inter 18pt is 2926 glyphs across 9 weights and
+// took ~31 minutes single-threaded. The engine now reconstructs across cores
+// (see SANDBOX_VCPUS), but the ceiling still has to be generous or large uploads
+// are simply unbuildable. 800s is the Fluid compute maximum.
+export const maxDuration = 800;
 
 // --- Upload guardrails -----------------------------------------------------
 const MIN_FILES = 2;
@@ -40,9 +43,14 @@ const SANDBOX_ROOT = "/vercel/sandbox";
 const JOB_DIR = `${SANDBOX_ROOT}/job`;
 const VENV_DIR = `${SANDBOX_ROOT}/.venv`;
 // Wall-clock cap on the build_job run itself (setup gets the rest of maxDuration).
-const BUILD_TIMEOUT_MS = 180_000;
+const BUILD_TIMEOUT_MS = 700_000;
 // Sandbox session lifetime — must outlast setup + build.
-const SANDBOX_TIMEOUT_MS = 8 * 60 * 1000;
+const SANDBOX_TIMEOUT_MS = 15 * 60 * 1000;
+// The pipeline's hot stage (glyph reconstruction) is CPU-bound and now runs one
+// process per core, so the sandbox is sized for it rather than left at the
+// default. Vercel allocates 2048 MB per vCPU, so this is also what keeps a
+// multi-thousand-glyph family from running out of memory.
+const SANDBOX_VCPUS = 8;
 // maxDuration is a hard kill: if the platform stops the function mid-build the
 // finally never runs and this route logs nothing at all, which is the one
 // failure mode the instrumentation below cannot see. The build guard is
@@ -560,6 +568,7 @@ export async function POST(request: Request): Promise<Response> {
         sandbox = await Sandbox.create({
           runtime: "python3.13",
           timeout: SANDBOX_TIMEOUT_MS,
+          resources: { vcpus: SANDBOX_VCPUS },
         });
         const sbx = sandbox;
         logEvent("info", {
@@ -567,6 +576,7 @@ export async function POST(request: Request): Promise<Response> {
           requestId,
           sandbox: sbx.name,
           ms: elapsed(createStartedAt),
+          vcpus: sbx.vcpus,
         });
 
         // writeFiles resolves relative paths under /vercel/sandbox; mkdir the
@@ -633,7 +643,10 @@ export async function POST(request: Request): Promise<Response> {
           cmd: python,
           args: ["services/build/build_job.py", JOB_DIR],
           cwd: SANDBOX_ROOT,
-          env: { STV_FONTMAKE: fontmake },
+          // STV_JOBS sizes the engine's reconstruction pool. os.cpu_count() in
+          // the microVM reports the host's cores, not this sandbox's slice, so
+          // it has to be told what it actually got.
+          env: { STV_FONTMAKE: fontmake, STV_JOBS: String(SANDBOX_VCPUS) },
           detached: true,
         });
 
