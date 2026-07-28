@@ -21,36 +21,6 @@ const nextConfig: NextConfig = {
   },
   // Type safety is enforced by `turbo typecheck` (tsc --noEmit) in CI, not here.
   typescript: { ignoreBuildErrors: true },
-  /**
-   * Keep the non-canonical hostnames out of the index.
-   *
-   * Every page here canonicalises to blode.co/variable, but the app also
-   * answers on variable.zone.blode.co (the origin blode.co proxies to) and on
-   * its *.vercel.app aliases. Those hostnames sit inside the
-   * `sc-domain:blode.co` Search Console property, so left alone they are a
-   * crawlable duplicate of the whole site.
-   *
-   * `x-forwarded-host` is the discriminator, not `host`: the multi-zone rewrite
-   * proxies to the origin, so the incoming `host` is variable.zone.blode.co for
-   * real blode.co traffic too. `x-forwarded-host` keeps the hostname the client
-   * actually asked for, which is blode.co when proxied and the origin only on a
-   * direct hit. Matching on `host` here would noindex the live site.
-   */
-  headers() {
-    return Promise.resolve([
-      {
-        headers: [{ key: "X-Robots-Tag", value: "noindex" }],
-        has: [
-          {
-            key: "x-forwarded-host",
-            type: "header" as const,
-            value: String.raw`.*\.zone\.blode\.co|.*\.vercel\.app`,
-          },
-        ],
-        source: "/:path*",
-      },
-    ]);
-  },
   redirects() {
     return Promise.resolve([
       {
