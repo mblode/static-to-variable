@@ -33,6 +33,65 @@ const NAME_TYPO_SUBFAMILY = 17;
 
 const DEFAULT_WEIGHT = 400;
 
+/**
+ * Longest keys first, so "extrabold" wins over "bold". Mirrors
+ * ``_KEYWORD_WEIGHTS`` in services/build/config_gen.py; the two must agree, or
+ * the weight the table shows is not the weight the build uses.
+ */
+const KEYWORD_WEIGHTS: [string, number][] = [
+  ["extralight", 200],
+  ["ultralight", 200],
+  ["extrabold", 800],
+  ["ultrabold", 800],
+  ["semibold", 600],
+  ["demibold", 600],
+  ["hairline", 100],
+  ["regular", 400],
+  ["medium", 500],
+  ["normal", 400],
+  ["light", 300],
+  ["black", 900],
+  ["heavy", 900],
+  ["thin", 100],
+  ["bold", 700],
+];
+
+/** The weight this text names, or null when it names none. */
+function inferWeight(text: string): number | null {
+  const compact = text.toLowerCase().replaceAll(/[\s-]+/g, "");
+  for (const [keyword, weight] of KEYWORD_WEIGHTS) {
+    if (compact.includes(keyword)) {
+      return weight;
+    }
+  }
+  return null;
+}
+
+/**
+ * The weight a font should be treated as, given what OS/2 declares and what the
+ * font calls itself.
+ *
+ * A named weight wins, because shipped statics get usWeightClass wrong often
+ * enough to matter: Google's Inter statics declare 250 for BOTH Thin and
+ * ExtraLight, which showed "250" in the weight table for a font plainly named
+ * Thin. When the name says nothing about weight (a "Book" or "Text" cut), OS/2
+ * is the only signal there is. "Regular" as a style name is a default label
+ * rather than a claim, so a weight in the family name beats it.
+ */
+export function resolveWeight(
+  usWeightClass: number,
+  family: string,
+  style: string
+): number {
+  const styleWeight = inferWeight(style);
+  const familyWeight = inferWeight(family);
+  const named =
+    familyWeight !== null && (styleWeight === null || styleWeight === 400)
+      ? familyWeight
+      : styleWeight;
+  return named ?? usWeightClass ?? DEFAULT_WEIGHT;
+}
+
 function readTag(view: DataView, offset: number): string {
   let tag = "";
   for (let i = 0; i < 4; i += 1) {
@@ -159,9 +218,20 @@ export function inspectFont(buffer: ArrayBuffer): FontInfo {
   const tables = readTableDirectory(view);
   const { weight, italic } = readOs2(view, tables.get("OS/2"));
   const names = readNames(view, tables.get("name"));
-  const family =
-    names.get(NAME_TYPO_FAMILY) ?? names.get(NAME_FAMILY) ?? "Unknown";
-  const style =
-    names.get(NAME_TYPO_SUBFAMILY) ?? names.get(NAME_SUBFAMILY) ?? "Regular";
-  return { family: family.trim(), style: style.trim(), weight, italic };
+  const family = (
+    names.get(NAME_TYPO_FAMILY) ??
+    names.get(NAME_FAMILY) ??
+    "Unknown"
+  ).trim();
+  const style = (
+    names.get(NAME_TYPO_SUBFAMILY) ??
+    names.get(NAME_SUBFAMILY) ??
+    "Regular"
+  ).trim();
+  return {
+    family,
+    style,
+    weight: resolveWeight(weight, family, style),
+    italic,
+  };
 }
