@@ -8,7 +8,7 @@ Each workspace has its own `AGENTS.md` with route maps, gotchas, and conventions
 
 @packages/cli/AGENTS.md
 
-(`packages/variable-gen` is Python-only; see its `README.md` for entry points. `apps/web` is the public web tool.)
+(`packages/variable-gen` is Python-only; see its `README.md` for entry points. `apps/web` is the marketing site and font showcase; it builds nothing, the CLI is the only way to run the pipeline.)
 
 ## Commands
 
@@ -35,4 +35,4 @@ npm run changeset        # add a changeset before opening a release PR
 
 ## Do not commit
 
-Donor fonts, uploaded `.glyphs` files, generated TTFs, report directories, app job state, `.venv`, `node_modules`, or SVG caches. The `.gitignore` is the source of truth.
+Donor fonts, generated `.glyphs` sources, generated TTFs, report directories, `.venv`, `node_modules`, or SVG caches. The `.gitignore` is the source of truth. The showcase fonts in `apps/web/public/fonts` are the deliberate exception: they are committed build artifacts, rebuilt with `scripts/rebuild-showcase-fonts.py`.
