@@ -1,7 +1,6 @@
 import { ArrowUpRightIcon, GithubIcon } from "blode-icons-react";
 import Link from "next/link";
 
-import { BuildTool } from "@/components/build-tool";
 import { GlyphViewer } from "@/components/glyph-viewer";
 import { Button } from "@/components/ui/button";
 import { asset } from "@/lib/config";
@@ -35,12 +34,39 @@ export default function Home() {
           Turn static fonts into one variable font.
         </h1>
         <p className="mt-5 max-w-[48ch] text-pretty text-lg text-muted-foreground">
-          Upload thin, regular, and bold. Get one file with every weight in
-          between.
+          Point it at a folder of thin, regular, and bold. Get one file with
+          every weight in between.
         </p>
       </header>
 
-      <BuildTool />
+      <section>
+        <pre className="overflow-x-auto rounded-xl bg-card px-5 py-4 font-mono text-muted-foreground text-sm leading-6 ring-1 ring-foreground/10">
+          <code>{`npm install -g static-to-variable
+cd ~/Downloads/Inter/static
+static-to-variable init
+static-to-variable build`}</code>
+        </pre>
+        <p className="mt-4 max-w-[56ch] text-pretty text-muted-foreground">
+          <code className="font-mono text-sm">init</code> finds the .ttf and
+          .otf files in the folder, reads each one&apos;s weight, and writes a
+          config you can edit. <code className="font-mono text-sm">build</code>{" "}
+          produces the variable TTF and WOFF2.
+        </p>
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Button asChild variant="outline">
+            <a href="https://static-to-variable.blode.md">
+              Read the docs
+              <ArrowUpRightIcon />
+            </a>
+          </Button>
+          <Button asChild variant="ghost">
+            <a href="https://github.com/mblode/static-to-variable">
+              View on GitHub
+              <ArrowUpRightIcon />
+            </a>
+          </Button>
+        </div>
+      </section>
 
       <section className="mt-16 border-t pt-12">
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
@@ -92,26 +118,44 @@ export default function Home() {
       </section>
 
       <section className="mt-16 border-t pt-12">
-        <div className="flex flex-wrap items-end justify-between gap-6">
+        <h2 className="font-semibold text-xl">What you need</h2>
+        <p className="mt-3 max-w-[56ch] text-pretty text-muted-foreground">
+          It runs on your machine, so nothing is uploaded anywhere and a big
+          family can take as long as it needs.
+        </p>
+        <dl className="mt-8 grid gap-8 sm:grid-cols-3">
           <div>
-            <h2 className="font-semibold text-xl">Try it on your fonts</h2>
-            <p className="mt-3 max-w-[56ch] text-pretty text-muted-foreground">
-              Run it in a folder with your font files. It finds them and does
-              the rest.
-            </p>
+            <dt className="font-medium">Node 24.11+</dt>
+            <dd className="mt-1.5 text-base text-muted-foreground sm:text-sm">
+              Runs the CLI itself.{" "}
+              <a
+                className="underline underline-offset-4 hover:text-foreground"
+                href="https://nodejs.org"
+              >
+                nodejs.org
+              </a>
+            </dd>
           </div>
-          <Button asChild variant="outline">
-            <a href="https://github.com/mblode/static-to-variable">
-              View on GitHub
-              <ArrowUpRightIcon />
-            </a>
-          </Button>
-        </div>
-        <pre className="mt-6 overflow-x-auto rounded-xl bg-card px-5 py-4 font-mono text-muted-foreground text-sm leading-6 ring-1 ring-foreground/10">
-          <code>{`npm install -g static-to-variable
-static-to-variable init
-static-to-variable build`}</code>
-        </pre>
+          <div>
+            <dt className="font-medium">Python 3.11+ and uv</dt>
+            <dd className="mt-1.5 text-base text-muted-foreground sm:text-sm">
+              The font engine.{" "}
+              <a
+                className="underline underline-offset-4 hover:text-foreground"
+                href="https://docs.astral.sh/uv/"
+              >
+                docs.astral.sh/uv
+              </a>
+            </dd>
+          </div>
+          <div>
+            <dt className="font-medium">A few minutes</dt>
+            <dd className="mt-1.5 text-base text-muted-foreground sm:text-sm">
+              Three weights of a small family take under a minute; nine weights
+              of a 3,000-glyph family take several.
+            </dd>
+          </div>
+        </dl>
       </section>
 
       <footer className="mt-16 flex flex-col items-center gap-3 border-t pt-8 text-muted-foreground text-sm">

@@ -69,4 +69,4 @@ module = "variable_gen.reconstruct_compatible"
 check_untyped_defs = false
 
 [tool.pytest.ini_options]
-testpaths = ["packages/variable-gen/tests", "services/build/tests"]
+testpaths = ["packages/variable-gen/tests"]
