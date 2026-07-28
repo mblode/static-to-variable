@@ -14,11 +14,6 @@ const nextConfig: NextConfig = {
   // Monorepo: pin the file-tracing root to the repo root so Vercel's build
   // doesn't mis-detect it.
   outputFileTracingRoot: path.join(root, "..", ".."),
-  // The /api/build route reads the Python engine + build service at runtime and
-  // uploads them to the Vercel Sandbox, so trace them into the function bundle.
-  outputFileTracingIncludes: {
-    "/api/build": ["../../packages/variable-gen/**", "../../services/build/**"],
-  },
   // Type safety is enforced by `turbo typecheck` (tsc --noEmit) in CI, not here.
   typescript: { ignoreBuildErrors: true },
   redirects() {

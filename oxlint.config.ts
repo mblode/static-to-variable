@@ -41,9 +41,10 @@ export default defineConfig({
   extends: [core],
   ignorePatterns: [
     // Ultracite's blanket `**/build` is meant for build-output directories, but
-    // it also swallowed `apps/web/app/api/build/` — a real App Router route
-    // that consequently had never been linted. This repo emits to `dist/` and
-    // `.next/`, both still ignored, so dropping the pattern costs nothing.
+    // it matches any source directory named `build` too — it silently swallowed
+    // an App Router route at `app/api/build/`, which went unlinted for its whole
+    // life. This repo emits to `dist/` and `.next/`, both still ignored, so
+    // dropping the pattern costs nothing and closes that trap.
     ...core.ignorePatterns.filter((pattern) => pattern !== "**/build"),
     "packages/cli/engine/**",
     "**/.pipeline-jobs/**",

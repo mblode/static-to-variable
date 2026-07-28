@@ -6,9 +6,8 @@
 export const basePath = "/variable";
 
 /**
- * `basePath` covers next/link and route handlers. It does NOT cover raw
- * `<a href>`, `<img src>`, `next/image` src, or client-side `fetch` to an API
- * route, so those go through this helper.
+ * `basePath` covers next/link. It does NOT cover raw `<a href>`, `<img src>`
+ * or `next/image` src, so those go through this helper.
  */
 export const asset = (path: string) => `${basePath}${path}`;
 
