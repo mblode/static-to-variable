@@ -40,7 +40,11 @@ const STYLISTIC_OFF = {
 export default defineConfig({
   extends: [core],
   ignorePatterns: [
-    ...core.ignorePatterns,
+    // Ultracite's blanket `**/build` is meant for build-output directories, but
+    // it also swallowed `apps/web/app/api/build/` — a real App Router route
+    // that consequently had never been linted. This repo emits to `dist/` and
+    // `.next/`, both still ignored, so dropping the pattern costs nothing.
+    ...core.ignorePatterns.filter((pattern) => pattern !== "**/build"),
     "packages/cli/engine/**",
     "**/.pipeline-jobs/**",
   ],
