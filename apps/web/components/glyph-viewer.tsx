@@ -171,14 +171,27 @@ export function SingleGlyphViewer({
               <Link href={pageHref}>View the {font.name} page</Link>
             </Button>
           ) : null}
+          {/*
+           * `rel="nofollow"` on both: these point at font binaries, and crawlers
+           * that follow them read the target as a page, spend budget fetching a
+           * few hundred KB, and then report it as a broken or mistyped one.
+           */}
           <Button asChild size="xs" variant="outline">
-            <a download={`${font.id}-variable.ttf`} href={font.ttf}>
+            <a
+              download={`${font.id}-variable.ttf`}
+              href={font.ttf}
+              rel="nofollow"
+            >
               <ArrowDownIcon />
               Download TTF
             </a>
           </Button>
           <Button asChild size="xs" variant="outline">
-            <a download={`${font.id}-variable.woff2`} href={font.file}>
+            <a
+              download={`${font.id}-variable.woff2`}
+              href={font.file}
+              rel="nofollow"
+            >
               <ArrowDownIcon />
               Download WOFF2
             </a>
