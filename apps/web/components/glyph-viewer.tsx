@@ -26,6 +26,14 @@ const CODEPOINTS = [...range(0x21, 0x7e), ...range(0xa1, 0xff)].filter(
   (cp) => cp !== 0xad
 );
 
+// Seed the editable specimen once via innerHTML instead of a React child. React
+// never reconciles a `dangerouslySetInnerHTML` subtree while the string is
+// unchanged, so once the browser mutates the contentEditable region (typing,
+// IME, a translation extension) React won't later try to remove a text node
+// that has moved out from under it — the source of the `removeChild`
+// NotFoundError this specimen used to throw.
+const SPECIMEN_HTML = { __html: "One file, every weight in between." };
+
 async function activateFont(
   file: string,
   stillCurrent: () => boolean
@@ -124,13 +132,11 @@ export function SingleGlyphViewer({
         aria-label="Type to preview the font"
         className="min-h-[200px] cursor-text overflow-hidden text-balance px-5 py-12 text-[clamp(2.25rem,6.5vw,4.5rem)] leading-[1.08] tracking-tight outline-none sm:px-8 sm:py-16"
         contentEditable
+        dangerouslySetInnerHTML={SPECIMEN_HTML}
         role="textbox"
         spellCheck={false}
         style={previewStyle}
-        suppressContentEditableWarning
-      >
-        One file, every weight in between.
-      </div>
+      />
 
       {showGlyphs ? (
         <div
