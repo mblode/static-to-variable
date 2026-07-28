@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveWeight } from "./font-inspect";
+import { resolveWeight } from "./font-inspect.js";
 
 describe("resolveWeight", () => {
   it("trusts the name over a wrong usWeightClass", () => {
-    // Google's shipped Inter statics declare 250 for BOTH Thin and ExtraLight,
-    // so the weight table showed "250" for a font plainly named Thin and the
-    // two weights collided.
+    // Google's shipped Inter statics declare 250 for BOTH Thin and ExtraLight.
+    // `init` drops same-weight files as duplicates, so trusting OS/2 silently
+    // discarded one of them and left the family a weight short.
     expect(resolveWeight(250, "Inter 18pt", "Thin")).toBe(100);
     expect(resolveWeight(250, "Inter 18pt", "ExtraLight")).toBe(200);
   });
@@ -27,13 +27,27 @@ describe("resolveWeight", () => {
     expect(resolveWeight(400, "Inter 18pt", "Regular")).toBe(400);
   });
 
+  it('never lets a default "Regular" subfamily overrule OS/2', () => {
+    // Inter's own statics ship Thin, Regular and Black all as family "Inter"
+    // with subfamily "Regular", and rely entirely on usWeightClass. Treating
+    // "Regular" as a claim of 400 collapsed the whole family onto one weight.
+    expect(resolveWeight(100, "Inter", "Regular")).toBe(100);
+    expect(resolveWeight(400, "Inter", "Regular")).toBe(400);
+    expect(resolveWeight(900, "Inter", "Regular")).toBe(900);
+  });
+
+  it("falls back to the default only when nothing else knows", () => {
+    expect(resolveWeight(0, "Inter", "Regular")).toBe(400);
+    expect(resolveWeight(0, "Some Serif", "Book")).toBe(400);
+  });
+
   it("prefers the longest keyword match", () => {
     expect(resolveWeight(400, "Foo", "ExtraBold")).toBe(800);
     expect(resolveWeight(400, "Foo", "SemiBold")).toBe(600);
     expect(resolveWeight(400, "Foo", "ExtraLight")).toBe(200);
   });
 
-  it("matches the whole Inter weight run to distinct values", () => {
+  it("gives the whole Inter weight run nine distinct weights", () => {
     const run = [
       ["Thin", 250, 100],
       ["ExtraLight", 250, 200],

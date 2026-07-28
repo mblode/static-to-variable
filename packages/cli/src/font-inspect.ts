@@ -45,6 +45,68 @@ const NAME_TYPO_SUBFAMILY = 17;
 
 const DEFAULT_WEIGHT = 400;
 
+/** Longest keys first, so "extrabold" wins over "bold". */
+const KEYWORD_WEIGHTS: [string, number][] = [
+  ["extralight", 200],
+  ["ultralight", 200],
+  ["extrabold", 800],
+  ["ultrabold", 800],
+  ["semibold", 600],
+  ["demibold", 600],
+  ["hairline", 100],
+  ["regular", 400],
+  ["medium", 500],
+  ["normal", 400],
+  ["light", 300],
+  ["black", 900],
+  ["heavy", 900],
+  ["thin", 100],
+  ["bold", 700],
+];
+
+/** The weight this text names, or null when it names none. */
+function inferWeight(text: string): number | null {
+  const compact = text.toLowerCase().replaceAll(/[\s-]+/g, "");
+  for (const [keyword, weight] of KEYWORD_WEIGHTS) {
+    if (compact.includes(keyword)) {
+      return weight;
+    }
+  }
+  return null;
+}
+
+/**
+ * The weight a font should be treated as, given what OS/2 declares and what the
+ * font calls itself.
+ *
+ * A specifically-named weight wins, because shipped statics get usWeightClass
+ * wrong often enough to matter. Google's Inter statics declare 250 for BOTH
+ * Thin and ExtraLight, and `init` drops same-weight files as duplicates, so
+ * trusting OS/2 silently discarded a weight and left the family short.
+ *
+ * "Regular" and "Normal" are the exception: nearly every static font carries
+ * one as its subfamily whatever its real weight (Inter ships Thin, Regular and
+ * Black all as subfamily "Regular"), so they are a default label rather than a
+ * claim and must never overrule OS/2. They only decide the answer when the
+ * family name says nothing either and there is no usWeightClass to fall back
+ * on. A weight in the family name ("Foo Thin") outranks them.
+ */
+export function resolveWeight(
+  usWeightClass: number,
+  family: string,
+  style: string
+): number {
+  const styleWeight = inferWeight(style);
+  const familyWeight = inferWeight(family);
+  if (styleWeight !== null && styleWeight !== DEFAULT_WEIGHT) {
+    return styleWeight;
+  }
+  if (familyWeight !== null) {
+    return familyWeight;
+  }
+  return usWeightClass || styleWeight || DEFAULT_WEIGHT;
+}
+
 function readTag(view: DataView, offset: number): string {
   let tag = "";
   for (let i = 0; i < 4; i += 1) {
@@ -176,14 +238,20 @@ export function inspectFont(buffer: Uint8Array): FontInfo {
   const tables = readTableDirectory(view);
   const { weight, italic } = readOs2(view, tables.get("OS/2"));
   const names = readNames(view, tables.get("name"));
-  const family =
-    names.get(NAME_TYPO_FAMILY) ?? names.get(NAME_FAMILY) ?? "Unknown";
-  const style =
-    names.get(NAME_TYPO_SUBFAMILY) ?? names.get(NAME_SUBFAMILY) ?? "Regular";
+  const family = (
+    names.get(NAME_TYPO_FAMILY) ??
+    names.get(NAME_FAMILY) ??
+    "Unknown"
+  ).trim();
+  const style = (
+    names.get(NAME_TYPO_SUBFAMILY) ??
+    names.get(NAME_SUBFAMILY) ??
+    "Regular"
+  ).trim();
   return {
-    family: family.trim(),
-    style: style.trim(),
-    weight,
+    family,
+    style,
+    weight: resolveWeight(weight, family, style),
     italic,
     vendor: names.get(NAME_VENDOR)?.trim(),
     designer: names.get(NAME_DESIGNER)?.trim(),
