@@ -70,12 +70,18 @@ def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
-def _infer_weight(subfamily: str) -> int:
-    compact = subfamily.lower().replace(" ", "").replace("-", "")
+def _infer_weight(text: str) -> int | None:
+    """The weight the given style/family text names, or None if it names none.
+
+    None matters: it is what lets ``inspect_font`` tell "this font is called
+    Regular" apart from "this font's name says nothing about weight", and only
+    the former should be allowed to overrule OS/2.
+    """
+    compact = text.lower().replace(" ", "").replace("-", "")
     for keyword, weight in sorted(_KEYWORD_WEIGHTS.items(), key=lambda kv: -len(kv[0])):
         if keyword in compact:
             return weight
-    return 400
+    return None
 
 
 def _clean_family(name: str) -> str:
@@ -102,14 +108,27 @@ def inspect_font(path: Path) -> dict:
         subfamily = _name(font, 17, 2) or "Regular"
         raw_family = _name(font, 16, 1) or path.stem
         raw_weight = getattr(os2, "usWeightClass", None)
+        # The weight the font *calls itself*. "Regular" as a style name is a
+        # default label rather than a claim, so when the family name carries the
+        # real weight (the common "Foo Thin" + subfamily "Regular" layout) that is
+        # the more specific signal and wins.
         name_weight = _infer_weight(subfamily)
-        # Prefer usWeightClass, but defer to the style name when it's missing or a
-        # generic 400 that contradicts a named weight — some fonts (e.g. Operator
-        # Mono Bold) ship usWeightClass=400 despite a "Bold" subfamily.
-        if raw_weight and not (int(raw_weight) == 400 and name_weight != 400):
+        family_weight = _infer_weight(raw_family)
+        if family_weight is not None and name_weight in (None, 400):
+            name_weight = family_weight
+        # A named weight wins over usWeightClass, because shipped statics get that
+        # field wrong often enough to matter and the name is what the designer
+        # wrote. Operator Mono Bold ships usWeightClass=400; Google's Inter statics
+        # ship BOTH Thin and ExtraLight as 250, which collapsed two distinct
+        # weights onto one value and made the whole upload unbuildable. When the
+        # name says nothing about weight (e.g. a "Book" or "Text" cut), OS/2 is the
+        # only signal there is, so keep it.
+        if name_weight is not None:
+            weight = name_weight
+        elif raw_weight:
             weight = int(raw_weight)
         else:
-            weight = name_weight
+            weight = 400
         weight = max(1, min(1000, weight))
         italic = bool(getattr(os2, "fsSelection", 0) & 0x01) or "italic" in subfamily.lower()
         return {
