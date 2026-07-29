@@ -16,7 +16,7 @@ static-to-variable build
 
 `init` finds your fonts, reads their weights, and writes `stv.config.json` for you; confirm the list and name the family. In a non-interactive shell (CI, agents) it writes a starter template to edit instead.
 
-Your variable font is in `build/`. Needs [Node](https://nodejs.org) 24.11+, [Python](https://www.python.org) 3.11+, and [uv](https://docs.astral.sh/uv/); the bundled font engine sets itself up the first time you build. Run `static-to-variable doctor` to check your setup.
+Your variable font is in `build/`. Needs [Node](https://nodejs.org/en) 24.11+, [Python](https://www.python.org) 3.11+, and [uv](https://docs.astral.sh/uv/); the bundled font engine sets itself up the first time you build. Run `static-to-variable doctor` to check your setup.
 
 ## Commands
 
