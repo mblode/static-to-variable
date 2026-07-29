@@ -134,7 +134,7 @@ static-to-variable build`}</code>
               Runs the CLI itself.{" "}
               <a
                 className="underline underline-offset-4 hover:text-foreground"
-                href="https://nodejs.org"
+                href="https://nodejs.org/en"
               >
                 nodejs.org
               </a>

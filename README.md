@@ -18,7 +18,7 @@ Point it at your separate thin, regular, and bold files and it builds one variab
 npm install -g static-to-variable
 ```
 
-Needs [Node](https://nodejs.org) 24.11+, [Python](https://www.python.org) 3.11+, and [uv](https://docs.astral.sh/uv/).
+Needs [Node](https://nodejs.org/en) 24.11+, [Python](https://www.python.org) 3.11+, and [uv](https://docs.astral.sh/uv/).
 
 ## Use it
 
