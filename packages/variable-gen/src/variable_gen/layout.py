@@ -1,14 +1,20 @@
-"""Port OpenType layout (GDEF/GSUB/GPOS) from a static donor into a built VF.
+"""Attach OpenType layout (GDEF/GSUB/GPOS) to a built variable font.
 
-Both build paths lose the donors' layout tables: the CLI pipeline round-trips
-donors through a ``.glyphs`` source that carries outlines and metrics only, and
-the showcase builder historically dropped layout before merging. This module
-statically ports the default master's GDEF/GSUB/GPOS into the finished variable
-font so ligatures and kerning survive (kern values frozen at the default
-weight). It degrades instead of failing: glyph names are remapped through the
+The CLI pipeline round-trips donors through a ``.glyphs`` source that carries
+outlines and metrics only, so fontmake's VF has no usable layout. This module
+restores it:
+
+1. **Variable-first** — instantiate the built VF at each master location, port
+   that master's donor layout onto the instance, then ``varLib.build`` those
+   masters so kerning (and other GPOS) can vary with weight when the merge
+   compiles.
+2. **Static fallback** — port the default master's GDEF/GSUB/GPOS alone
+   (kern values frozen at the default weight).
+
+Both paths degrade instead of failing: glyph names are remapped through the
 cmaps when the donor and the VF disagree, lookups referencing glyphs the VF
-does not have are pruned via the subsetter's layout closure, and if the result
-still cannot compile the font is left exactly as it was.
+does not have are pruned, and if the result still cannot compile the font is
+left exactly as it was.
 """
 
 from __future__ import annotations
@@ -19,11 +25,31 @@ from io import BytesIO
 from pathlib import Path
 from typing import Literal
 
+from fontTools.designspaceLib import (
+    AxisDescriptor,
+    DesignSpaceDocument,
+    InstanceDescriptor,
+    SourceDescriptor,
+)
 from fontTools.subset import Options as SubsetOptions
 from fontTools.subset import Subsetter
 from fontTools.ttLib import TTFont
+from fontTools.varLib import build as varlib_build
+from fontTools.varLib.instancer import instantiateVariableFont
 
 LAYOUT_TABLES = ("GDEF", "GSUB", "GPOS")
+
+# Hinting / misc tables that break a clean varLib merge of layout carriers.
+_DROP_BEFORE_MERGE = (
+    "BASE",
+    "JSTF",
+    "kern",
+    "MATH",
+    "fpgm",
+    "prep",
+    "cvt ",
+    "gasp",
+)
 
 
 @dataclass
@@ -137,6 +163,14 @@ def _compiles(font: TTFont) -> bool:
     return True
 
 
+def _restore_layout(varfont: TTFont, saved: dict[str, object]) -> None:
+    for tag in LAYOUT_TABLES:
+        if tag in varfont:
+            del varfont[tag]
+    for tag, table in saved.items():
+        varfont[tag] = table
+
+
 def port_layout(varfont: TTFont, donor_path: Path) -> LayoutReport:
     """Statically copy GDEF/GSUB/GPOS from the donor at ``donor_path`` into
     ``varfont``. Never raises for layout reasons and never leaves ``varfont``
@@ -173,10 +207,122 @@ def port_layout(varfont: TTFont, donor_path: Path) -> LayoutReport:
     # crashes the final save with a dangling class-def entry
     _prune_layout(varfont, vf_names)
     if not _compiles(varfont):
-        for tag in LAYOUT_TABLES:
-            if tag in varfont:
-                del varfont[tag]
-        for tag, table in saved.items():
-            varfont[tag] = table
+        _restore_layout(varfont, saved)
         return LayoutReport(mode="none", note="ported tables failed to compile")
     return LayoutReport(mode="static", tables=tuple(ported))
+
+
+def _axis_value(location: dict[str, float], axis_tag: str) -> float:
+    if axis_tag in location:
+        return float(location[axis_tag])
+    if len(location) == 1:
+        return float(next(iter(location.values())))
+    raise KeyError(axis_tag)
+
+
+def _designspace(
+    masters: list[tuple[TTFont, float]],
+    axis_tag: str,
+    axis_name: str,
+    default_value: float,
+) -> DesignSpaceDocument:
+    doc = DesignSpaceDocument()
+    axis = AxisDescriptor()
+    axis.tag = axis_tag
+    axis.name = axis_name
+    axis.minimum = min(pos for _, pos in masters)
+    axis.default = default_value
+    axis.maximum = max(pos for _, pos in masters)
+    doc.addAxis(axis)
+
+    for font, pos in masters:
+        source = SourceDescriptor()
+        source.font = font
+        source.location = {axis_name: pos}
+        source.styleName = f"{axis_tag}{pos:g}"
+        if pos == default_value:
+            source.copyInfo = True
+        doc.addSource(source)
+
+    for _, pos in masters:
+        inst = InstanceDescriptor()
+        inst.location = {axis_name: pos}
+        inst.styleName = f"{axis_tag}{pos:g}"
+        doc.addInstance(inst)
+    return doc
+
+
+def attach_layout(
+    varfont: TTFont,
+    masters: list[tuple[Path, dict[str, float]]],
+    *,
+    default_donor: Path,
+    axis_tag: str = "wght",
+    axis_name: str = "Weight",
+) -> LayoutReport:
+    """Prefer a variable layout merge from all master donors; else static port.
+
+    Never raises for layout reasons and never leaves ``varfont`` broken.
+    """
+    saved = {t: varfont[t] for t in LAYOUT_TABLES if t in varfont}
+    existing: list[tuple[Path, dict[str, float]]] = [
+        (Path(path), loc) for path, loc in masters if Path(path).is_file()
+    ]
+    if len(existing) < 2:
+        return port_layout(varfont, default_donor)
+
+    default_donor = Path(default_donor)
+    default_value: float | None = None
+    for path, loc in existing:
+        if path.resolve() == default_donor.resolve():
+            try:
+                default_value = _axis_value(loc, axis_tag)
+            except KeyError:
+                default_value = None
+            break
+
+    try:
+        prepared: list[tuple[TTFont, float]] = []
+        order = list(varfont.getGlyphOrder())
+        for path, loc in existing:
+            pos = _axis_value(loc, axis_tag)
+            if default_value is None and path.resolve() == default_donor.resolve():
+                default_value = pos
+            inst = instantiateVariableFont(copy.deepcopy(varfont), {axis_tag: pos}, inplace=False)
+            for tag in LAYOUT_TABLES:
+                if tag in inst:
+                    del inst[tag]
+            for tag in _DROP_BEFORE_MERGE:
+                if tag in inst:
+                    del inst[tag]
+            # Each weight keeps that donor's layout; outlines stay VF-compatible.
+            ported = port_layout(inst, path)
+            if ported.mode == "none":
+                raise RuntimeError(f"no layout from {path.name}: {ported.note}")
+            for tag in LAYOUT_TABLES:
+                if tag in inst:
+                    _ = inst[tag]  # decompile before glyph-order swap
+            inst.setGlyphOrder(order)
+            prepared.append((inst, pos))
+
+        if default_value is None:
+            default_value = sorted(pos for _, pos in prepared)[len(prepared) // 2]
+
+        candidate, _, _ = varlib_build(_designspace(prepared, axis_tag, axis_name, default_value))
+        if not _compiles(candidate):
+            raise RuntimeError("variable layout merge failed compile gate")
+
+        ported_tags: list[str] = []
+        for tag in LAYOUT_TABLES:
+            if tag in candidate:
+                varfont[tag] = copy.deepcopy(candidate[tag])
+                ported_tags.append(tag)
+        if not ported_tags:
+            raise RuntimeError("variable merge produced no layout tables")
+        _prune_layout(varfont, set(varfont.getGlyphOrder()))
+        if not _compiles(varfont):
+            raise RuntimeError("transplanted variable layout failed to compile")
+        return LayoutReport(mode="variable", tables=tuple(ported_tags))
+    except Exception:  # noqa: BLE001 — variable path is best-effort
+        _restore_layout(varfont, saved)
+        return port_layout(varfont, default_donor)

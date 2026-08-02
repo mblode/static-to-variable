@@ -24,6 +24,7 @@ import {
   resolveEngine,
   resolvePythonEnv,
   runEngine,
+  runEngineCapture,
 } from "./python.js";
 import {
   printPipelineStatus,
@@ -70,6 +71,14 @@ program
     "Convert a family of static fonts into a variable font, guided by a config."
   )
   .version(pkg.version, "-V, --version")
+  .addHelpText(
+    "after",
+    `
+Example:
+  static-to-variable init
+  static-to-variable build
+  static-to-variable release`
+  )
   .action(async () => {
     if (process.stdin.isTTY) {
       const { results } = await stepPipeline({});
@@ -79,6 +88,158 @@ program
     // Non-TTY with no subcommand: don't block a pipe on a prompt.
     program.outputHelp();
     process.exitCode = ExitCode.Usage;
+  });
+
+program
+  .command("init")
+  .description(
+    "Create an stv.config.json from the font files in the current directory."
+  )
+  .option("--force", "Overwrite an existing stv.config.json.")
+  .action(async (options: { force?: boolean }) => {
+    await runInit(Boolean(options.force));
+  });
+
+program
+  .command("build")
+  .description(
+    "Build the variable font(s) from a config: rebuild -> normalize -> build."
+  )
+  .option(
+    "--config <path>",
+    "Path to stv.config.json (default: ./stv.config.json)."
+  )
+  .option("--style <key>", "Style key, or 'all'.", "all")
+  .option("--check-only", "Skip building; only run the fidelity check.")
+  .option(
+    "--skip-rebuild",
+    "Build from existing sources without re-deriving masters from donors."
+  )
+  .option("--json", "Emit a machine-readable build summary to stdout.")
+  .action(async (options: BuildCommandOptions) => {
+    const configPath = resolveConfigPath(options.config);
+    const summary = loadProjectConfig(configPath);
+    const style = options.style ?? "all";
+    progress(
+      `Building ${summary.familyName} [${style === "all" ? summary.styleKeys.join(", ") : style}]`
+    );
+    const env = resolveEngine().pythonEnv;
+    // Matches the byte-parity-verified chain (build exports the designspace
+    // internally, so it is not a separate step here).
+    const steps = options.skipRebuild
+      ? ["build"]
+      : ["rebuild", "normalize", "build"];
+    const stepResults: { step: string; code: number }[] = [];
+    let buildStdout = "";
+    for (const step of steps) {
+      const args = [step, "--config", configPath, "--style", style];
+      if (step === "build" && options.checkOnly) {
+        args.push("--check-only");
+      }
+      progress(`-> ${step}`);
+      // Capture so we can parse layout/frozen from the final build line while
+      // still mirroring engine progress to stderr (stdout stays clean for --json).
+      const { code, stdout } = await runEngineCapture(args, env);
+      if (stdout) {
+        process.stderr.write(stdout.endsWith("\n") ? stdout : `${stdout}\n`);
+      }
+      stepResults.push({ code, step });
+      if (step === "build" && code === 0) {
+        buildStdout = stdout;
+      }
+      if (code !== 0) {
+        process.exitCode = code;
+        break;
+      }
+    }
+    const parsed = parseBuildEngineOutput(buildStdout);
+    // Engine stdout already mirrored to stderr; only restate layout for clarity.
+    for (const entry of parsed) {
+      const label = entry.style ? `[${entry.style}] ` : "";
+      progress(`${label}${entry.layout.summary}`);
+    }
+    if (options.json) {
+      emitJson(
+        engineRunSummary(summary, configPath, style, stepResults, parsed)
+      );
+    }
+  });
+
+program
+  .command("release")
+  .description("Finalize metadata and emit the release TTF + WOFF2.")
+  .option(
+    "--config <path>",
+    "Path to stv.config.json (default: ./stv.config.json)."
+  )
+  .option("--style <key>", "Style key, or 'all'.", "all")
+  .option("--json", "Emit a machine-readable release summary to stdout.")
+  .action(
+    async (options: { config?: string; style?: string; json?: boolean }) => {
+      const configPath = resolveConfigPath(options.config);
+      const summary = loadProjectConfig(configPath);
+      const style = options.style ?? "all";
+      progress(
+        `Releasing ${summary.familyName} [${style === "all" ? summary.styleKeys.join(", ") : style}]`
+      );
+      const code = await runEngine([
+        "release",
+        "--config",
+        configPath,
+        "--style",
+        style,
+      ]);
+      if (code !== 0) {
+        process.exitCode = code;
+      }
+      if (options.json) {
+        emitJson(
+          engineRunSummary(summary, configPath, style, [
+            { code, step: "release" },
+          ])
+        );
+      }
+    }
+  );
+
+program
+  .command("split")
+  .description(
+    "Split a variable font into static weight files (TTF + WOFF2) — the reverse of build."
+  )
+  .argument("<font>", "Path to a variable .ttf/.otf.")
+  .option("--out <dir>", "Output directory.", "./static")
+  .option("--step <n>", "Weight step along the wght axis.", parseStep, 100)
+  .option("--json", "Emit a machine-readable summary to stdout.")
+  .action(async (font: string, options: SplitOptions) => {
+    const code = await runSplit(font, options);
+    if (code !== 0) {
+      process.exitCode = code;
+    }
+  });
+
+program
+  .command("doctor")
+  .description("Report environment readiness: node, python, uv, config.")
+  .option("--json", "Emit a JSON report to stdout.")
+  .action((options: { json?: boolean }) => {
+    const report = doctorReport();
+    if (options.json) {
+      emitJson(report);
+    } else {
+      progress(`node:   ${report.node}`);
+      progress(`mode:   ${report.mode}`);
+      progress(`python: ${report.python ?? "not found"}`);
+      progress(`uv:     ${report.uv ? "present" : "not found"}`);
+      if (report.mode === "standalone" && report.engine) {
+        progress(`engine: ${report.engine.dir}`);
+        progress(
+          `venv:   ${report.engine.venvDir} (${report.engine.provisioned ? "provisioned" : "not provisioned"})`
+        );
+      }
+      progress(`config: ${report.config ?? "no ./stv.config.json"}`);
+    }
+    process.exitCode = report.usable ? ExitCode.Success : ExitCode.Environment;
   });
 
 program
@@ -168,141 +329,6 @@ program
     if (options.failOnRed && report.verdict !== "pass") {
       process.exitCode = 1;
     }
-  });
-
-program
-  .command("build")
-  .description(
-    "Build the variable font(s) from a config: rebuild -> normalize -> build."
-  )
-  .option(
-    "--config <path>",
-    "Path to stv.config.json (default: ./stv.config.json)."
-  )
-  .option("--style <key>", "Style key, or 'all'.", "all")
-  .option("--check-only", "Skip building; only run the fidelity check.")
-  .option(
-    "--skip-rebuild",
-    "Build from existing sources without re-deriving masters from donors."
-  )
-  .option("--json", "Emit a machine-readable build summary to stdout.")
-  .action(async (options: BuildCommandOptions) => {
-    const configPath = resolveConfigPath(options.config);
-    const summary = loadProjectConfig(configPath);
-    const style = options.style ?? "all";
-    progress(
-      `Building ${summary.familyName} [${style === "all" ? summary.styleKeys.join(", ") : style}]`
-    );
-    const env = resolveEngine().pythonEnv;
-    // Matches the byte-parity-verified chain (build exports the designspace
-    // internally, so it is not a separate step here).
-    const steps = options.skipRebuild
-      ? ["build"]
-      : ["rebuild", "normalize", "build"];
-    const stepResults: { step: string; code: number }[] = [];
-    for (const step of steps) {
-      const args = [step, "--config", configPath, "--style", style];
-      if (step === "build" && options.checkOnly) {
-        args.push("--check-only");
-      }
-      progress(`-> ${step}`);
-      const code = await runEngine(args, env);
-      stepResults.push({ code, step });
-      if (code !== 0) {
-        process.exitCode = code;
-        break;
-      }
-    }
-    if (options.json) {
-      emitJson(engineRunSummary(summary, configPath, style, stepResults));
-    }
-  });
-
-program
-  .command("release")
-  .description("Finalize metadata and emit the release TTF + WOFF2.")
-  .option(
-    "--config <path>",
-    "Path to stv.config.json (default: ./stv.config.json)."
-  )
-  .option("--style <key>", "Style key, or 'all'.", "all")
-  .option("--json", "Emit a machine-readable release summary to stdout.")
-  .action(
-    async (options: { config?: string; style?: string; json?: boolean }) => {
-      const configPath = resolveConfigPath(options.config);
-      const summary = loadProjectConfig(configPath);
-      const style = options.style ?? "all";
-      progress(
-        `Releasing ${summary.familyName} [${style === "all" ? summary.styleKeys.join(", ") : style}]`
-      );
-      const code = await runEngine([
-        "release",
-        "--config",
-        configPath,
-        "--style",
-        style,
-      ]);
-      if (code !== 0) {
-        process.exitCode = code;
-      }
-      if (options.json) {
-        emitJson(
-          engineRunSummary(summary, configPath, style, [
-            { code, step: "release" },
-          ])
-        );
-      }
-    }
-  );
-
-program
-  .command("split")
-  .description(
-    "Split a variable font into static weight files (TTF + WOFF2) — the reverse of build."
-  )
-  .argument("<font>", "Path to a variable .ttf/.otf.")
-  .option("--out <dir>", "Output directory.", "./static")
-  .option("--step <n>", "Weight step along the wght axis.", parseStep, 100)
-  .option("--json", "Emit a machine-readable summary to stdout.")
-  .action(async (font: string, options: SplitOptions) => {
-    const code = await runSplit(font, options);
-    if (code !== 0) {
-      process.exitCode = code;
-    }
-  });
-
-program
-  .command("doctor")
-  .description("Report environment readiness: node, python, uv, config.")
-  .option("--json", "Emit a JSON report to stdout.")
-  .action((options: { json?: boolean }) => {
-    const report = doctorReport();
-    if (options.json) {
-      emitJson(report);
-    } else {
-      progress(`node:   ${report.node}`);
-      progress(`mode:   ${report.mode}`);
-      progress(`python: ${report.python ?? "not found"}`);
-      progress(`uv:     ${report.uv ? "present" : "not found"}`);
-      if (report.mode === "standalone" && report.engine) {
-        progress(`engine: ${report.engine.dir}`);
-        progress(
-          `venv:   ${report.engine.venvDir} (${report.engine.provisioned ? "provisioned" : "not provisioned"})`
-        );
-      }
-      progress(`config: ${report.config ?? "no ./stv.config.json"}`);
-    }
-    process.exitCode = report.usable ? ExitCode.Success : ExitCode.Environment;
-  });
-
-program
-  .command("init")
-  .description(
-    "Create an stv.config.json from the font files in the current directory."
-  )
-  .option("--force", "Overwrite an existing stv.config.json.")
-  .action(async (options: { force?: boolean }) => {
-    await runInit(Boolean(options.force));
   });
 
 // Register BEFORE parsing so rejections during command execution are caught —
@@ -526,14 +552,79 @@ interface EngineStepResult {
   code: number;
 }
 
+interface ParsedBuildStyle {
+  style?: string;
+  frozen: string[];
+  layout: {
+    mode: "variable" | "static" | "none";
+    tables: string[];
+    note?: string;
+    summary: string;
+  };
+  summary: string;
+}
+
+/** Parse engine lines like `[roman] built (frozen: ['a']; layout: variable (GDEF, GSUB, GPOS))`. */
+function parseBuildEngineOutput(stdout: string): ParsedBuildStyle[] {
+  const results: ParsedBuildStyle[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const built = line.match(
+      /^(?:\[([^\]]+)\]\s+)?built\s+\(frozen:\s*(.*?);\s*(layout:\s*(variable|static|none)(?:\s*\((.*)\))?)\s*\)\s*$/
+    );
+    if (!built) {
+      continue;
+    }
+    const [, style, frozenRawMatch, layoutSummaryRaw, modeRaw, parenRaw] =
+      built;
+    const frozenRaw = frozenRawMatch ?? "";
+    const layoutSummary = (layoutSummaryRaw ?? "").trim();
+    const mode = (modeRaw ?? "none") as "variable" | "static" | "none";
+    const paren = (parenRaw ?? "").trim();
+    const tables: string[] = [];
+    let layoutNote: string | undefined;
+    if (paren) {
+      for (const part of paren.split(",")) {
+        const token = part.trim();
+        if (!token) {
+          continue;
+        }
+        if (/^[A-Z0-9]{4}$/.test(token)) {
+          tables.push(token);
+        } else if (!layoutNote) {
+          layoutNote = token;
+        } else {
+          layoutNote = `${layoutNote}, ${token}`;
+        }
+      }
+    }
+    const frozen = [...frozenRaw.matchAll(/'([^']+)'/g)].flatMap((m) => {
+      const [, name] = m;
+      return name ? [name] : [];
+    });
+    results.push({
+      frozen,
+      layout: {
+        mode,
+        note: layoutNote,
+        summary: layoutSummary,
+        tables,
+      },
+      style,
+      summary: layoutSummary,
+    });
+  }
+  return results;
+}
+
 /** The machine-readable summary emitted by `build --json` / `release --json`. */
 function engineRunSummary(
   summary: ProjectConfigSummary,
   configPath: string,
   style: string,
-  steps: EngineStepResult[]
+  steps: EngineStepResult[],
+  builds: ParsedBuildStyle[] = []
 ): Record<string, unknown> {
-  return {
+  const payload: Record<string, unknown> = {
     config: configPath,
     family: summary.familyName,
     id: summary.id,
@@ -544,6 +635,18 @@ function engineRunSummary(
     style,
     styles: summary.styleKeys,
   };
+  const [only] = builds;
+  if (builds.length === 1 && only) {
+    payload.frozen = only.frozen;
+    payload.layout = only.layout;
+  } else if (builds.length > 1) {
+    payload.builds = builds.map((entry) => ({
+      frozen: entry.frozen,
+      layout: entry.layout,
+      style: entry.style,
+    }));
+  }
+  return payload;
 }
 
 interface BuildCommandOptions {
