@@ -115,14 +115,29 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
             # fontmake leaves the default instance's fvar subfamily name empty
             # (its elidable "Regular" label collapses to ""), so repair instance
             # names in the build artifact too, not just at release time.
-            from variable_gen.layout import port_layout
+            from variable_gen.layout import attach_layout
             from variable_gen.release import fix_instances
 
             vf = TTFont(str(out))
             fix_instances(vf, config, style.italic)
-            # The .glyphs round-trip carries outlines only, so port the default
-            # donor's OpenType layout (ligatures, kerning at default weight).
-            layout = port_layout(vf, default_donor_path(style))
+            # .glyphs carries outlines only — attach layout from donors
+            # (variable merge when possible, else static default-master port).
+            donor_by_id = {d.id: d for d in style.donors}
+            master_donors = [
+                (donor_by_id[m.donor_id].path, dict(m.location)) for m in style.masters
+            ]
+            axis = _axis_tag(style)
+            axis_name = next(
+                (a.name for a in config.axes if a.tag == axis),
+                "Weight",
+            )
+            layout = attach_layout(
+                vf,
+                master_donors,
+                default_donor=default_donor_path(style),
+                axis_tag=axis,
+                axis_name=axis_name,
+            )
             vf.save(str(out))
             print(f"[{style_key}] built (frozen: {frozen}; {layout.summary()})")
             return frozen

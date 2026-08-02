@@ -2,7 +2,7 @@
 
 Turn static fonts into one variable font.
 
-Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. Try it first at [blode.co/variable](https://blode.co/variable): drop your fonts in and build right in the browser.
+Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. See rebuilt families at [blode.co/variable](https://blode.co/variable) — the CLI builds on your machine; nothing is uploaded.
 
 ## Quick start
 
@@ -47,9 +47,12 @@ No config needed. Any other axes are pinned to their default. Pass `--json` for 
 ## Conventions
 
 - `build`, `release`, `split`, and `doctor` take `--json` for a machine-readable summary on stdout; human progress always goes to stderr, so piped stdout stays clean.
+- `build --json` includes `layout.mode` (`variable` | `static` | `none`) and any `frozen` glyphs from the engine.
+- After `build`, you can open the generated `.glyphs` source in [Glyphs](https://glyphsapp.com) to browse masters and live-preview — optional review, not required to build.
 - Configs are validated against `schemas/stv-config.schema.json` before any engine work starts; violations name the offending path.
 - Exit codes: `0` success, `1` failure, `2` usage error (bad flag, missing or invalid config), `3` environment error, `130` interrupted.
 - Errors carry a stable `STV_*` code and a suggested fix; `NO_COLOR` is respected on both streams.
+- Advanced checkout QA (`list` / `run` / `step` / `status`) is separate from the product path above.
 
 ## Configuration
 

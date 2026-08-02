@@ -70,4 +70,4 @@ What it does:
 
 - Prefer Python for the core engine. It relies on `fontTools`, `glyphsLib`, and UFO tooling.
 - Keep the package headless by default.
-- Treat Glyphs and FontLab as optional fallback review tools, not mandatory runtime dependencies.
+- Treat Glyphs and FontLab as optional fallback review tools, not mandatory runtime dependencies. Opening a rebuilt `.glyphs` source in Glyphs 4 is useful for master browsing and live text preview after `build`.
