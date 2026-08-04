@@ -14,8 +14,6 @@ const nextConfig: NextConfig = {
   // Monorepo: pin the file-tracing root to the repo root so Vercel's build
   // doesn't mis-detect it.
   outputFileTracingRoot: path.join(root, "..", ".."),
-  // Type safety is enforced by `turbo typecheck` (tsc --noEmit) in CI, not here.
-  typescript: { ignoreBuildErrors: true },
   redirects() {
     return Promise.resolve([
       {
