@@ -2,7 +2,7 @@
 
 Turn static fonts into one variable font.
 
-Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. See rebuilt families at [blode.co/variable](https://blode.co/variable) — the CLI builds on your machine; nothing is uploaded.
+Got a font as thin, regular, and bold files? Point this at them and get back one file you can slide between. See rebuilt families at [blode.co/static-to-variable](https://blode.co/static-to-variable) — the CLI builds on your machine; nothing is uploaded.
 
 ## Quick start
 
