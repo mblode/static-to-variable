@@ -49,14 +49,14 @@ Run `static-to-variable doctor` if a stage fails.
 
 ## Commands
 
-| Command                                     | Description                                          |
-| ------------------------------------------- | ---------------------------------------------------- |
-| `static-to-variable init`                   | Scan the folder for fonts and write `stv.config.json` |
-| `static-to-variable build`                  | Build the variable font into `build/`                |
-| `static-to-variable release`                | Produce the shippable TTF and WOFF2                  |
-| `static-to-variable split MyFamily-VF.ttf`  | Reverse it, one static TTF and WOFF2 per weight step  |
-| `static-to-variable doctor`                 | Report readiness: node, python, uv, and config       |
-| `static-to-variable status`                 | Print the aggregate pipeline status report           |
+| Command | Description |
+| --- | --- |
+| `static-to-variable init` | Scan the folder for fonts and write `stv.config.json` |
+| `static-to-variable build` | Build the variable font into `build/` |
+| `static-to-variable release` | Produce the shippable TTF and WOFF2 |
+| `static-to-variable split MyFamily-VF.ttf` | Reverse it, one static TTF and WOFF2 per weight step |
+| `static-to-variable doctor` | Report readiness: node, python, uv, and config |
+| `static-to-variable status` | Print the aggregate pipeline status report |
 
 ## Notes
 
