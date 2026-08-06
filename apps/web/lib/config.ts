@@ -1,9 +1,9 @@
 /**
- * This app is served at blode.co/variable, proxied by the blode.co host app's
- * multi-zone rewrite. `basePath` is imported by next.config.ts so the prefix
- * lives in exactly one place.
+ * This app is served at blode.co/static-to-variable, proxied by the blode.co
+ * host app's multi-zone rewrite. `basePath` is imported by next.config.ts so
+ * the prefix lives in exactly one place.
  */
-export const basePath = "/variable";
+export const basePath = "/static-to-variable";
 
 /**
  * `basePath` covers next/link. It does NOT cover raw `<a href>`, `<img src>`

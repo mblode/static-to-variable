@@ -1,6 +1,6 @@
 <div align="center">
 
-# [Static to Variable](https://blode.co/variable)
+# [Static to Variable](https://blode.co/static-to-variable)
 
 **Turn a folder of separate weights into one variable font that slides across everything in between**
 
@@ -22,7 +22,7 @@ Point it at your thin, regular, and bold files and it redraws each weight onto a
 Drag the weight axis on a font built by this pipeline.
 
 <p>
-<a href="https://blode.co/variable">
+<a href="https://blode.co/static-to-variable">
 <img alt="View demo" src=".github/assets/demo.svg" width="200" />
 </a>
 </p>
