@@ -188,8 +188,7 @@ static-to-variable build`}</code>
           <a
             className="flex items-center gap-2 rounded-full py-1.5 pr-2.5 pl-1.5 hover:text-foreground"
             href="https://blode.co"
-            rel="author noreferrer"
-            target="_blank"
+            rel="author"
           >
             {/* oxlint-disable-next-line nextjs/no-img-element -- tiny static 20px avatar, next/image adds no value */}
             <img
@@ -200,6 +199,13 @@ static-to-variable build`}</code>
               width={20}
             />
             Matthew Blode
+          </a>
+          {/* The edge back to the hub: same origin behind a rewrite, so same tab
+              and no rel. See
+              blode-co/apps/web/.claude/knowledge/zone-conventions.md. */}
+          <span aria-hidden="true">&middot;</span>
+          <a className="hover:text-foreground" href="https://blode.co/projects">
+            All projects
           </a>
         </div>
       </footer>
