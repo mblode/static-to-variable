@@ -23,7 +23,7 @@ Drag the weight axis on a font built by this pipeline.
 
 <p>
 <a href="https://blode.co/static-to-variable">
-<img alt="View demo" src=".github/assets/demo.svg" width="200" />
+<img alt="Try it" src=".github/assets/demo.svg" width="200" />
 </a>
 </p>
 
