@@ -1,5 +1,15 @@
 # static-to-variable
 
+## 0.5.0
+
+### Minor Changes
+
+- 5b42ecb: Prefer variable OpenType layout (weight-aware kerning) when attaching donor GDEF/GSUB/GPOS after build, falling back to a static default-master port. Surface `layout` and `frozen` in `build --json`, lead help with init/build/release, and note optional Glyphs review of generated `.glyphs` sources.
+
+### Patch Changes
+
+- 00bf66b: Point the package homepage at `blode.co/static-to-variable`. The demo moved off `/variable` so the URL matches the package name; the old path is permanently redirected.
+
 ## 0.4.5
 
 ### Patch Changes
