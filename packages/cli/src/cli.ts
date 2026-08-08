@@ -11,6 +11,8 @@ import {
 } from "@clack/prompts";
 import { Command } from "commander";
 
+import type { ParsedBuildStyle } from "./build-output.js";
+import { parseBuildEngineOutput } from "./build-output.js";
 import type { ProjectConfigSummary } from "./config.js";
 import { loadProjectConfig, resolveConfigPath } from "./config.js";
 import { CliError, ExitCode, isCliError } from "./errors.js";
@@ -550,70 +552,6 @@ function parseStep(value: string): number {
 interface EngineStepResult {
   step: string;
   code: number;
-}
-
-interface ParsedBuildStyle {
-  style?: string;
-  frozen: string[];
-  layout: {
-    mode: "variable" | "static" | "none";
-    tables: string[];
-    note?: string;
-    summary: string;
-  };
-  summary: string;
-}
-
-/** Parse engine lines like `[roman] built (frozen: ['a']; layout: variable (GDEF, GSUB, GPOS))`. */
-function parseBuildEngineOutput(stdout: string): ParsedBuildStyle[] {
-  const results: ParsedBuildStyle[] = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    const built = line.match(
-      /^(?:\[([^\]]+)\]\s+)?built\s+\(frozen:\s*(.*?);\s*(layout:\s*(variable|static|none)(?:\s*\((.*)\))?)\s*\)\s*$/
-    );
-    if (!built) {
-      continue;
-    }
-    const [, style, frozenRawMatch, layoutSummaryRaw, modeRaw, parenRaw] =
-      built;
-    const frozenRaw = frozenRawMatch ?? "";
-    const layoutSummary = (layoutSummaryRaw ?? "").trim();
-    const mode = (modeRaw ?? "none") as "variable" | "static" | "none";
-    const paren = (parenRaw ?? "").trim();
-    const tables: string[] = [];
-    let layoutNote: string | undefined;
-    if (paren) {
-      for (const part of paren.split(",")) {
-        const token = part.trim();
-        if (!token) {
-          continue;
-        }
-        if (/^[A-Z0-9]{4}$/.test(token)) {
-          tables.push(token);
-        } else if (!layoutNote) {
-          layoutNote = token;
-        } else {
-          layoutNote = `${layoutNote}, ${token}`;
-        }
-      }
-    }
-    const frozen = [...frozenRaw.matchAll(/'([^']+)'/g)].flatMap((m) => {
-      const [, name] = m;
-      return name ? [name] : [];
-    });
-    results.push({
-      frozen,
-      layout: {
-        mode,
-        note: layoutNote,
-        summary: layoutSummary,
-        tables,
-      },
-      style,
-      summary: layoutSummary,
-    });
-  }
-  return results;
 }
 
 /** The machine-readable summary emitted by `build --json` / `release --json`. */

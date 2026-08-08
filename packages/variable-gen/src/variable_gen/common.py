@@ -54,6 +54,29 @@ def select_families(
     return {family_filter: families[family_filter]}
 
 
+def merge_style_report(
+    path: Path, updates: dict[str, Any], style_order: list[str]
+) -> dict[str, Any]:
+    """Merge per-style report entries into whatever ``path`` already holds,
+    ordering configured styles first. An unreadable existing file is replaced.
+
+    Every per-style report is written this way so that ``--style roman`` cannot
+    erase the italic entry: the promotion gate reads every style at once.
+    """
+    existing: dict[str, Any] = {}
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text())
+            if isinstance(payload, dict):
+                existing = payload
+        except json.JSONDecodeError:
+            existing = {}
+    merged = {**existing, **updates}
+    ordered = {key: merged[key] for key in style_order if key in merged}
+    ordered.update({key: value for key, value in merged.items() if key not in ordered})
+    return ordered
+
+
 def write_json_report(report: dict[str, Any], output_path: str | Path) -> Path:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)

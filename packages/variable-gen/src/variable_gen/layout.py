@@ -2,16 +2,22 @@
 
 The CLI pipeline round-trips donors through a ``.glyphs`` source that carries
 outlines and metrics only, so fontmake's VF has no usable layout. This module
-restores it:
+restores it, in descending order of fidelity:
 
-1. **Variable-first** — instantiate the built VF at each master location, port
+1. **Variable merge** — instantiate the built VF at each master location, port
    that master's donor layout onto the instance, then ``varLib.build`` those
-   masters so kerning (and other GPOS) can vary with weight when the merge
-   compiles.
-2. **Static fallback** — port the default master's GDEF/GSUB/GPOS alone
-   (kern values frozen at the default weight).
+   masters so kerning *and* mark attachment vary with weight.
+2. **Variable kerning** — port the default master's layout, then vary its kern
+   values from the other donors (see :mod:`variable_gen.kerning`). Tier 1 merges
+   GSUB, GPOS and GDEF as one unit, so independently compiled statics that
+   disagree about ``aalt`` alternates or mark-glyph-set coverage lose their
+   variable kerning to a table that could never have varied anyway; this tier
+   reads values only, so that disagreement stops mattering.
+3. **Static port** — the default master's layout alone, kern frozen at the
+   default weight. Where the donors carry no kerning to vary, this is already
+   the whole truth.
 
-Both paths degrade instead of failing: glyph names are remapped through the
+Every path degrades instead of failing: glyph names are remapped through the
 cmaps when the donor and the VF disagree, lookups referencing glyphs the VF
 does not have are pruned, and if the result still cannot compile the font is
 left exactly as it was.
@@ -37,6 +43,8 @@ from fontTools.ttLib import TTFont
 from fontTools.varLib import build as varlib_build
 from fontTools.varLib.instancer import instantiateVariableFont
 
+from variable_gen.kerning import KerningTooLarge, KernReport, flatten_kern, vary_kern
+
 LAYOUT_TABLES = ("GDEF", "GSUB", "GPOS")
 
 # Hinting / misc tables that break a clean varLib merge of layout carriers.
@@ -51,14 +59,17 @@ _DROP_BEFORE_MERGE = (
     "gasp",
 )
 
+LayoutMode = Literal["variable", "variable-kern", "static", "none"]
+
 
 @dataclass
 class LayoutReport:
     """What happened to the donor's layout tables."""
 
-    mode: Literal["variable", "static", "none"]
+    mode: LayoutMode
     tables: tuple[str, ...] = ()
     note: str = ""
+    kern: KernReport | None = None
 
     def summary(self) -> str:
         if self.mode == "none":
@@ -252,6 +263,64 @@ def _designspace(
     return doc
 
 
+def donor_kern(donor_path: Path, varfont: TTFont) -> dict[tuple[str, str], int]:
+    """One donor's flattened kerning, keyed by the *VF's* glyph names.
+
+    The donor is renamed before its layout is decompiled, exactly as
+    :func:`port_layout` does, so the pairs line up with the coverage tables
+    already sitting in the font.
+    """
+    plain = TTFont(str(donor_path))
+    mapping = _name_map(plain, varfont)
+    plain.close()
+    donor = _load_renamed(donor_path, mapping)
+    try:
+        return flatten_kern(donor)
+    finally:
+        donor.close()
+
+
+def _vary_kerning(
+    varfont: TTFont, existing: list[tuple[Path, dict[str, float]]], axis_tag: str
+) -> KernReport:
+    donors: list[tuple[float, dict[tuple[str, str], int]]] = []
+    for path, location in existing:
+        try:
+            position = _axis_value(location, axis_tag)
+        except KeyError:
+            return KernReport(note=f"{path.name} has no {axis_tag} location")
+        try:
+            donors.append((position, donor_kern(path, varfont)))
+        except KerningTooLarge as exc:
+            return KernReport(note=f"{path.name}: {exc}")
+    if not any(kern for _, kern in donors):
+        return KernReport(note="donors carry no kerning")
+    return vary_kern(varfont, donors, axis_tag=axis_tag)
+
+
+def _port_base(varfont: TTFont, donor_path: Path) -> tuple[str, ...]:
+    """Copy the donor's ``BASE`` table over, reverting if it will not compile.
+
+    Taken from the default donor rather than merged along with the rest:
+    per-script baseline coordinates are not a thing that varies by weight, and
+    feeding them through varLib only adds a way for tier 1 to fail.
+    """
+    donor = TTFont(str(donor_path))
+    try:
+        if "BASE" not in donor:
+            return ()
+        previous = varfont["BASE"] if "BASE" in varfont else None
+        varfont["BASE"] = copy.deepcopy(donor["BASE"])
+        if _compiles(varfont):
+            return ("BASE",)
+        del varfont["BASE"]
+        if previous is not None:
+            varfont["BASE"] = previous
+        return ()
+    finally:
+        donor.close()
+
+
 def attach_layout(
     varfont: TTFont,
     masters: list[tuple[Path, dict[str, float]]],
@@ -260,18 +329,70 @@ def attach_layout(
     axis_tag: str = "wght",
     axis_name: str = "Weight",
 ) -> LayoutReport:
-    """Prefer a variable layout merge from all master donors; else static port.
+    """Restore donor layout at the best fidelity that compiles.
 
     Never raises for layout reasons and never leaves ``varfont`` broken.
     """
-    saved = {t: varfont[t] for t in LAYOUT_TABLES if t in varfont}
+    default_donor = Path(default_donor)
     existing: list[tuple[Path, dict[str, float]]] = [
         (Path(path), loc) for path, loc in masters if Path(path).is_file()
     ]
+    report = _attach(varfont, existing, default_donor, axis_tag, axis_name)
+    if report.mode != "none":
+        report.tables = tuple(report.tables) + _port_base(varfont, default_donor)
+    return report
+
+
+def _attach(
+    varfont: TTFont,
+    existing: list[tuple[Path, dict[str, float]]],
+    default_donor: Path,
+    axis_tag: str,
+    axis_name: str,
+) -> LayoutReport:
+    saved = {t: varfont[t] for t in LAYOUT_TABLES if t in varfont}
     if len(existing) < 2:
         return port_layout(varfont, default_donor)
 
-    default_donor = Path(default_donor)
+    merged = _variable_merge(varfont, existing, default_donor, axis_tag, axis_name)
+    if merged is not None:
+        return merged
+    _restore_layout(varfont, saved)
+
+    static = port_layout(varfont, default_donor)
+    if static.mode == "none":
+        return static
+
+    kern = _vary_kerning(varfont, existing, axis_tag)
+    if not kern.applied:
+        return LayoutReport(mode="static", tables=static.tables, note=kern.note, kern=kern)
+    if _compiles(varfont):
+        return LayoutReport(
+            mode="variable-kern",
+            tables=static.tables,
+            note=f"{kern.varying} of {kern.values} kern values vary",
+            kern=kern,
+        )
+    # The varied kerning does not compile — go back to a clean static port
+    # rather than shipping a font we cannot save.
+    _restore_layout(varfont, saved)
+    fallback = port_layout(varfont, default_donor)
+    return LayoutReport(
+        mode=fallback.mode,
+        tables=fallback.tables,
+        note="varied kerning failed to compile",
+    )
+
+
+def _variable_merge(
+    varfont: TTFont,
+    existing: list[tuple[Path, dict[str, float]]],
+    default_donor: Path,
+    axis_tag: str,
+    axis_name: str,
+) -> LayoutReport | None:
+    """Tier 1: merge every donor's whole layout with varLib. ``None`` if it
+    cannot be done, leaving ``varfont`` for the caller to restore."""
     default_value: float | None = None
     for path, loc in existing:
         if path.resolve() == default_donor.resolve():
@@ -323,6 +444,5 @@ def attach_layout(
         if not _compiles(varfont):
             raise RuntimeError("transplanted variable layout failed to compile")
         return LayoutReport(mode="variable", tables=tuple(ported_tags))
-    except Exception:  # noqa: BLE001 — variable path is best-effort
-        _restore_layout(varfont, saved)
-        return port_layout(varfont, default_donor)
+    except Exception:  # noqa: BLE001 — tier 1 is best-effort; the caller drops a tier
+        return None

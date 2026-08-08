@@ -55,7 +55,9 @@ from fontTools.subset import Options as SubsetOptions
 from fontTools.subset import Subsetter
 from fontTools.ttLib import TTFont
 from fontTools.varLib import build as varlib_build
-from variable_gen.layout import LAYOUT_TABLES, LayoutReport, port_layout
+from variable_gen.hinting import HintingReport, apply_hinting
+from variable_gen.kerning import KerningTooLarge, vary_kern
+from variable_gen.layout import LAYOUT_TABLES, LayoutReport, donor_kern, port_layout
 from variable_gen.outlines import donor_outline
 from variable_gen.reconstruct_compatible import reconstruct
 from variable_gen.release import setname
@@ -63,10 +65,12 @@ from variable_gen.release import setname
 # Tables dropped from every master before the merge. TrueType hinting
 # (fpgm/prep/cvt/gasp) is dropped because every glyph is redrawn here, so the
 # default master's instructions are stale and would otherwise leave orphaned
-# cvar/hinting tables in the output. OpenType layout (GDEF/GSUB/GPOS) is NOT
-# dropped: same-source statics usually merge into real variable layout
-# (weight-varying kerning); when varLib refuses, build_variable retries without
-# layout and the default master's tables are ported statically instead.
+# cvar/hinting tables in the output; build_variable puts a fresh smoothing and
+# dropout-control baseline back afterwards. OpenType layout (GDEF/GSUB/GPOS) is
+# NOT dropped: same-source statics sometimes merge into fully variable layout.
+# When varLib refuses, build_variable retries without layout, ports the default
+# master's tables statically, and varies their kern values from the other
+# masters — see the tiers in variable_gen.layout.
 DROP_TABLES = (
     "BASE",
     "JSTF",
@@ -202,6 +206,7 @@ class BuildStats:
         self.frozen: list[str] = []  # left static at the default master shape
         self.total = 0
         self.layout: LayoutReport | None = None
+        self.hinting: HintingReport | None = None
 
 
 def reconcile(masters: list[Master], default_wght: float, stats: BuildStats) -> None:
@@ -330,11 +335,47 @@ def build_variable(
         varfont, _, _ = varlib_build(_designspace(masters, axis_name, default_wght))
         default = next(m for m in masters if m.wght == default_wght)
         stats.layout = port_layout(varfont, default.path)
+        if stats.layout.mode == "static":
+            stats.layout = _vary_kerning(varfont, masters, default.path, stats.layout)
 
     for tag in DROP_AFTER_BUILD:
         if tag in varfont:
             del varfont[tag]
+    stats.hinting = apply_hinting(varfont, "smooth")
     return varfont
+
+
+def _vary_kerning(
+    varfont: TTFont, masters: list[Master], default_path: Path, static: LayoutReport
+) -> LayoutReport:
+    """Second tier: the whole-table merge refused, so vary just the kern values
+    of the statically ported layout. varLib gives up over GSUB or GDEF
+    differences that could never have varied; kerning should not go down with
+    them. Falls back to the static port if the result will not compile."""
+    try:
+        # donor_kern, not a bare flatten: the masters were forced onto the
+        # default master's glyph order, so a donor's own names have to be
+        # mapped onto the font's before its pairs can be looked up here.
+        donors = [(m.wght, donor_kern(m.path, varfont)) for m in masters]
+    except KerningTooLarge as exc:
+        return LayoutReport(mode="static", tables=static.tables, note=str(exc))
+    kern = vary_kern(varfont, donors, axis_tag="wght")
+    if not kern.applied:
+        return LayoutReport(mode="static", tables=static.tables, note=kern.note, kern=kern)
+    try:
+        varfont.save(BytesIO())
+    except Exception as exc:  # noqa: BLE001 (any compile failure means roll back)
+        log.info("varied kerning unusable (%s); keeping the static port", exc)
+        for tag in LAYOUT_TABLES:
+            if tag in varfont:
+                del varfont[tag]
+        return port_layout(varfont, default_path)
+    return LayoutReport(
+        mode="variable-kern",
+        tables=static.tables,
+        note=f"{kern.varying} of {kern.values} kern values vary",
+        kern=kern,
+    )
 
 
 def finalize(font: TTFont, family: str, version: str, default_wght: float) -> None:
@@ -446,6 +487,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  frozen: {len(stats.frozen)}" + (f"  {stats.frozen}" if stats.frozen else ""))
     if stats.layout is not None:
         print(f"  {stats.layout.summary()}")
+    if stats.hinting is not None:
+        print(f"  {stats.hinting.summary()}")
     print(f"  ttf:    {ttf}  ({ttf.stat().st_size / 1024:.0f} KB)")
     label = "Latin+Latin-1 subset" if args.woff2_subset else "full"
     print(f"  woff2:  {woff2}  ({woff2.stat().st_size / 1024:.0f} KB, {label})")

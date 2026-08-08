@@ -18,6 +18,7 @@ Run:  uv run python -m variable_gen.cli build --config <path> --style all
 from __future__ import annotations
 
 import copy
+import json
 import re
 import subprocess
 import sys
@@ -28,7 +29,7 @@ from fontTools.pens.areaPen import AreaPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
-from variable_gen.common import PipelineError, fontmake_command
+from variable_gen.common import PipelineError, fontmake_command, merge_style_report
 from variable_gen.config import ProjectConfig, Style, default_donor_path
 from variable_gen.designspace import export_designspace
 from variable_gen.outlines import donor_outline, draw_into
@@ -68,6 +69,29 @@ def freeze_to_book(config: ProjectConfig, style_key: str, names) -> None:
                 draw_into(layer, o[0])
                 layer.width = o[1]
     font.save(str(style.source))
+
+
+def layout_report_path(config: ProjectConfig) -> Path:
+    return config.repo_root / "packages/variable-gen/reports/layout-report.json"
+
+
+def _write_layout_report(config: ProjectConfig, style_key: str, layout, hinting) -> None:
+    """Record what survived of the donor's layout, for the promotion gate."""
+    from variable_gen.layout_report import build_layout_report
+
+    style = config.styles[style_key]
+    donor_by_id = {d.id: d for d in style.donors}
+    entry = build_layout_report(
+        style.output,
+        [donor_by_id[m.donor_id].path for m in style.masters],
+        default_donor=default_donor_path(style),
+        layout=layout,
+        hinting=hinting,
+    )
+    path = layout_report_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    merged = merge_style_report(path, {style_key: entry}, list(config.styles))
+    path.write_text(json.dumps(merged, indent=2) + "\n")
 
 
 def build_style(config: ProjectConfig, style_key: str) -> list[str]:
@@ -115,6 +139,7 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
             # fontmake leaves the default instance's fvar subfamily name empty
             # (its elidable "Regular" label collapses to ""), so repair instance
             # names in the build artifact too, not just at release time.
+            from variable_gen.hinting import apply_hinting
             from variable_gen.layout import attach_layout
             from variable_gen.release import fix_instances
 
@@ -138,8 +163,15 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
                 axis_tag=axis,
                 axis_name=axis_name,
             )
+            # After the layout tiers: their merge path deletes the hinting
+            # tables from the instances it builds, so anything added earlier
+            # would not survive.
+            hinting = apply_hinting(vf, config.output.hinting)
             vf.save(str(out))
-            print(f"[{style_key}] built (frozen: {frozen}; {layout.summary()})")
+            _write_layout_report(config, style_key, layout, hinting)
+            print(
+                f"[{style_key}] built (frozen: {frozen}; {layout.summary()}; {hinting.summary()})"
+            )
             return frozen
         err = p.stdout + p.stderr
         names = (

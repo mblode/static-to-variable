@@ -220,7 +220,12 @@
           "minItems": 1,
           "items": { "type": "string", "minLength": 1 }
         },
-        "releaseDir": { "type": "string", "minLength": 1 }
+        "releaseDir": { "type": "string", "minLength": 1 },
+        "hinting": {
+          "description": "Rasterizer baseline for the built variable font. 'smooth' adds a gasp table (grayscale + symmetric smoothing at every size) and a prep program with dropout control; 'none' ships the font with neither.",
+          "enum": ["smooth", "none"],
+          "default": "smooth"
+        }
       }
     }
   }

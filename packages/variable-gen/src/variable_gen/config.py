@@ -19,7 +19,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+from variable_gen.hinting import HINTING_MODES, HintingMode
 
 
 class ConfigError(ValueError):
@@ -114,6 +116,8 @@ class OutputConfig:
     dir: str
     formats: tuple[str, ...]
     release_dir: str
+    # Rasterizer baseline applied to the built VF; see variable_gen.hinting.
+    hinting: HintingMode = "smooth"
 
 
 @dataclass(frozen=True)
@@ -430,10 +434,15 @@ def _parse_output(raw: dict[str, Any], config_path: Path) -> OutputConfig:
     for fmt in formats:
         if not isinstance(fmt, str) or not fmt:
             raise ConfigError(f"{config_path}: output.formats entries must be strings")
+    hinting = raw.get("hinting", "smooth")
+    if hinting not in HINTING_MODES:
+        allowed = ", ".join(sorted(HINTING_MODES))
+        raise ConfigError(f"{config_path}: output.hinting must be one of {allowed}")
     return OutputConfig(
         dir=_required_str(raw, "dir", config_path),
         formats=tuple(formats),
         release_dir=_required_str(raw, "releaseDir", config_path),
+        hinting=cast(HintingMode, hinting),
     )
 
 
