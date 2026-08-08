@@ -26,6 +26,7 @@ def build_pipeline_status(repo_root: Path) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     stages = [
         _repair_stage(repo_root),
+        _layout_stage(repo_root),
         _audit_stage(repo_root),
     ]
     blocking_failures = [stage for stage in stages if stage.blocking and stage.status != "pass"]
@@ -146,6 +147,100 @@ def _repair_stage(repo_root: Path) -> Stage:
         summary=summary,
         failures=failures,
     )
+
+
+# How much of the donor's kerning is allowed to go missing before the port
+# counts as broken rather than merely pruned. Lookups that reference glyphs the
+# VF does not carry are dropped by design, so this is not zero.
+KERN_PAIR_TOLERANCE = 0.99
+
+
+def _layout_stage(repo_root: Path) -> Stage:
+    path = repo_root / "packages/variable-gen/reports/layout-report.json"
+    data, error = _read_json(path)
+    if error:
+        return _invalid_stage("layout", "OpenType Layout Transfer", "blocking", path, error)
+    if data is None:
+        # Only `build` writes this report, and the staged pipeline stops at the
+        # rebuild + audit stages. A missing report means nothing has been built
+        # yet, which is not a promotion failure; the gate below is what blocks,
+        # and it blocks on what a real build produced.
+        return _missing_stage(
+            "layout", "OpenType Layout Transfer", "blocking", path, blocking=False
+        )
+
+    failures: list[str] = []
+    summary: dict[str, Any] = {}
+    if not data:
+        failures.append("layout report contains no styles")
+    for style_key, entry in data.items():
+        if not isinstance(entry, dict):
+            failures.append(f"{style_key} layout stats malformed")
+            continue
+        failures.extend(_layout_failures(style_key, entry))
+        summary.update(_layout_summary(style_key, entry))
+
+    return Stage(
+        id="layout",
+        name="OpenType Layout Transfer",
+        kind="blocking",
+        status="fail" if failures else "pass",
+        blocking=True,
+        artifact=path.as_posix(),
+        summary=summary,
+        failures=failures,
+    )
+
+
+def _layout_failures(style_key: str, entry: dict[str, Any]) -> list[str]:
+    features = entry.get("features", {})
+    gdef = entry.get("gdef", {})
+    kern = entry.get("kern", {})
+    layout = entry.get("layout", {})
+    hinting = entry.get("hinting", {})
+    failures: list[str] = []
+
+    missing = list(features.get("missing_gsub", [])) + list(features.get("missing_gpos", []))
+    if missing:
+        failures.append(f"{style_key} lost donor features: {', '.join(sorted(missing))}")
+
+    if layout.get("mode") == "none":
+        note = layout.get("note") or "no layout attached"
+        failures.append(f"{style_key} has no OpenType layout ({note})")
+
+    donor_pairs = int(kern.get("donor_pairs", 0) or 0)
+    output_pairs = int(kern.get("output_pairs", 0) or 0)
+    if donor_pairs and output_pairs < donor_pairs * KERN_PAIR_TOLERANCE:
+        failures.append(f"{style_key} kept {output_pairs} of the donor's {donor_pairs} kern pairs")
+
+    if gdef.get("donor") and not gdef.get("output"):
+        failures.append(f"{style_key} lost the donor's GDEF")
+
+    if layout.get("mode") == "static" and int(kern.get("donors_with_kern", 0) or 0) >= 2:
+        failures.append(
+            f"{style_key} kerning is frozen at the default weight while "
+            f"{kern.get('donors_with_kern')} donors carry kerning"
+        )
+
+    if hinting.get("mode") not in (None, "none"):
+        absent = [tag for tag in ("gasp", "prep") if not hinting.get(tag)]
+        if absent:
+            failures.append(f"{style_key} is missing {', '.join(absent)}")
+
+    return failures
+
+
+def _layout_summary(style_key: str, entry: dict[str, Any]) -> dict[str, Any]:
+    kern = entry.get("kern", {})
+    layout = entry.get("layout", {})
+    gdef = entry.get("gdef", {})
+    return {
+        f"{style_key}_layout_mode": layout.get("mode", "unknown"),
+        f"{style_key}_layout_tables": ", ".join(layout.get("tables", [])),
+        f"{style_key}_kern_pairs": kern.get("output_pairs", 0),
+        f"{style_key}_kern_varying_values": kern.get("varying", 0),
+        f"{style_key}_gdef_var_store": gdef.get("var_store", False),
+    }
 
 
 def _audit_stage(repo_root: Path) -> Stage:

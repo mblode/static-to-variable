@@ -96,7 +96,8 @@
   "output": {
     "dir": "build",
     "releaseDir": "build/release",
-    "formats": ["ttf"]
+    "formats": ["ttf"],
+    "hinting": "none"
   },
   "root": ".",
   "verticalMetrics": {

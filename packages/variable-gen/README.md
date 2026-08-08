@@ -28,7 +28,21 @@ The usual path is the top-level CLI (`static-to-variable build`), which chains `
 
 Run only one style by passing its config key (e.g. `--style roman`). Outputs land at the `output` paths declared in the config, and `release` stages TTF + WOFF2 under the config's `releaseDir`.
 
-`rebuild` writes a reconstruction report (read by the `repair_build` promotion gate) at `packages/variable-gen/reports/reconstruction-report.json`.
+`rebuild` writes a reconstruction report (read by the `repair_build` promotion gate) at `packages/variable-gen/reports/reconstruction-report.json`. `build` writes a layout report (read by the `layout` promotion gate) at `packages/variable-gen/reports/layout-report.json`.
+
+## OpenType layout, kerning, and hinting
+
+A `.glyphs` source carries outlines and metrics only, so fontmake's variable font has no layout at all. `build` restores it from the donors afterwards, at the best fidelity that compiles:
+
+| tier | what varies with weight | when |
+| --- | --- | --- |
+| `variable` | kerning and mark attachment | the donors' whole layout tables merge cleanly |
+| `variable-kern` | kerning | the merge refuses (donors disagree on `aalt` alternates, mark glyph sets, or per-weight kern coverage — none of which could have varied anyway) |
+| `static` | nothing | the donors carry no kerning to vary |
+
+`build` then applies the rasterizer baseline set by `output.hinting`: `smooth` (the default) adds a `gasp` table and a `prep` program with dropout control; `none` ships neither. Donor glyph instructions are not carried over — every outline is redrawn here, so they no longer describe the shapes.
+
+The `layout` gate blocks promotion when a donor feature tag is missing from the output, kerning pairs are lost beyond a small pruning tolerance, a donor's GDEF is dropped, no layout attached at all, kerning is frozen while two or more donors carry it, or the hinting baseline is absent. It judges what a build produced, so a missing report — the staged pipeline stops at rebuild + audit and never calls `build` — is reported without blocking.
 
 ## Pipeline status
 

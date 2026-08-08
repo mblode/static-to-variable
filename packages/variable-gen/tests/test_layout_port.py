@@ -16,8 +16,10 @@ from unittest import mock
 PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(PACKAGE_SRC))
 
-from fontTools.ttLib import TTFont  # noqa: E402
+from fontTools.ttLib import TTFont, newTable  # noqa: E402
+from fontTools.ttLib.tables import otTables  # noqa: E402
 
+from variable_gen.kerning import KernReport  # noqa: E402
 from variable_gen.layout import attach_layout, port_layout  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -99,7 +101,9 @@ class AttachLayoutTests(unittest.TestCase):
         vf.save(BytesIO())
         self.assertEqual(report.summary(), "layout: variable (GDEF, GSUB, GPOS)")
 
-    def test_varlib_failure_falls_back_to_static(self):
+    def test_varlib_failure_falls_back_to_varying_the_kerning(self):
+        # A whole-table merge can fail over GSUB or GDEF differences that could
+        # never have varied. Kerning must not go down with it.
         vf = TTFont(str(FIXTURE))
         with mock.patch(
             "variable_gen.layout.varlib_build",
@@ -110,9 +114,50 @@ class AttachLayoutTests(unittest.TestCase):
                 list(DONORS),
                 default_donor=DONOR,
             )
-        self.assertEqual(report.mode, "static")
+        self.assertEqual(report.mode, "variable-kern")
         self.assertIn("GPOS", report.tables)
+        self.assertIsNotNone(vf["GDEF"].table.VarStore)
+        self.assertGreater(report.kern.varying, 0)
         vf.save(BytesIO())
+
+    def test_falls_back_to_static_when_the_kerning_cannot_vary(self):
+        vf = TTFont(str(FIXTURE))
+        with (
+            mock.patch(
+                "variable_gen.layout.varlib_build",
+                side_effect=RuntimeError("boom"),
+            ),
+            mock.patch(
+                "variable_gen.layout.vary_kern",
+                return_value=KernReport(note="donors kern identically"),
+            ),
+        ):
+            report = attach_layout(
+                vf,
+                list(DONORS),
+                default_donor=DONOR,
+            )
+        self.assertEqual(report.mode, "static")
+        self.assertEqual(report.note, "donors kern identically")
+        vf.save(BytesIO())
+
+    def test_ports_the_donor_base_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            donor = TTFont(str(DONOR))
+            base = newTable("BASE")
+            base.table = otTables.BASE()
+            base.table.Version = 0x00010000
+            base.table.HorizAxis = None
+            base.table.VertAxis = None
+            donor["BASE"] = base
+            with_base = Path(tmp) / "with-base.ttf"
+            donor.save(str(with_base))
+
+            vf = TTFont(str(FIXTURE))
+            report = attach_layout(vf, [(with_base, {"wght": 400.0})], default_donor=with_base)
+            self.assertIn("BASE", report.tables)
+            self.assertIn("BASE", vf)
+            vf.save(BytesIO())
 
 
 if __name__ == "__main__":

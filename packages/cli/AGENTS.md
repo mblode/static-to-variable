@@ -28,6 +28,7 @@ src/
   init.ts           # `init` command: scan fonts, else fall back to the template
   init-template.ts  # The `init` scaffold (schema-validated by tests)
   font-inspect.ts   # Dependency-free sfnt reader (weight/names) used by init
+  build-output.ts   # Parses the engine's `built (...)` line for `build --json`
   index.ts          # Public API exports
   types.ts          # Shared TypeScript contracts
 ```
