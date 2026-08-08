@@ -1,15 +1,25 @@
 import type { Metadata } from "next";
 
 import "./globals.css";
-import { Inter } from "next/font/google";
+import localFont from "next/font/local";
 
 import { siteName, siteUrl } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
-const inter = Inter({
-  subsets: ["latin"],
-  style: ["normal", "italic"],
-  variable: "--font-inter",
+const glide = localFont({
+  src: [
+    { path: "./fonts/glide-variable.woff2", style: "normal" },
+    { path: "./fonts/glide-variable-italic.woff2", style: "italic" },
+  ],
+  variable: "--font-glide",
+  weight: "100 950",
+  display: "swap",
+});
+
+const glideMono = localFont({
+  src: "./fonts/glide-mono.woff2",
+  variable: "--font-glide-mono",
+  weight: "400",
   display: "swap",
 });
 
@@ -58,7 +68,10 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html className={cn("dark font-sans", inter.variable)} lang="en">
+    <html
+      className={cn("dark font-sans", glide.variable, glideMono.variable)}
+      lang="en"
+    >
       <head>
         <link href={process.env.NEXT_PUBLIC_POSTHOG_HOST} rel="preconnect" />
       </head>
