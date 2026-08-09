@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
-import { siteName } from "@/lib/config";
+import { ogSiteName } from "@/lib/config";
 import { FONTS } from "@/lib/fonts";
 
 /**
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
     url: "/showcase",
     // This block replaces the root layout's openGraph rather than merging
     // into it, so the site name has to be repeated here.
-    siteName,
+    siteName: ogSiteName,
   },
   twitter: {
     card: "summary_large_image",
