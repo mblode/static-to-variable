@@ -6,7 +6,7 @@ import { notFound } from "next/navigation";
 import { SingleGlyphViewer } from "@/components/glyph-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { siteName } from "@/lib/config";
+import { ogSiteName } from "@/lib/config";
 import { FONTS } from "@/lib/fonts";
 
 interface Params {
@@ -43,7 +43,7 @@ export function generateMetadata({
         url: canonical,
         // This block replaces the root layout's openGraph rather than merging
         // into it, so the site name has to be repeated here.
-        siteName,
+        siteName: ogSiteName,
       },
       twitter: {
         card: "summary_large_image",

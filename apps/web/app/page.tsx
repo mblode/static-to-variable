@@ -3,13 +3,96 @@ import Link from "next/link";
 
 import { GlyphViewer } from "@/components/glyph-viewer";
 import { Button } from "@/components/ui/button";
-import { asset } from "@/lib/config";
+import { ZoneBreadcrumb } from "@/components/zone-breadcrumb";
+import { asset, productName, siteUrl } from "@/lib/config";
 import { FONTS } from "@/lib/fonts";
+
+/**
+ * One script holding one `@graph`. Separate blocks are disconnected nodes, and
+ * disconnected nodes cannot be merged into one entity. See
+ * blode-co/apps/web/.claude/knowledge/zone-conventions.md Rule 3.
+ *
+ * `SoftwareSourceCode` because that is what this is: an open-source pipeline
+ * with a CLI, a repo and a published npm package, matching allmd and
+ * blode-icons. It is the type the page can actually back up.
+ *
+ * `#person`, `#website` and `#organization` are referenced by `@id` and never
+ * redefined; a zone-scoped copy would publish a second Matthew Blode on this
+ * domain.
+ */
+const JSON_LD = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@id": `${siteUrl}/#webpage`,
+      "@type": "WebPage",
+      about: { "@id": `${siteUrl}/#software` },
+      author: { "@id": "https://blode.co/#person" },
+      breadcrumb: { "@id": `${siteUrl}/#breadcrumb` },
+      description:
+        "Turn static font files into one variable font with every weight in between.",
+      inLanguage: "en",
+      isPartOf: { "@id": "https://blode.co/#website" },
+      name: "Static to Variable: static fonts into one variable font",
+      // `publisher` is the Organization and `author` is the Person: a Person
+      // publisher shows up as a Search Console enhancement warning.
+      publisher: { "@id": "https://blode.co/#organization" },
+      url: siteUrl,
+    },
+    {
+      "@id": `${siteUrl}/#software`,
+      "@type": "SoftwareSourceCode",
+      author: { "@id": "https://blode.co/#person" },
+      codeRepository: "https://github.com/mblode/static-to-variable",
+      description:
+        "A command-line pipeline that redraws a folder of static weights onto compatible outlines and interpolates them into one variable TTF and WOFF2, checking every glyph and leaving anything it cannot merge cleanly at a fixed weight.",
+      name: productName,
+      programmingLanguage: ["TypeScript", "Python"],
+      publisher: { "@id": "https://blode.co/#organization" },
+      runtimePlatform: ["Node.js", "Python"],
+      url: siteUrl,
+    },
+    {
+      "@id": `${siteUrl}/#breadcrumb`,
+      "@type": "BreadcrumbList",
+      // Word for word what <ZoneBreadcrumb> renders: Google reads a mismatch
+      // between the two as a markup error.
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          item: "https://blode.co",
+          name: "Matthew Blode",
+          position: 1,
+        },
+        {
+          "@type": "ListItem",
+          item: "https://blode.co/projects",
+          name: "Projects",
+          position: 2,
+        },
+        {
+          "@type": "ListItem",
+          item: siteUrl,
+          name: productName,
+          position: 3,
+        },
+      ],
+    },
+  ],
+};
 
 export default function Home() {
   return (
     <main className="mx-auto max-w-5xl px-5 py-16 sm:py-24">
-      <header className="mb-10">
+      {/* Static object literal, no user input. */}
+      <script
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
+        type="application/ld+json"
+      />
+
+      <ZoneBreadcrumb product={productName} />
+
+      <header className="mt-6 mb-10">
         <div className="-mt-2 mb-1 flex items-center justify-between gap-4">
           <p className="font-mono text-muted-foreground text-sm">
             static-to-variable
