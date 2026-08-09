@@ -1,88 +1,25 @@
-import { ImageResponse } from "next/og";
+import { renderZoneOgImage } from "@/app/og-image-shared";
 
-export const alt = "Turn static fonts into one variable font";
-export const size = { width: 1200, height: 630 };
-export const contentType = "image/png";
+export {
+  OG_CONTENT_TYPE as contentType,
+  OG_SIZE as size,
+} from "@/app/og-image-shared";
 
-// Neutral, dark, mono-eyebrow card matching the site. Uses the default
-// font (the site's webfont is not embedded), so brand comes from
-// layout and a weight-axis motif rather than the typeface itself.
+export const alt = "Static to Variable: static fonts into one variable font";
+
+/**
+ * The house card (Rule 12). The dark card this replaces carried a weight-axis
+ * motif and 68px type in the next/og default face, which meant the one project
+ * on this site that is about typography was the one shipping a card set in a
+ * typeface nobody chose.
+ */
 export default function OpengraphImage() {
-  const ticks = [100, 200, 300, 400, 500, 600, 700, 800, 900];
-
-  return new ImageResponse(
-    <div
-      style={{
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "space-between",
-        backgroundColor: "#0a0a0a",
-        color: "#fafafa",
-        padding: "72px",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 26,
-          letterSpacing: "0.02em",
-          color: "#8a8a8a",
-        }}
-      >
-        static-to-variable
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        <div
-          style={{
-            fontSize: 68,
-            fontWeight: 700,
-            lineHeight: 1.05,
-            letterSpacing: "-0.02em",
-            maxWidth: 940,
-          }}
-        >
-          Turn static fonts into one variable font.
-        </div>
-        <div
-          style={{
-            marginTop: 24,
-            fontSize: 30,
-            lineHeight: 1.3,
-            color: "#a1a1a1",
-            maxWidth: 900,
-          }}
-        >
-          Upload thin, regular, and bold. Get one file with every weight in
-          between.
-        </div>
-      </div>
-
-      {/* Weight-axis motif: a thin→bold gradient bar with named stops. */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div
-          style={{
-            display: "flex",
-            height: 16,
-            borderRadius: 999,
-            background: "linear-gradient(90deg, #3a3a3a 0%, #fafafa 100%)",
-          }}
-        />
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: 22,
-            color: "#6a6a6a",
-          }}
-        >
-          {ticks.map((tick) => (
-            <span key={tick}>{tick}</span>
-          ))}
-        </div>
-      </div>
-    </div>,
-    size
-  );
+  return renderZoneOgImage({
+    badge: "FONTS",
+    eyebrow: "blode.co/static-to-variable",
+    // Deliberately shorter than the meta description, which runs long for the
+    // SERP. A card is read in a feed, at a glance.
+    subtitle: "Point it at thin, regular and bold. Get every weight between.",
+    title: "Static to Variable",
+  });
 }

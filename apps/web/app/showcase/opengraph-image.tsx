@@ -1,89 +1,23 @@
-import { ImageResponse } from "next/og";
-
+import { renderZoneOgImage } from "@/app/og-image-shared";
 import { FONTS } from "@/lib/fonts";
 
+export {
+  OG_CONTENT_TYPE as contentType,
+  OG_SIZE as size,
+} from "@/app/og-image-shared";
+
 export const alt = "Every family rebuilt as a variable font";
-export const size = { width: 1200, height: 630 };
-export const contentType = "image/png";
 
-// The showcase index had no OG image: opengraph-image files apply to their own
-// segment, so the root card covers `/` and the family card covers
-// `/showcase/<family>`, leaving `/showcase` with an incomplete OG block. Same
-// dark, mono-eyebrow card as the other two.
+/**
+ * `opengraph-image` files apply to their own segment, so the root card covers
+ * `/` and the family card covers `/showcase/<family>`; without this one
+ * `/showcase` would inherit the root card and claim to be the home page.
+ */
 export default function Image() {
-  const ticks = [100, 200, 300, 400, 500, 600, 700, 800, 900];
-
-  return new ImageResponse(
-    <div
-      style={{
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "space-between",
-        backgroundColor: "#0a0a0a",
-        color: "#fafafa",
-        padding: "72px",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 26,
-          letterSpacing: "0.02em",
-          color: "#8a8a8a",
-        }}
-      >
-        static-to-variable / showcase
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        <div
-          style={{
-            fontSize: 88,
-            fontWeight: 700,
-            lineHeight: 1.02,
-            letterSpacing: "-0.03em",
-          }}
-        >
-          Variable font showcase
-        </div>
-        <div
-          style={{
-            marginTop: 20,
-            fontSize: 32,
-            lineHeight: 1.3,
-            color: "#a1a1a1",
-            maxWidth: 940,
-          }}
-        >
-          {`${FONTS.length} families Google Fonts ships only as static styles, each rebuilt into one variable font.`}
-        </div>
-      </div>
-
-      {/* Weight-axis motif: a thin to bold gradient bar with named stops. */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div
-          style={{
-            display: "flex",
-            height: 16,
-            borderRadius: 999,
-            background: "linear-gradient(90deg, #3a3a3a 0%, #fafafa 100%)",
-          }}
-        />
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: 22,
-            color: "#6a6a6a",
-          }}
-        >
-          {ticks.map((tick) => (
-            <span key={tick}>{tick}</span>
-          ))}
-        </div>
-      </div>
-    </div>,
-    size
-  );
+  return renderZoneOgImage({
+    badge: "SHOWCASE",
+    eyebrow: "blode.co/static-to-variable/showcase",
+    subtitle: `${FONTS.length} families Google Fonts ships only as static styles, each with a live weight axis.`,
+    title: "Variable fonts that didn't exist",
+  });
 }
