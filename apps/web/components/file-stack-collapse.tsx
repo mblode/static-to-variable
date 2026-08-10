@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { WeightReadout } from "@/components/weight-readout";
 import { FONTS } from "@/lib/fonts";
 import { cn } from "@/lib/utils";
 
@@ -342,7 +341,6 @@ export function FileStackCollapse({ className }: { className?: string }) {
               step={1}
               value={[weight]}
             />
-            <WeightReadout weight={weight} />
           </div>
         </div>
       </div>
