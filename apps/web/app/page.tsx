@@ -40,10 +40,10 @@ const STEPS = [
 
 const NEEDS: { title: string; body: ReactNode }[] = [
   {
-    title: "Grant a modern Node",
+    title: "Install Node 24.11+",
     body: (
       <>
-        Node 24.11+ runs the CLI.{" "}
+        Runs the CLI.{" "}
         <a
           className="text-foreground underline decoration-foreground/30 underline-offset-4 transition-colors hover:decoration-foreground"
           href="https://nodejs.org/en"
@@ -54,23 +54,22 @@ const NEEDS: { title: string; body: ReactNode }[] = [
     ),
   },
   {
-    title: "Add Python and uv",
+    title: "Install Python 3.11+ and uv",
     body: (
       <>
-        The font engine needs Python 3.11+ and{" "}
+        Powers the font engine.{" "}
         <a
           className="text-foreground underline decoration-foreground/30 underline-offset-4 transition-colors hover:decoration-foreground"
           href="https://docs.astral.sh/uv/"
         >
-          uv
+          docs.astral.sh/uv
         </a>
-        .
       </>
     ),
   },
   {
-    title: "Give it a few minutes",
-    body: "Three weights of a small family finish under a minute. Nine weights of a 3,000-glyph family take several.",
+    title: "Set aside a few minutes",
+    body: "A small family with three weights finishes under a minute. A big family with thousands of glyphs takes longer.",
   },
 ];
 
@@ -176,14 +175,14 @@ export default function Home() {
         </Button>
       </div>
 
-      {/* Hero — convene-style: big promise, one lede, proof below */}
+      {/* Hero: promise, lede, proof */}
       <header className="pb-12 sm:pb-16">
         <h1 className="max-w-[19ch] text-balance font-semibold text-5xl leading-[1.05] tracking-tight sm:text-6xl sm:tracking-[-0.03em]">
           Turn static fonts into one variable font.
         </h1>
         <p className="mt-6 max-w-[50ch] text-pretty text-lg text-muted-foreground leading-relaxed sm:text-xl">
           Point it at a folder of thin, regular, and bold. Get one file with
-          every weight in between — nothing leaves your machine.
+          every weight in between. Nothing leaves your machine.
         </p>
       </header>
 
@@ -194,11 +193,10 @@ export default function Home() {
         <FileStackCollapse />
       </section>
 
-      {/* How it works — convene promises: airy 3-up, no card chrome */}
       <Section id="how">
         <SectionHeading
           eyebrow="How it works"
-          lede="You can't just glue the files together — the outlines usually don't line up. This redraws them so they do, and leaves anything unsafe alone."
+          lede="You can't just glue the files together. The outlines usually don't line up. This redraws them so they blend, and skips anything it can't do cleanly."
         >
           Merge without breaking letters
         </SectionHeading>
@@ -224,7 +222,6 @@ export default function Home() {
         </dl>
       </Section>
 
-      {/* Showcase — proof before the install ask, like diffhub’s demo */}
       <Section id="showcase">
         <SectionHeading
           action={
@@ -237,21 +234,20 @@ export default function Home() {
             </Link>
           }
           eyebrow="Showcase"
-          lede="These started as separate weight files. Drag the slider — that's one file."
+          lede="These started as separate weight files. Drag the slider. That's one file."
         >
-          Try a font from the pipeline
+          Try a finished font
         </SectionHeading>
         <div className="mt-10">
           <GlyphViewer />
         </div>
       </Section>
 
-      {/* Needs — convene setup: heading left, numbered steps right */}
       <Section id="needs">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:gap-16">
           <SectionHeading
             eyebrow="Setup"
-            lede="No account. No upload. The one thing it needs is a local toolchain."
+            lede="No account. No upload. You only need tools installed on your machine."
           >
             Two minutes, once.
           </SectionHeading>
@@ -277,11 +273,10 @@ export default function Home() {
         </div>
       </Section>
 
-      {/* Install — diffhub closing energy, left-aligned for this zone */}
       <Section id="install">
         <SectionHeading
           eyebrow="Install"
-          lede="Install once, point it at a folder of weights, and build. init writes a config; build produces the variable font."
+          lede="Install once. Point it at a folder of weights. init writes a config you can edit. build makes the variable font."
         >
           Run it on your machine
         </SectionHeading>
