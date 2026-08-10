@@ -12,11 +12,11 @@ const FONT_FAMILY = "stvfilestack";
 const MERGED_FILENAME = `${FONT.name}-VF.woff2`;
 
 /** Illustrative merge — rare, so a little longer than routine UI. */
-const MERGE_MS = 520;
+const MERGE_MS = 5200;
 /** Brief hold on the fused file before the specimen reveals. */
-const HOLD_MS = 220;
+const HOLD_MS = 2200;
 /** Demo entrance after the files layer exits. */
-const REVEAL_MS = 280;
+const REVEAL_MS = 2800;
 
 const EASE_ENTER = "cubic-bezier(0.22, 1, 0.36, 1)";
 const EASE_MOVE = "cubic-bezier(0.25, 1, 0.5, 1)";
@@ -99,7 +99,7 @@ function chipMotion(index: number, phase: Phase) {
     opacity: consolidating && isSide ? 0 : 1,
     transform,
     transition: `opacity ${MERGE_MS}ms ${EASE_ENTER}, transform ${MERGE_MS}ms ${EASE_MOVE}`,
-    transitionDelay: consolidating ? `${index * 40}ms` : "0ms",
+    transitionDelay: consolidating ? `${index * 400}ms` : "0ms",
     zIndex: index === 1 ? 2 : 1,
   } as const;
 }
@@ -190,7 +190,7 @@ export function FileStackCollapse({ className }: { className?: string }) {
       }
 
       setPhase("merging");
-      after(MERGE_MS + 80, () => {
+      after(MERGE_MS + 800, () => {
         setPhase("merged");
         after(HOLD_MS, () => setShowDemo(true));
       });
@@ -207,7 +207,7 @@ export function FileStackCollapse({ className }: { className?: string }) {
       setShowDemo(false);
       setPhase("stack");
       setWeight(FONT.axis.def);
-      after(reducedMotion ? 0 : 40, () => triggerMerge(reducedMotion));
+      after(reducedMotion ? 0 : 400, () => triggerMerge(reducedMotion));
       return;
     }
     triggerMerge(reducedMotion);
