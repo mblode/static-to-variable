@@ -1,9 +1,11 @@
 import { ArrowUpRightIcon, GithubIcon } from "blode-icons-react";
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 import { CopyInstall } from "@/components/copy-install";
 import { FileStackCollapse } from "@/components/file-stack-collapse";
 import { GlyphViewer } from "@/components/glyph-viewer";
+import { Section, SectionHeading } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { ZoneBreadcrumb } from "@/components/zone-breadcrumb";
 import {
@@ -20,6 +22,57 @@ const INSTALL = `npm install -g static-to-variable
 cd ~/Downloads/Inter/static
 static-to-variable init
 static-to-variable build`;
+
+const STEPS = [
+  {
+    title: "Lines the files up",
+    body: "Every weight is redrawn the same way, so they blend smoothly.",
+  },
+  {
+    title: "Checks every letter",
+    body: "Each weight has to match the original, and the in-betweens can't go wonky.",
+  },
+  {
+    title: "Skips what it can't",
+    body: "Anything it can't merge cleanly stays fixed at one weight, and you get a list.",
+  },
+] as const;
+
+const NEEDS: { title: string; body: ReactNode }[] = [
+  {
+    title: "Grant a modern Node",
+    body: (
+      <>
+        Node 24.11+ runs the CLI.{" "}
+        <a
+          className="text-foreground underline decoration-foreground/30 underline-offset-4 transition-colors hover:decoration-foreground"
+          href="https://nodejs.org/en"
+        >
+          nodejs.org
+        </a>
+      </>
+    ),
+  },
+  {
+    title: "Add Python and uv",
+    body: (
+      <>
+        The font engine needs Python 3.11+ and{" "}
+        <a
+          className="text-foreground underline decoration-foreground/30 underline-offset-4 transition-colors hover:decoration-foreground"
+          href="https://docs.astral.sh/uv/"
+        >
+          uv
+        </a>
+        .
+      </>
+    ),
+  },
+  {
+    title: "Give it a few minutes",
+    body: "Three weights of a small family finish under a minute. Nine weights of a 3,000-glyph family take several.",
+  },
+];
 
 /**
  * One script holding one `@graph`. Separate blocks are disconnected nodes, and
@@ -97,14 +150,14 @@ const JSON_LD = {
 
 export default function Home() {
   return (
-    <main className="mx-auto max-w-5xl px-5 py-16 sm:py-24">
+    <main className="mx-auto w-full max-w-5xl px-4 pt-10 pb-16 sm:px-6 sm:pt-14 sm:pb-24">
       {/* Static object literal, no user input. */}
       <script
         dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
         type="application/ld+json"
       />
 
-      <div className="mb-10 flex items-center justify-between gap-4">
+      <div className="mb-10 flex items-center justify-between gap-4 sm:mb-12">
         <ZoneBreadcrumb product={productName} />
         <Button
           aria-label="View on GitHub"
@@ -123,135 +176,135 @@ export default function Home() {
         </Button>
       </div>
 
-      <header className="mb-8">
-        <h1 className="max-w-[24ch] text-balance font-semibold text-4xl tracking-tight sm:text-5xl">
+      {/* Hero — convene-style: big promise, one lede, proof below */}
+      <header className="pb-12 sm:pb-16">
+        <h1 className="max-w-[19ch] text-balance font-semibold text-5xl leading-[1.05] tracking-tight sm:text-6xl sm:tracking-[-0.03em]">
           Turn static fonts into one variable font.
         </h1>
-        <p className="mt-5 max-w-[48ch] text-pretty text-lg text-muted-foreground">
+        <p className="mt-6 max-w-[50ch] text-pretty text-lg text-muted-foreground leading-relaxed sm:text-xl">
           Point it at a folder of thin, regular, and bold. Get one file with
-          every weight in between.
-        </p>
-        <p className="mt-3 max-w-[48ch] text-pretty text-muted-foreground text-sm">
-          A variable font is one file instead of a stack of separate weights.
+          every weight in between — nothing leaves your machine.
         </p>
       </header>
 
-      <section aria-label="How static weights become one variable font">
+      <section
+        aria-label="How static weights become one variable font"
+        className="pb-16 sm:pb-24"
+      >
         <FileStackCollapse />
       </section>
 
-      <section className="mt-10">
-        <CopyInstall code={INSTALL} />
-        <p className="mt-4 max-w-[56ch] text-pretty text-muted-foreground">
-          <code className="font-mono text-sm">init</code>
-          {
-            " finds the .ttf and .otf files in the folder, reads each one's weight, and writes a config you can edit. "
+      {/* How it works — convene promises: airy 3-up, no card chrome */}
+      <Section id="how">
+        <SectionHeading
+          eyebrow="How it works"
+          lede="You can't just glue the files together — the outlines usually don't line up. This redraws them so they do, and leaves anything unsafe alone."
+        >
+          Merge without breaking letters
+        </SectionHeading>
+        <dl className="mt-12 grid gap-10 sm:grid-cols-3 sm:gap-10">
+          {STEPS.map((step, index) => (
+            <div key={step.title}>
+              <dt>
+                <span
+                  aria-hidden="true"
+                  className="font-mono text-muted-foreground text-xs tabular-nums"
+                >
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <span className="mt-3 block font-medium text-lg tracking-tight">
+                  {step.title}
+                </span>
+              </dt>
+              <dd className="mt-2 text-muted-foreground leading-relaxed">
+                {step.body}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </Section>
+
+      {/* Showcase — proof before the install ask, like diffhub’s demo */}
+      <Section id="showcase">
+        <SectionHeading
+          action={
+            <Link
+              className="shrink-0 text-muted-foreground text-sm transition-colors hover:text-foreground"
+              href="/showcase"
+            >
+              See all {FONTS.length} fonts
+              <span aria-hidden="true"> →</span>
+            </Link>
           }
-          <code className="font-mono text-sm">build</code>
-          {" produces the variable font."}
-        </p>
-        <div className="mt-6">
-          <Button asChild>
+          eyebrow="Showcase"
+          lede="These started as separate weight files. Drag the slider — that's one file."
+        >
+          Try a font from the pipeline
+        </SectionHeading>
+        <div className="mt-10">
+          <GlyphViewer />
+        </div>
+      </Section>
+
+      {/* Needs — convene setup: heading left, numbered steps right */}
+      <Section id="needs">
+        <div className="grid gap-10 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:gap-16">
+          <SectionHeading
+            eyebrow="Setup"
+            lede="No account. No upload. The one thing it needs is a local toolchain."
+          >
+            Two minutes, once.
+          </SectionHeading>
+
+          <ol className="space-y-7">
+            {NEEDS.map((item, index) => (
+              <li className="flex gap-4" key={item.title}>
+                <span
+                  aria-hidden="true"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 font-semibold text-primary text-sm tabular-nums"
+                >
+                  {index + 1}
+                </span>
+                <div className="min-w-0 pt-1">
+                  <h3 className="font-medium tracking-tight">{item.title}</h3>
+                  <p className="mt-1.5 text-muted-foreground leading-relaxed">
+                    {item.body}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </Section>
+
+      {/* Install — diffhub closing energy, left-aligned for this zone */}
+      <Section id="install">
+        <SectionHeading
+          eyebrow="Install"
+          lede="Install once, point it at a folder of weights, and build. init writes a config; build produces the variable font."
+        >
+          Run it on your machine
+        </SectionHeading>
+        <div className="mt-10">
+          <CopyInstall code={INSTALL} />
+        </div>
+        <div className="mt-8 flex flex-wrap gap-3">
+          <Button asChild size="lg">
             <a href={docsUrl}>
               Read the docs
               <ArrowUpRightIcon />
             </a>
           </Button>
+          <Button asChild size="lg" variant="secondary">
+            <a href={githubUrl}>
+              View on GitHub
+              <ArrowUpRightIcon />
+            </a>
+          </Button>
         </div>
-      </section>
+      </Section>
 
-      <section className="mt-16 border-t pt-12">
-        <h2 className="font-semibold text-xl">How it works</h2>
-        <p className="mt-3 max-w-[56ch] text-pretty text-muted-foreground">
-          Normally you can&apos;t just merge the files because they don&apos;t
-          line up. This handles that, and skips anything it can&apos;t do
-          cleanly instead of breaking it.
-        </p>
-        <dl className="mt-8 grid gap-8 sm:grid-cols-3">
-          <div>
-            <dt className="font-medium">Lines the files up</dt>
-            <dd className="mt-1.5 text-base text-muted-foreground sm:text-sm">
-              Every weight is redrawn the same way, so they blend smoothly.
-            </dd>
-          </div>
-          <div>
-            <dt className="font-medium">Checks every letter</dt>
-            <dd className="mt-1.5 text-base text-muted-foreground sm:text-sm">
-              Each weight has to match the original, and the in-betweens
-              can&apos;t go wonky.
-            </dd>
-          </div>
-          <div>
-            <dt className="font-medium">Skips what it can&apos;t</dt>
-            <dd className="mt-1.5 text-base text-muted-foreground sm:text-sm">
-              Anything it can&apos;t merge cleanly stays fixed at one weight,
-              and you get a list.
-            </dd>
-          </div>
-        </dl>
-      </section>
-
-      <section className="mt-16 border-t pt-12">
-        <h2 className="font-semibold text-xl">What you need</h2>
-        <p className="mt-3 max-w-[56ch] text-pretty text-muted-foreground">
-          It runs on your machine, so nothing is uploaded anywhere and a big
-          family can take as long as it needs.
-        </p>
-        <dl className="mt-8 grid gap-8 sm:grid-cols-3">
-          <div>
-            <dt className="font-medium">Node 24.11+</dt>
-            <dd className="mt-1.5 text-base text-muted-foreground sm:text-sm">
-              Runs the CLI itself.{" "}
-              <a
-                className="underline underline-offset-4 hover:text-foreground"
-                href="https://nodejs.org/en"
-              >
-                nodejs.org
-              </a>
-            </dd>
-          </div>
-          <div>
-            <dt className="font-medium">Python 3.11+ and uv</dt>
-            <dd className="mt-1.5 text-base text-muted-foreground sm:text-sm">
-              The font engine.{" "}
-              <a
-                className="underline underline-offset-4 hover:text-foreground"
-                href="https://docs.astral.sh/uv/"
-              >
-                docs.astral.sh/uv
-              </a>
-            </dd>
-          </div>
-          <div>
-            <dt className="font-medium">A few minutes</dt>
-            <dd className="mt-1.5 text-base text-muted-foreground sm:text-sm">
-              Three weights of a small family take under a minute; nine weights
-              of a 3,000-glyph family take several.
-            </dd>
-          </div>
-        </dl>
-      </section>
-
-      <section className="mt-16 border-t pt-12">
-        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-          <h2 className="font-semibold text-xl">
-            Try a font from the pipeline
-          </h2>
-          <Link
-            className="text-muted-foreground text-sm hover:text-foreground"
-            href="/showcase"
-          >
-            See all {FONTS.length} fonts
-          </Link>
-        </div>
-        <p className="mb-6 max-w-[56ch] text-pretty text-muted-foreground">
-          These started as separate weight files. Drag the slider — that&apos;s
-          one file.
-        </p>
-        <GlyphViewer />
-      </section>
-
-      <footer className="mt-16 flex flex-col items-center gap-3 border-t pt-8 text-muted-foreground text-sm">
+      <footer className="flex flex-col items-center gap-4 border-border/60 border-t pt-10 text-muted-foreground text-sm">
         <div className="flex items-center gap-5">
           <a className="hover:text-foreground" href={docsUrl}>
             Docs
