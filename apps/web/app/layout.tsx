@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import localFont from "next/font/local";
 
-import { ogSiteName, productName, siteUrl } from "@/lib/config";
+import { ogSiteName, productName, siteUrl, twitterCreator } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
 const glide = localFont({
@@ -64,7 +64,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    creator: "@mattblode",
+    creator: twitterCreator,
     title,
     description,
   },
