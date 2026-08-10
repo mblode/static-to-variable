@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { FONTS, weightLabel } from "@/lib/fonts";
+import { WeightReadout } from "@/components/weight-readout";
+import { FONTS } from "@/lib/fonts";
 import { cn } from "@/lib/utils";
 
 const [FONT] = FONTS;
@@ -341,12 +342,7 @@ export function FileStackCollapse({ className }: { className?: string }) {
               step={1}
               value={[weight]}
             />
-            <span className="flex shrink-0 items-baseline gap-1.5 text-foreground">
-              <span>{weightLabel(Math.round(weight))}</span>
-              <span className="font-mono text-muted-foreground text-xs tabular-nums">
-                {Math.round(weight)}
-              </span>
-            </span>
+            <WeightReadout weight={weight} />
           </div>
         </div>
       </div>

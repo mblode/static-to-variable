@@ -14,8 +14,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { WeightReadout } from "@/components/weight-readout";
 import type { DemoFont } from "@/lib/fonts";
-import { FONTS, weightLabel } from "@/lib/fonts";
+import { FONTS } from "@/lib/fonts";
 
 const range = (a: number, b: number): number[] =>
   Array.from({ length: b - a + 1 }, (_, i) => a + i);
@@ -122,12 +123,7 @@ export function SingleGlyphViewer({
             step={1}
             value={[weight]}
           />
-          <span className="flex items-baseline gap-1.5 text-foreground">
-            <span>{weightLabel(Math.round(weight))}</span>
-            <span className="font-mono text-muted-foreground text-xs tabular-nums">
-              {Math.round(weight)}
-            </span>
-          </span>
+          <WeightReadout weight={weight} />
         </div>
       </div>
 
