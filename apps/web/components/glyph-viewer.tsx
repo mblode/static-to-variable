@@ -14,7 +14,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { WeightReadout } from "@/components/weight-readout";
 import type { DemoFont } from "@/lib/fonts";
 import { FONTS } from "@/lib/fonts";
 
@@ -116,14 +115,14 @@ export function SingleGlyphViewer({
         <div className="flex flex-1 items-center gap-3 text-muted-foreground text-sm">
           Weight
           <Slider
-            className="min-w-[180px] max-w-[420px]"
+            aria-label="Font weight"
+            className="min-w-[180px] max-w-[420px] flex-1"
             max={font.axis.max}
             min={font.axis.min}
             onValueChange={(next) => setWeight(next[0])}
             step={1}
             value={[weight]}
           />
-          <WeightReadout weight={weight} />
         </div>
       </div>
 
