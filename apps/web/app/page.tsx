@@ -273,9 +273,11 @@ static-to-variable build`}</code>
             href="https://blode.co"
             rel="author"
           >
+            {/* Decorative: the link's own text already reads "Matthew Blode",
+                so any alt makes the accessible name say it twice. */}
             {/* oxlint-disable-next-line nextjs/no-img-element -- tiny static 20px avatar, next/image adds no value */}
             <img
-              alt="Avatar of Matthew Blode"
+              alt=""
               className="rounded-full"
               height={20}
               src={asset("/avatar-sm.png")}
