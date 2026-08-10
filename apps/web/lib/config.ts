@@ -27,3 +27,14 @@ export const productName = "Static to Variable";
  * blode-co/apps/web/.claude/knowledge/zone-conventions.md Rule 9.
  */
 export const ogSiteName = "Matthew Blode";
+
+/**
+ * Restate this in every `twitter` block, not just the root layout's.
+ *
+ * Next merges scalar metadata fields (`authors`, `creator`, `description`) down
+ * the tree, but an object-valued one (`openGraph`, `twitter`) declared on a
+ * child *replaces* the parent's wholesale. So the root `creator` reaches every
+ * route and needs no restating, while the handle inside `twitter` silently
+ * vanishes from any route that declares a `twitter` block of its own.
+ */
+export const twitterCreator = "@mattblode";

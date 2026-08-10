@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
-import { ogSiteName } from "@/lib/config";
+import { ogSiteName, twitterCreator } from "@/lib/config";
 import { FONTS } from "@/lib/fonts";
 
 /**
@@ -31,6 +31,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
+    // Same reason as `siteName` above: this block replaces the layout's rather
+    // than merging into it, so the handle has to be repeated here too.
+    creator: twitterCreator,
     title: "Variable font showcase",
     description,
   },

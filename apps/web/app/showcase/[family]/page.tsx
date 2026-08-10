@@ -6,7 +6,7 @@ import { notFound } from "next/navigation";
 import { SingleGlyphViewer } from "@/components/glyph-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ogSiteName } from "@/lib/config";
+import { ogSiteName, twitterCreator } from "@/lib/config";
 import { FONTS } from "@/lib/fonts";
 
 interface Params {
@@ -47,6 +47,9 @@ export function generateMetadata({
       },
       twitter: {
         card: "summary_large_image",
+        // Same reason as `siteName` above: this block replaces the layout's
+        // rather than merging into it, so the handle has to be repeated here.
+        creator: twitterCreator,
         title: `${font.name} variable font`,
         description,
       },
