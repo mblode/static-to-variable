@@ -28,7 +28,7 @@ const glideMono = localFont({
 // mentioned what the thing is called.
 const title = "Static to Variable: static fonts into one variable font";
 const description =
-  "Turn static font files into one variable font with every weight in between. Upload thin, regular, and bold weights online, then download TTF and WOFF2 files.";
+  "Turn static font files into one variable font with every weight in between. Point the CLI at thin, regular, and bold — get TTF and WOFF2.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

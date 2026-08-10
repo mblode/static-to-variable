@@ -1,11 +1,25 @@
 import { ArrowUpRightIcon, GithubIcon } from "blode-icons-react";
 import Link from "next/link";
 
+import { CopyInstall } from "@/components/copy-install";
+import { FileStackCollapse } from "@/components/file-stack-collapse";
 import { GlyphViewer } from "@/components/glyph-viewer";
 import { Button } from "@/components/ui/button";
 import { ZoneBreadcrumb } from "@/components/zone-breadcrumb";
-import { asset, productName, siteUrl } from "@/lib/config";
+import {
+  asset,
+  docsUrl,
+  githubUrl,
+  npmUrl,
+  productName,
+  siteUrl,
+} from "@/lib/config";
 import { FONTS } from "@/lib/fonts";
+
+const INSTALL = `npm install -g static-to-variable
+cd ~/Downloads/Inter/static
+static-to-variable init
+static-to-variable build`;
 
 /**
  * One script holding one `@graph`. Separate blocks are disconnected nodes, and
@@ -43,7 +57,7 @@ const JSON_LD = {
       "@id": `${siteUrl}/#software`,
       "@type": "SoftwareSourceCode",
       author: { "@id": "https://blode.co/#person" },
-      codeRepository: "https://github.com/mblode/static-to-variable",
+      codeRepository: githubUrl,
       description:
         "A command-line pipeline that redraws a folder of static weights onto compatible outlines and interpolates them into one variable TTF and WOFF2, checking every glyph and leaving anything it cannot merge cleanly at a fixed weight.",
       name: productName,
@@ -90,29 +104,26 @@ export default function Home() {
         type="application/ld+json"
       />
 
-      <ZoneBreadcrumb product={productName} />
+      <div className="mb-10 flex items-center justify-between gap-4">
+        <ZoneBreadcrumb product={productName} />
+        <Button
+          aria-label="View on GitHub"
+          asChild
+          className="-mr-2 text-muted-foreground"
+          size="icon-sm"
+          variant="ghost"
+        >
+          <a href={githubUrl}>
+            <GithubIcon />
+            <span
+              aria-hidden="true"
+              className="-translate-1/2 pointer-fine:hidden absolute top-1/2 left-1/2 size-[max(100%,3rem)]"
+            />
+          </a>
+        </Button>
+      </div>
 
-      <header className="mt-6 mb-10">
-        <div className="-mt-2 mb-1 flex items-center justify-between gap-4">
-          <p className="font-mono text-muted-foreground text-sm">
-            static-to-variable
-          </p>
-          <Button
-            aria-label="View on GitHub"
-            asChild
-            className="-mr-2 text-muted-foreground"
-            size="icon-sm"
-            variant="ghost"
-          >
-            <a href="https://github.com/mblode/static-to-variable">
-              <GithubIcon />
-              <span
-                aria-hidden="true"
-                className="-translate-1/2 pointer-fine:hidden absolute top-1/2 left-1/2 size-[max(100%,3rem)]"
-              />
-            </a>
-          </Button>
-        </div>
+      <header className="mb-8">
         <h1 className="max-w-[24ch] text-balance font-semibold text-4xl tracking-tight sm:text-5xl">
           Turn static fonts into one variable font.
         </h1>
@@ -120,57 +131,33 @@ export default function Home() {
           Point it at a folder of thin, regular, and bold. Get one file with
           every weight in between.
         </p>
+        <p className="mt-3 max-w-[48ch] text-pretty text-muted-foreground text-sm">
+          A variable font is one file instead of a stack of separate weights.
+        </p>
       </header>
 
-      <section>
-        <pre className="overflow-x-auto rounded-xl bg-card px-5 py-4 font-mono text-muted-foreground text-sm leading-6 ring-1 ring-foreground/10">
-          <code>{`npm install -g static-to-variable
-cd ~/Downloads/Inter/static
-static-to-variable init
-static-to-variable build`}</code>
-        </pre>
+      <section aria-label="How static weights become one variable font">
+        <FileStackCollapse />
+      </section>
+
+      <section className="mt-10">
+        <CopyInstall code={INSTALL} />
         <p className="mt-4 max-w-[56ch] text-pretty text-muted-foreground">
-          {/* Explicit string literals: JSX trims whitespace around elements
-              inconsistently, which ate the space after the first <code>. */}
           <code className="font-mono text-sm">init</code>
           {
             " finds the .ttf and .otf files in the folder, reads each one's weight, and writes a config you can edit. "
           }
           <code className="font-mono text-sm">build</code>
-          {" produces the variable TTF and WOFF2."}
+          {" produces the variable font."}
         </p>
-        <div className="mt-6 flex flex-wrap gap-3">
-          <Button asChild variant="outline">
-            <a href="https://static-to-variable.blode.md">
+        <div className="mt-6">
+          <Button asChild>
+            <a href={docsUrl}>
               Read the docs
               <ArrowUpRightIcon />
             </a>
           </Button>
-          <Button asChild variant="ghost">
-            <a href="https://github.com/mblode/static-to-variable">
-              View on GitHub
-              <ArrowUpRightIcon />
-            </a>
-          </Button>
         </div>
-      </section>
-
-      <section className="mt-16 border-t pt-12">
-        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-          <h2 className="font-semibold text-xl">
-            Variable fonts that didn&apos;t exist
-          </h2>
-          {/* The viewer below only ever links to the family currently selected
-              in its client-side switcher, so this is the crawl path — and the
-              JS-off path — to all of them. */}
-          <Link
-            className="text-muted-foreground text-sm hover:text-foreground"
-            href="/showcase"
-          >
-            See all {FONTS.length} families
-          </Link>
-        </div>
-        <GlyphViewer />
       </section>
 
       <section className="mt-16 border-t pt-12">
@@ -245,24 +232,34 @@ static-to-variable build`}</code>
         </dl>
       </section>
 
+      <section className="mt-16 border-t pt-12">
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+          <h2 className="font-semibold text-xl">
+            Try a font from the pipeline
+          </h2>
+          <Link
+            className="text-muted-foreground text-sm hover:text-foreground"
+            href="/showcase"
+          >
+            See all {FONTS.length} fonts
+          </Link>
+        </div>
+        <p className="mb-6 max-w-[56ch] text-pretty text-muted-foreground">
+          These started as separate weight files. Drag the slider — that&apos;s
+          one file.
+        </p>
+        <GlyphViewer />
+      </section>
+
       <footer className="mt-16 flex flex-col items-center gap-3 border-t pt-8 text-muted-foreground text-sm">
         <div className="flex items-center gap-5">
-          <a
-            className="hover:text-foreground"
-            href="https://static-to-variable.blode.md"
-          >
+          <a className="hover:text-foreground" href={docsUrl}>
             Docs
           </a>
-          <a
-            className="hover:text-foreground"
-            href="https://github.com/mblode/static-to-variable"
-          >
+          <a className="hover:text-foreground" href={githubUrl}>
             GitHub
           </a>
-          <a
-            className="hover:text-foreground"
-            href="https://www.npmjs.com/package/static-to-variable"
-          >
+          <a className="hover:text-foreground" href={npmUrl}>
             NPM
           </a>
         </div>
@@ -285,9 +282,6 @@ static-to-variable build`}</code>
             />
             Matthew Blode
           </a>
-          {/* The edge back to the hub: same origin behind a rewrite, so same tab
-              and no rel. See
-              blode-co/apps/web/.claude/knowledge/zone-conventions.md. */}
           <span aria-hidden="true">·</span>
           <a className="hover:text-foreground" href="https://blode.co/projects">
             All projects
