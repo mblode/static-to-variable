@@ -38,3 +38,7 @@ export const ogSiteName = "Matthew Blode";
  * vanishes from any route that declares a `twitter` block of its own.
  */
 export const twitterCreator = "@mattblode";
+
+export const githubUrl = "https://github.com/mblode/static-to-variable";
+export const npmUrl = "https://www.npmjs.com/package/static-to-variable";
+export const docsUrl = "https://static-to-variable.blode.md";

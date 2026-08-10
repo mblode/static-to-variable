@@ -32,6 +32,20 @@ const WEIGHT_NAMES: Record<number, string> = {
   900: "Black",
 };
 
+const WEIGHT_KEYS = Object.keys(WEIGHT_NAMES).map(Number);
+
+/** Nearest named weight for slider labels (Thin, Regular, Bold, …). */
+export function weightLabel(wght: number): string {
+  const [first, ...rest] = WEIGHT_KEYS;
+  let nearest = first;
+  for (const curr of rest) {
+    if (Math.abs(curr - wght) < Math.abs(nearest - wght)) {
+      nearest = curr;
+    }
+  }
+  return WEIGHT_NAMES[nearest];
+}
+
 const masters = (...wghts: number[]) =>
   wghts.map((wght) => ({ name: WEIGHT_NAMES[wght], wght }));
 
