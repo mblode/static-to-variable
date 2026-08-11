@@ -1,7 +1,6 @@
 node_modules/
 .next/
 .turbo/
-.baseline-snapshot/
 .venv/
 __pycache__/
 *.pyc
@@ -21,6 +20,10 @@ packages/cli/skills/
 *.glyphs
 cabinet/
 /fonts/
+
+# The Glide and Circular build lives in its own private repo, checked out here.
+# Keeps licensed foundry material out of this one. See github.com/mblode/static-to-variable-glide
+/glide/
 
 # Generated pipeline outputs.
 master_ufo/
