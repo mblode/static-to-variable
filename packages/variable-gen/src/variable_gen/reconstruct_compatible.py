@@ -37,6 +37,9 @@ CORNER_ANGLE = math.radians(28)  # tangent break above this = corner anchor
 RESAMPLE_STEP = 18  # target units between resampled points (dense
 # enough that curves stay smooth at display sizes)
 MIN_RUN_PTS = 1  # min interior points per inter-corner run
+CURVE_FIT_TOLERANCE = 0.4
+CURVE_CORNER_ANGLE = math.radians(20)
+CURVE_LINE_TOLERANCE = 0.08
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +277,13 @@ def reconstruct(outlines_by_pos, reference_pos=400):
     unions overlapping contours per master (handles glyphs like $ / ¢ whose
     separate bar stubs merge into the body at heavy weights)."""
     out, info = _reconstruct_base(outlines_by_pos, reference_pos)
-    return _ink_tournament(out, info, outlines_by_pos, reference_pos)
+    out, info = _ink_tournament(out, info, outlines_by_pos, reference_pos)
+    if out is not None and info.get("stage") == "reconstructed":
+        curved = _restore_compatible_curves(out)
+        if curved is not None and not _quality_offenders(curved, outlines_by_pos):
+            out = curved
+            info = {**info, "note": "+".join(filter(None, (info.get("note"), "cubic-refit")))}
+    return out, info
 
 
 # A candidate whose best-available coarse ink-defect ratio exceeds this is
@@ -700,6 +709,282 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
 def _line_pts(contour):
     """Ordered point list of an all-line (moveTo + lineTo*) contour."""
     return [p[0] for op, p in contour if op in ("moveTo", "lineTo")]
+
+
+def _restore_compatible_curves(outlines_by_pos):
+    """Replace temporary compatibility polylines with shared cubic structure.
+
+    Resampling is useful for establishing point correspondence, but those dense
+    line segments are an implementation detail, not a suitable final outline.
+    Fit every corresponding master at once: a span is accepted only when it is
+    within tolerance in *all* masters, and a failure splits every master at the
+    same sample index.  The controls remain master-specific while the segment
+    structure therefore stays interpolation-compatible.
+    """
+    positions = sorted(outlines_by_pos)
+    if not positions or any(
+        any(op not in ("moveTo", "lineTo", "closePath") for con in contours for op, _ in con)
+        for contours in outlines_by_pos.values()
+    ):
+        return None
+    contour_count = len(outlines_by_pos[positions[0]])
+    if any(len(outlines_by_pos[pos]) != contour_count for pos in positions):
+        return None
+
+    result = {pos: [] for pos in positions}
+    for ci in range(contour_count):
+        rings = {pos: _line_pts(outlines_by_pos[pos][ci]) for pos in positions}
+        counts = {len(ring) for ring in rings.values()}
+        if len(counts) != 1 or not counts or next(iter(counts)) < 3:
+            return None
+        count = next(iter(counts))
+        corners = [
+            i
+            for i in range(count)
+            if any(_polyline_turn(rings[pos], i) > CURVE_CORNER_ANGLE for pos in positions)
+        ]
+        # A closed smooth path cannot be fitted as one span because its endpoints
+        # coincide. Four stable arc-order anchors give circles and bowls enough
+        # freedom without inventing visible corners.
+        if len(corners) < 2:
+            corners = sorted({0, count // 4, count // 2, 3 * count // 4})
+        elif 0 not in corners:
+            # Preserve the already-aligned start point while keeping all real
+            # corners as independent tangent boundaries.
+            corners = [0, *corners]
+
+        contours = {pos: [("moveTo", [rings[pos][corners[0]]])] for pos in positions}
+        for run, start in enumerate(corners):
+            end = corners[(run + 1) % len(corners)]
+            samples = {pos: _cyclic_slice(rings[pos], start, end) for pos in positions}
+            if _shared_straight(samples):
+                for pos in positions:
+                    contours[pos].append(("lineTo", [samples[pos][-1]]))
+                continue
+            fitted = _fit_shared_cubics(samples, CURVE_FIT_TOLERANCE)
+            for pos in positions:
+                contours[pos].extend(("curveTo", [c1, c2, p3]) for c1, c2, p3 in fitted[pos])
+        for pos in positions:
+            contours[pos].append(("closePath", []))
+            result[pos].append(contours[pos])
+    return result if _cu2qu_safe(result) else None
+
+
+def _polyline_turn(points, i):
+    prev = points[(i - 1) % len(points)]
+    point = points[i]
+    nxt = points[(i + 1) % len(points)]
+    incoming = _unit(prev, point)
+    outgoing = _unit(point, nxt)
+    dot = max(-1.0, min(1.0, incoming[0] * outgoing[0] + incoming[1] * outgoing[1]))
+    return math.acos(dot)
+
+
+def _cyclic_slice(points, start, end):
+    if start < end:
+        return points[start : end + 1]
+    return points[start:] + points[: end + 1]
+
+
+def _shared_straight(samples):
+    for points in samples.values():
+        start, end = points[0], points[-1]
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        length = math.hypot(dx, dy)
+        if length <= 1e-9:
+            return False
+        for point in points[1:-1]:
+            distance = abs((point[0] - start[0]) * dy - (point[1] - start[1]) * dx) / length
+            if distance > CURVE_LINE_TOLERANCE:
+                return False
+    return True
+
+
+def _fit_shared_cubics(samples, tolerance, start_tangents=None, end_tangents=None):
+    """Schneider-style cubic fit with synchronized split indices."""
+    positions = sorted(samples)
+    if len(samples[positions[0]]) <= 2:
+        return {
+            pos: [
+                (
+                    (
+                        samples[pos][0][0] + (samples[pos][-1][0] - samples[pos][0][0]) / 3,
+                        samples[pos][0][1] + (samples[pos][-1][1] - samples[pos][0][1]) / 3,
+                    ),
+                    (
+                        samples[pos][0][0] + 2 * (samples[pos][-1][0] - samples[pos][0][0]) / 3,
+                        samples[pos][0][1] + 2 * (samples[pos][-1][1] - samples[pos][0][1]) / 3,
+                    ),
+                    samples[pos][-1],
+                )
+            ]
+            for pos in positions
+        }
+    if start_tangents is None:
+        start_tangents = {pos: _fit_start_tangent(samples[pos]) for pos in positions}
+    if end_tangents is None:
+        end_tangents = {pos: _fit_end_tangent(samples[pos]) for pos in positions}
+
+    cubics = {}
+    errors = {}
+    for pos in positions:
+        points = samples[pos]
+        params = _chord_parameters(points)
+        cubic = _fit_one_cubic(points, params, start_tangents[pos], end_tangents[pos])
+        for _ in range(4):
+            revised = _reparameterize(points, cubic, params)
+            if revised is None:
+                break
+            params = revised
+            cubic = _fit_one_cubic(points, params, start_tangents[pos], end_tangents[pos])
+        cubics[pos] = cubic
+        errors[pos] = _fit_error(points, cubic, params)
+    worst_pos = max(positions, key=lambda pos: errors[pos][0])
+    worst_error, split = errors[worst_pos]
+    if worst_error <= tolerance:
+        return {pos: [(cubics[pos][1], cubics[pos][2], cubics[pos][3])] for pos in positions}
+
+    split = min(max(split, 1), len(samples[worst_pos]) - 2)
+    center = {pos: _fit_center_tangent(samples[pos], split) for pos in positions}
+    left_samples = {pos: samples[pos][: split + 1] for pos in positions}
+    right_samples = {pos: samples[pos][split:] for pos in positions}
+    left = _fit_shared_cubics(
+        left_samples,
+        tolerance,
+        start_tangents,
+        {pos: (-center[pos][0], -center[pos][1]) for pos in positions},
+    )
+    right = _fit_shared_cubics(right_samples, tolerance, center, end_tangents)
+    return {pos: [*left[pos], *right[pos]] for pos in positions}
+
+
+def _fit_start_tangent(points):
+    for point in points[1:]:
+        tangent = _unit(points[0], point)
+        if tangent != (0.0, 0.0):
+            return tangent
+    return (1.0, 0.0)
+
+
+def _fit_end_tangent(points):
+    for point in reversed(points[:-1]):
+        tangent = _unit(points[-1], point)
+        if tangent != (0.0, 0.0):
+            return tangent
+    return (-1.0, 0.0)
+
+
+def _fit_center_tangent(points, split):
+    tangent = _unit(points[split - 1], points[split + 1])
+    if tangent == (0.0, 0.0):
+        tangent = _fit_start_tangent(points[split:])
+    return tangent
+
+
+def _chord_parameters(points):
+    distances = [_dist(points[i - 1], points[i]) for i in range(1, len(points))]
+    total = sum(distances)
+    if total <= 1e-9:
+        return [i / (len(points) - 1) for i in range(len(points))]
+    params = [0.0]
+    for distance in distances:
+        params.append(params[-1] + distance / total)
+    params[-1] = 1.0
+    return params
+
+
+def _fit_one_cubic(points, params, start_tangent, end_tangent):
+    p0, p3 = points[0], points[-1]
+    c00 = c01 = c11 = x0 = x1 = 0.0
+    for point, u in zip(points, params, strict=True):
+        v = 1.0 - u
+        b0, b1, b2, b3 = v**3, 3 * u * v**2, 3 * u**2 * v, u**3
+        ax = start_tangent[0] * b1
+        ay = start_tangent[1] * b1
+        bx = end_tangent[0] * b2
+        by = end_tangent[1] * b2
+        rx = point[0] - (p0[0] * (b0 + b1) + p3[0] * (b2 + b3))
+        ry = point[1] - (p0[1] * (b0 + b1) + p3[1] * (b2 + b3))
+        c00 += ax * ax + ay * ay
+        c01 += ax * bx + ay * by
+        c11 += bx * bx + by * by
+        x0 += ax * rx + ay * ry
+        x1 += bx * rx + by * ry
+    determinant = c00 * c11 - c01 * c01
+    alpha1 = (x0 * c11 - x1 * c01) / determinant if abs(determinant) > 1e-12 else 0.0
+    alpha2 = (c00 * x1 - c01 * x0) / determinant if abs(determinant) > 1e-12 else 0.0
+    chord = _dist(p0, p3)
+    epsilon = chord * 1e-6
+    if alpha1 < epsilon or alpha2 < epsilon:
+        alpha1 = alpha2 = chord / 3.0
+    return (
+        p0,
+        (p0[0] + start_tangent[0] * alpha1, p0[1] + start_tangent[1] * alpha1),
+        (p3[0] + end_tangent[0] * alpha2, p3[1] + end_tangent[1] * alpha2),
+        p3,
+    )
+
+
+def _fit_error(points, cubic, params):
+    worst = (0.0, 1)
+    for i, (point, u) in enumerate(zip(points[1:-1], params[1:-1], strict=True), start=1):
+        error = _dist(point, _cubic(*cubic, u))
+        if error > worst[0]:
+            worst = (error, i)
+    # The samples-to-curve direction alone misses a fitted loop or bulge between
+    # samples. Check the reverse direction too, against the corresponding
+    # polyline chord; this is what prevents a numerically valid fit from losing
+    # half the ink area on intricate contours such as italic aogonek.
+    for i, (u0, u1) in enumerate(zip(params, params[1:], strict=False)):
+        for fraction in (0.25, 0.5, 0.75):
+            point = _cubic(*cubic, u0 + (u1 - u0) * fraction)
+            error = _point_segment_distance(point, points[i], points[i + 1])
+            if error > worst[0]:
+                worst = (error, min(max(i + 1, 1), len(points) - 2))
+    return worst
+
+
+def _point_segment_distance(point, start, end):
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length2 = dx * dx + dy * dy
+    if length2 <= 1e-18:
+        return _dist(point, start)
+    t = ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length2
+    t = max(0.0, min(1.0, t))
+    return _dist(point, (start[0] + t * dx, start[1] + t * dy))
+
+
+def _reparameterize(points, cubic, params):
+    revised = [0.0]
+    for point, u in zip(points[1:-1], params[1:-1], strict=True):
+        q = _cubic(*cubic, u)
+        q1 = _cubic_derivative(cubic, u)
+        q2 = _cubic_second_derivative(cubic, u)
+        dx, dy = q[0] - point[0], q[1] - point[1]
+        denominator = q1[0] ** 2 + q1[1] ** 2 + dx * q2[0] + dy * q2[1]
+        new_u = u if abs(denominator) <= 1e-12 else u - (dx * q1[0] + dy * q1[1]) / denominator
+        revised.append(max(0.0, min(1.0, new_u)))
+    revised.append(1.0)
+    if any(a >= b for a, b in zip(revised, revised[1:], strict=False)):
+        return None
+    return revised
+
+
+def _cubic_derivative(cubic, t):
+    p0, p1, p2, p3 = cubic
+    u = 1.0 - t
+    return (
+        3 * u * u * (p1[0] - p0[0]) + 6 * u * t * (p2[0] - p1[0]) + 3 * t * t * (p3[0] - p2[0]),
+        3 * u * u * (p1[1] - p0[1]) + 6 * u * t * (p2[1] - p1[1]) + 3 * t * t * (p3[1] - p2[1]),
+    )
+
+
+def _cubic_second_derivative(cubic, t):
+    p0, p1, p2, p3 = cubic
+    return (
+        6 * ((1 - t) * (p2[0] - 2 * p1[0] + p0[0]) + t * (p3[0] - 2 * p2[0] + p1[0])),
+        6 * ((1 - t) * (p2[1] - 2 * p1[1] + p0[1]) + t * (p3[1] - 2 * p2[1] + p1[1])),
+    )
 
 
 def _best_rotation(pts, ref):
