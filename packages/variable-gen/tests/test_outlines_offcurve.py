@@ -26,6 +26,16 @@ class _AllOffCurveGlyph:
         pen.closePath()
 
 
+class _ImplicitClosingLineGlyph:
+    width = 500
+
+    def draw(self, pen) -> None:
+        pen.moveTo((0, 0))
+        pen.lineTo((100, 0))
+        pen.curveTo((100, 50), (50, 100), (0, 12))
+        pen.closePath()
+
+
 def test_donor_outline_handles_all_offcurve_truetype_contour() -> None:
     # Regression: this used to crash in donor_outline with
     # "'NoneType' object has no attribute 'append'" because the contour opened
@@ -64,3 +74,9 @@ def test_offcurve_contour_survives_signature_and_draw_into() -> None:
     draw_into(layer, contours)
 
     assert len(layer.paths) == 1
+
+
+def test_donor_outline_materializes_an_implicit_closing_line() -> None:
+    contours, _ = donor_outline({"shape": _ImplicitClosingLineGlyph()}, "shape")
+
+    assert contours[0][-2] == ("lineTo", [(0, 0)])

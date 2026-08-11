@@ -43,6 +43,16 @@ def donor_outline(glyphset, name):
             # point the pen reports as None; keep it so draw_into round-trips it.
             cur.append(("qCurveTo", [tuple(p) if p is not None else None for p in args]))
         elif op in ("closePath", "endPath"):
+            # RecordingPen leaves the straight closing edge implicit. Materialize
+            # it so a master whose final cubic stops just short of the start does
+            # not appear structurally identical to one whose cubic closes all the
+            # way (two.ss08). Glyphs/UFO export otherwise gives those contours a
+            # different point count only after reconstruction has accepted them.
+            if op == "closePath" and cur and cur[0][0] == "moveTo":
+                start = cur[0][1][0]
+                end = next((points[-1] for _, points in reversed(cur) if points), start)
+                if end is not None and end != start:
+                    cur.append(("lineTo", [start]))
             cur.append((op, []))
             contours.append(cur)
             cur = []
