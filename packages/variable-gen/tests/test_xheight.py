@@ -87,6 +87,23 @@ def test_band_map_rate_is_continuous_at_every_knot() -> None:
         assert ymap.rate(knot - epsilon) == pytest.approx(ymap.rate(knot + epsilon), abs=1e-4)
 
 
+def test_uniform_lower_map_matches_isotropic_scale_away_from_alignment_edges() -> None:
+    scale = 525 / 474
+    ymap = build_map(
+        [_rectangle(0, 0, 100, 474)],
+        51,
+        474,
+        484,
+        700,
+        40,
+        uniform_lower=True,
+    )
+
+    assert ymap(474) == pytest.approx(525)
+    for y in (50, 150, 250, 350, 425):
+        assert ymap.rate(y) == pytest.approx(scale, abs=1e-6)
+
+
 def test_floating_contour_follows_base_without_being_strained() -> None:
     ymap = _map()
     base = _rectangle(0, 0, 100, 500)

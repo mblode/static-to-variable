@@ -357,6 +357,8 @@ def build_map(
     hi: float,
     ascender: float,
     stem: float,
+    *,
+    uniform_lower: bool = False,
 ) -> BandMap:
     """Turn one glyph's own geometry into a monotonic C1 y map.
 
@@ -364,19 +366,27 @@ def build_map(
     cubic Hermite interpolation then joins those samples with a continuous
     derivative. Merely smoothing a list of piecewise-constant rates is not C1:
     its residual jumps rotate every oblique tangent that crosses a grid edge.
+
+    ``uniform_lower`` makes the baseline-to-x-height band approach one affine
+    rate (apart from its short C1 joins). Use it when a later horizontal scale
+    should be matched vertically to preserve isotropic stroke weight.
     """
     segments = flatten_contours(contours)
 
-    def region(lo, high, rise):
+    def region(lo, high, rise, *, uniform=False):
         if high - lo < 1e-6:
             return [lo, high], [0.0, rise]
         steps = max(2, int(math.ceil((high - lo) / RATE_STEP)))
         edges = [lo + (high - lo) * i / steps for i in range(steps + 1)]
         heights = [b - a for a, b in zip(edges, edges[1:], strict=False)]
-        costs = [
-            band_cost(segments, (a + b) / 2, stem) for a, b in zip(edges, edges[1:], strict=False)
-        ]
-        rates = _smooth([1.0 / c for c in costs], heights)
+        if uniform:
+            rates = [1.0] * len(heights)
+        else:
+            costs = [
+                band_cost(segments, (a + b) / 2, stem)
+                for a, b in zip(edges, edges[1:], strict=False)
+            ]
+            rates = _smooth([1.0 / c for c in costs], heights)
         moves = _allocate_smoothed(heights, rates, rise)
         shifts, running = [0.0], 0.0
         for move in moves:
@@ -385,7 +395,7 @@ def build_map(
         shifts[-1] = rise
         return edges, shifts
 
-    lower_edges, lower_shifts = region(0.0, x_top, delta)
+    lower_edges, lower_shifts = region(0.0, x_top, delta, uniform=uniform_lower)
     upper_edges, upper_shifts = region(hi, ascender, -delta)
 
     breaks = [*lower_edges, hi, *upper_edges[1:]]
