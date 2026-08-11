@@ -11,9 +11,11 @@ Run:  uv run python -m variable_gen.cli release --config <path> --style all
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
+from fontTools.ttLib.reorderGlyphs import reorderGlyphs
 
 from variable_gen.config import ProjectConfig
 
@@ -35,6 +37,33 @@ def stamp_version(font, config: ProjectConfig, ps_name: str):
     font["head"].fontRevision = float(config.family.version)
     setname(font, f"Version {config.family.version}", 5)
     setname(font, f"{config.family.version};{config.family.vendor};{ps_name}", 3)
+
+
+def fix_vertical_metrics(
+    font, *, win_ascent: float | None = None, win_descent: float | None = None
+) -> None:
+    """Use the intended line box while keeping every glyph clipping-safe.
+
+    ``sTypo*`` is the cross-platform layout contract. The USE_TYPO_METRICS bit
+    asks supporting applications to honour it, and matching ``hhea`` values
+    gives older Apple software the same result. Windows clipping metrics are a
+    separate ink-coverage envelope, so they must include both the line box and
+    the font's real extrema.
+    """
+    os2 = font["OS/2"]
+    hhea = font["hhea"]
+    head = font["head"]
+
+    os2.fsSelection |= 0x080  # USE_TYPO_METRICS
+    hhea.ascent = os2.sTypoAscender
+    hhea.descent = os2.sTypoDescender
+    hhea.lineGap = os2.sTypoLineGap
+    os2.usWinAscent = math.ceil(
+        max(0, os2.sTypoAscender, head.yMax, win_ascent if win_ascent is not None else 0)
+    )
+    os2.usWinDescent = math.ceil(
+        max(0, -os2.sTypoDescender, -head.yMin, win_descent if win_descent is not None else 0)
+    )
 
 
 def fix_instances(font, config: ProjectConfig, italic: bool):
@@ -59,11 +88,11 @@ def fix_instances(font, config: ProjectConfig, italic: bool):
         else:
             sub = base
             ps = f"{ps_family}-{base}"
-        name.setName(sub, inst.subfamilyNameID, *WIN)
+        setname(font, sub, inst.subfamilyNameID)
         if inst.postscriptNameID in (None, 0, 0xFFFF):
-            inst.postscriptNameID = name.addName(ps, platforms=[WIN])
+            inst.postscriptNameID = name.addName(ps, platforms=[WIN, MAC])
         else:
-            name.setName(ps, inst.postscriptNameID, *WIN)
+            setname(font, ps, inst.postscriptNameID)
 
     used = set()
     for inst in font["fvar"].instances:
@@ -80,6 +109,15 @@ def fix_instances(font, config: ProjectConfig, italic: bool):
             for av in stat.AxisValueArray.AxisValue:
                 used.add(getattr(av, "ValueNameID", None))
         used.add(getattr(stat, "ElidedFallbackNameID", None))
+    # FontTools' static-name updater visits every platform represented in the
+    # name table. Keep all fvar/STAT names available on both of our declared
+    # platforms so named-instance generation is well-defined.
+    for name_id in used:
+        if name_id is None:
+            continue
+        record = name.getName(name_id, *WIN) or name.getName(name_id, *MAC)
+        if record is not None:
+            setname(font, record.toUnicode(), name_id)
     for rec in [r for r in name.names if r.nameID >= 256 and r.nameID not in used]:
         name.removeNames(nameID=rec.nameID)
 
@@ -100,17 +138,33 @@ def finalize_vf(config: ProjectConfig, src: Path, out: Path, italic: bool) -> Pa
     setname(font, config.family.designer, 9)
     setname(font, config.family.designer_url, 11)
     setname(font, config.family.designer_url, 12)
+    if config.family.license:
+        setname(font, config.family.license, 13)
+    if config.family.license_url:
+        setname(font, config.family.license_url, 14)
     stamp_version(font, config, ps)
     font["OS/2"].achVendID = config.family.vendor
     os2 = font["OS/2"]
     head = font["head"]
+    if config.family.license == "OFL-1.1":
+        os2.fsType = 0  # installable embedding; the OFL imposes no embedding restriction
     if italic:
         os2.fsSelection = (os2.fsSelection | 0x001) & ~0x040  # ITALIC, not REGULAR
         head.macStyle |= 0x2
     else:
         os2.fsSelection = (os2.fsSelection | 0x040) & ~0x001  # REGULAR, not ITALIC
         head.macStyle &= ~0x2
+    metrics = config.vertical_metrics
+    fix_vertical_metrics(
+        font,
+        win_ascent=metrics.win_ascent if metrics else None,
+        win_descent=metrics.win_descent if metrics else None,
+    )
     fix_instances(font, config, italic)
+    # Ported layout tables can still be ordered for a donor's glyph IDs. Sort
+    # Coverage tables and their parallel records for the final VF glyph order;
+    # malformed ordering breaks kerning instantiation in strict consumers.
+    reorderGlyphs(font, font.getGlyphOrder())
     out.parent.mkdir(parents=True, exist_ok=True)
     font.save(str(out))
     return out

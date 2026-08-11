@@ -605,27 +605,28 @@ def _dilate(rows, res=INK_RES):
 
 
 def _reconstruct_base(outlines_by_pos, reference_pos=400):
-    if _already_compatible(outlines_by_pos) and _starts_aligned(outlines_by_pos):
-        # normalise contour order first — donor order can flip across weights and
-        # still pass signature(), then interpolate to the wrong contour (B).
-        ordered = _order_normalize(outlines_by_pos, reference_pos)
-        if (
-            ordered is not None
-            and _already_compatible(ordered)
-            and _starts_aligned(ordered)
-            and _cu2qu_safe(ordered)
-            and _interp_ok(ordered)
-            and not _quality_offenders(ordered, outlines_by_pos)
-        ):
-            return ordered, {"stage": "compatible", "note": ""}
-        # else fall through to full reconstruction
+    # Donor contour order can flip across weights even when each individual
+    # contour keeps the same topology. Normalize before *every* reconstruction,
+    # not only the already-compatible fast path: otherwise a full resample maps
+    # contour 0 to a different piece at the heavy master (uni2787's circle and
+    # numeral swap), then quite correctly fails the ink-quality gate.
+    ordered = _order_normalize(outlines_by_pos, reference_pos)
+    working = ordered if ordered is not None else outlines_by_pos
+    if (
+        _already_compatible(working)
+        and _starts_aligned(working)
+        and _cu2qu_safe(working)
+        and _interp_ok(working)
+        and not _quality_offenders(working, outlines_by_pos)
+    ):
+        return working, {"stage": "compatible", "note": ""}
 
     # Counter-closing glyphs ($ ¢ etc.): their contour count drops at heavy
     # weights because the COUNTERS (negative-area holes) fill in. Splitting into
     # body + counter families, synthesising the closed counters, and
     # reconstructing each family independently preserves the shape far better
     # than bridging — try it first (gated on quality below).
-    cc = _counter_closing(outlines_by_pos, reference_pos)
+    cc = _counter_closing(working, reference_pos)
     if (
         cc is not None
         and _struct_ok(cc)
@@ -636,8 +637,8 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
         return cc, {"stage": "reconstructed", "note": "counter-closing"}
 
     # each variant is (outlines, reference_pos, tag)
-    variants = [(outlines_by_pos, reference_pos, "")]
-    counts = {len(c) for c in outlines_by_pos.values()}
+    variants = [(working, reference_pos, "")]
+    counts = {len(c) for c in working.values()}
     if len(counts) > 1:
         unioned = {pos: union_overlaps(c) for pos, c in outlines_by_pos.items()}
         if all(u is not None for u in unioned.values()):
@@ -1600,15 +1601,27 @@ def _counter_closing(outlines_by_pos, reference_pos):
     slots = parts[sp]
     nslot = len(slots)
     lightest = positions[0]
+    slot_total_area = sum(abs(_signed_area(slot[1])) for slot in slots) or 1.0
 
     fams = [dict() for _ in range(nslot)]  # slot -> {pos: (contour, ring, centroid)}
     for pos in positions:
         used = set()
+        entry_total_area = sum(abs(_signed_area(entry[1])) for entry in parts[pos]) or 1.0
         for entry in parts[pos]:
             cand = [s for s in range(nslot) if slots[s][3] == entry[3] and s not in used]
             if not cand:
                 continue  # an extra contour with no matching slot — dropped (gate catches)
-            s = min(cand, key=lambda s: _dist(entry[2], slots[s][2]))
+            entry_fraction = abs(_signed_area(entry[1])) / entry_total_area
+            s = min(
+                cand,
+                key=lambda slot_index: (
+                    _dist(entry[2], slots[slot_index][2])
+                    + abs(
+                        entry_fraction - abs(_signed_area(slots[slot_index][1])) / slot_total_area
+                    )
+                    * 1000
+                ),
+            )
             used.add(s)
             fams[s][pos] = (entry[0], entry[1], entry[2])
 
@@ -2141,8 +2154,11 @@ def _reconstruct_at(outlines_by_pos, reference_pos, corner_angle):
 
 
 def _match_order(master_rings, ref_rings):
-    """Match master contours to reference contours by centroid distance with
-    same-sign area preference. Optimal assignment (all permutations) for small
+    """Match contours by centroid, winding role and relative ink area.
+
+    Area disambiguates concentric same-winding pieces such as uni2787's outer
+    circle and numeral body, whose centroids are effectively identical. Optimal
+    assignment (all permutations) for small
     contour counts: greedy matching can assign a CROSSING pairing (left quote
     tick to right tick) when the ref contour it visits first sits between two
     candidates, and a crossed pairing interpolates pieces through each other.
@@ -2156,6 +2172,7 @@ def _match_order(master_rings, ref_rings):
         w = (x1 - x0) or 1.0
         h = (y1 - y0) or 1.0
         areas = [_signed_area(r[0]) for r in rings]
+        total_area = sum(abs(area) for area in areas) or 1.0
         # normalise winding so the dominant (largest) contour is +1: donors flip
         # overall orientation between masters (Neuton's ExtraBold), and raw
         # signs then steer the body to pair with a COUNTER whose flipped sign
@@ -2167,7 +2184,13 @@ def _match_order(master_rings, ref_rings):
             # centroid NORMALIZED to this master's own bbox: absolute positions
             # shift with weight (g's counters travel), and absolute distance
             # then prefers a semantically crossed pairing
-            out.append((((c[0] - x0) / w * 1000, (c[1] - y0) / h * 1000), a * dom))
+            out.append(
+                (
+                    ((c[0] - x0) / w * 1000, (c[1] - y0) / h * 1000),
+                    a * dom,
+                    abs(a) / total_area,
+                )
+            )
         return out
 
     ref_feats = feats(ref_rings)
@@ -2175,8 +2198,8 @@ def _match_order(master_rings, ref_rings):
     n = len(ref_feats)
 
     def cost(ri, mi):
-        (rc, ra), (mc, ma) = ref_feats[ri], m_feats[mi]
-        return _dist(rc, mc) + (0 if (ra >= 0) == (ma >= 0) else 100000)
+        (rc, ra, rf), (mc, ma, mf) = ref_feats[ri], m_feats[mi]
+        return _dist(rc, mc) + abs(rf - mf) * 1000 + (0 if (ra >= 0) == (ma >= 0) else 100000)
 
     if n <= 7:
         best_order, best_cost = None, None

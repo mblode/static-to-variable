@@ -102,6 +102,8 @@ class VerticalMetrics:
     descender: float
     cap_height: float
     x_height: float
+    win_ascent: float | None = None
+    win_descent: float | None = None
 
 
 @dataclass(frozen=True)
@@ -456,6 +458,16 @@ def _parse_vertical_metrics(raw: Any, config_path: Path) -> VerticalMetrics | No
         descender=_required_number(raw, "descender", config_path),
         cap_height=_required_number(raw, "capHeight", config_path),
         x_height=_required_number(raw, "xHeight", config_path),
+        win_ascent=(
+            _coerce_number(raw["winAscent"], "verticalMetrics.winAscent", config_path)
+            if "winAscent" in raw
+            else None
+        ),
+        win_descent=(
+            _coerce_number(raw["winDescent"], "verticalMetrics.winDescent", config_path)
+            if "winDescent" in raw
+            else None
+        ),
     )
 
 

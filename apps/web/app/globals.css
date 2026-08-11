@@ -179,5 +179,14 @@ html {
   }
   html {
     @apply font-sans;
+    font-kerning: normal;
+    font-variant-ligatures: common-ligatures contextual;
+    font-synthesis: none;
+  }
+  code,
+  kbd,
+  pre,
+  samp {
+    font-variant-ligatures: none;
   }
 }
