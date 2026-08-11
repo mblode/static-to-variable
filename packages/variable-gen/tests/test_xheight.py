@@ -76,6 +76,15 @@ def test_band_map_hits_structural_heights_and_stays_monotonic() -> None:
     samples = [ymap(y) for y in range(0, 701)]
     assert all(after > before for before, after in zip(samples, samples[1:], strict=False))
     assert max(ymap.rate(y) for y in range(1, 500)) <= 1.22 + 1e-9
+    assert min(ymap.rate(y) for y in range(511, 700)) >= 0.5 - 1e-9
+
+
+def test_band_map_rate_is_continuous_at_every_knot() -> None:
+    ymap = _map()
+    epsilon = 1e-5
+
+    for knot in ymap.breaks:
+        assert ymap.rate(knot - epsilon) == pytest.approx(ymap.rate(knot + epsilon), abs=1e-4)
 
 
 def test_floating_contour_follows_base_without_being_strained() -> None:
