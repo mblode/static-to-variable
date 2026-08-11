@@ -43,6 +43,10 @@ class SegmentPen(Protocol):
 MIN_COST = 0.05
 MAX_STRAIN = 0.22
 MAX_OFFSET = 7.0
+# A C1 Hermite span can peak above its average coordinate rate. Reserve a third
+# of the local-rate budget for that interpolation so the emitted map still
+# respects MAX_STRAIN (and the symmetric 0.5 compression floor).
+HERMITE_RATE_GUARD = 2.0 / 3.0
 
 __all__ = [
     "BandMap",
@@ -190,7 +194,7 @@ def widest_run(segments: list[LineSegment], y: float) -> float:
 
 
 class BandMap:
-    """Monotonic piecewise-affine y map built from one glyph's own geometry.
+    """Monotonic C1 y map built from one glyph's own geometry.
 
     Three regions, all continuous:
       * baseline to the flat x-line, which absorbs the whole rise;
@@ -218,6 +222,9 @@ class BandMap:
         self.ascender = ascender
         self.x_top = x_top
         self.hi = hi
+        mapped = [point + shift for point, shift in zip(breaks, shifts, strict=True)]
+        self._mapped = mapped
+        self._slopes = _monotone_slopes(breaks, mapped, {x_top, hi})
 
     def __call__(self, y: float) -> float:
         if y <= self.breaks[0] or y >= self.breaks[-1]:
@@ -227,9 +234,17 @@ class BandMap:
             if y <= high:
                 span = high - lo
                 if span <= 0:
-                    return lo + self.shifts[i]
-                rate = (self.shifts[i + 1] - self.shifts[i]) / span
-                return y + self.shifts[i] + (y - lo) * rate
+                    return self._mapped[i]
+                t = (y - lo) / span
+                t2, t3 = t * t, t * t * t
+                start, end = self._mapped[i], self._mapped[i + 1]
+                start_rate, end_rate = self._slopes[i], self._slopes[i + 1]
+                return (
+                    (2 * t3 - 3 * t2 + 1) * start
+                    + (t3 - 2 * t2 + t) * span * start_rate
+                    + (-2 * t3 + 3 * t2) * end
+                    + (t3 - t2) * span * end_rate
+                )
         return y + self.shifts[-1]
 
     def rate(self, y: float) -> float:
@@ -240,7 +255,18 @@ class BandMap:
             lo, high = self.breaks[i], self.breaks[i + 1]
             if y <= high:
                 span = high - lo
-                return 1.0 + (self.shifts[i + 1] - self.shifts[i]) / span if span > 0 else 1.0
+                if span <= 0:
+                    return 1.0
+                t = (y - lo) / span
+                t2 = t * t
+                start, end = self._mapped[i], self._mapped[i + 1]
+                start_rate, end_rate = self._slopes[i], self._slopes[i + 1]
+                return (
+                    (6 * t2 - 6 * t) * start
+                    + (3 * t2 - 4 * t + 1) * span * start_rate
+                    + (-6 * t2 + 6 * t) * end
+                    + (3 * t2 - 2 * t) * span * end_rate
+                ) / span
         return 1.0
 
     def point(self, p: Point) -> Point:
@@ -257,6 +283,42 @@ class BandMap:
         return [self.breaks[0], self.x_top, self.hi, self.ascender]
 
 
+def _monotone_slopes(
+    points: list[float], values: list[float], identity_knots: set[float]
+) -> list[float]:
+    """PCHIP-style knot derivatives for a monotonic, C1 coordinate map.
+
+    The baseline, x-height plateau and ascender join the surrounding identity
+    or rigid-translation regions at rate 1. Interior derivatives use weighted
+    harmonic means, which avoid the overshoot of an unconstrained cubic spline.
+    """
+    if len(points) != len(values) or len(points) < 2:
+        raise ValueError("coordinate map needs matching point/value knots")
+    spans = [b - a for a, b in zip(points[:-1], points[1:], strict=True)]
+    if any(span <= 0 for span in spans):
+        raise ValueError("coordinate map knots must be strictly increasing")
+    secants = [(b - a) / span for a, b, span in zip(values[:-1], values[1:], spans, strict=True)]
+    slopes = [1.0]
+    for index in range(1, len(points) - 1):
+        before, after = secants[index - 1], secants[index]
+        if before * after <= 0:
+            slopes.append(0.0)
+            continue
+        before_span, after_span = spans[index - 1], spans[index]
+        weight_before = 2 * after_span + before_span
+        weight_after = after_span + 2 * before_span
+        slopes.append(
+            (weight_before + weight_after) / (weight_before / before + weight_after / after)
+        )
+    slopes.append(1.0)
+
+    fixed = {points[0], points[-1], *identity_knots}
+    for index, point in enumerate(points):
+        if point in fixed:
+            slopes[index] = 1.0
+    return slopes
+
+
 def band_cost(segments: list[LineSegment], y: float, stem: float) -> float:
     """Distortion per unit strain at height ``y``: ``1 - (stem/W)^2``.
 
@@ -269,8 +331,9 @@ def band_cost(segments: list[LineSegment], y: float, stem: float) -> float:
     return max(MIN_COST, min(1.0, 1.0 - (stem / width) ** 2))
 
 
-# Rate is sampled on this grid and then smoothed, so the map's slope changes
-# gradually instead of stepping at band edges.
+# Rate is sampled on this grid, smoothed, then integrated into map knots. The
+# knots are joined by monotonic cubic Hermite spans so the final map's slope is
+# continuous rather than stepping at band edges.
 RATE_STEP = 12.0
 SMOOTH_RADIUS = 3
 
@@ -295,14 +358,12 @@ def build_map(
     ascender: float,
     stem: float,
 ) -> BandMap:
-    """Turn one glyph's own geometry into a monotonic, smooth y map.
+    """Turn one glyph's own geometry into a monotonic C1 y map.
 
-    Rate is allocated by cost as before, but on a fine grid and then smoothed. A
-    piecewise-constant rate makes the map merely continuous: the tangent's y
-    component is scaled by different amounts either side of a boundary, so
-    wherever the tangent is oblique it rotates and leaves a kink. Smoothing the
-    profile makes the map effectively C1, so joins stay smooth no matter where a
-    curve happens to be cut.
+    Rate is allocated by cost on a fine grid, smoothed, and integrated. Monotonic
+    cubic Hermite interpolation then joins those samples with a continuous
+    derivative. Merely smoothing a list of piecewise-constant rates is not C1:
+    its residual jumps rotate every oblique tangent that crosses a grid edge.
     """
     segments = flatten_contours(contours)
 
@@ -334,7 +395,7 @@ def build_map(
 
 def _allocate_smoothed(heights, rates, rise, limit=None):
     """Spread ``rise`` in proportion to each band's smoothed rate weight."""
-    limit = MAX_STRAIN if rise >= 0 else 0.5
+    limit = (MAX_STRAIN if rise >= 0 else 0.5) * HERMITE_RATE_GUARD
     total = sum(h * r for h, r in zip(heights, rates, strict=False))
     if not total:
         return [0.0] * len(heights)
