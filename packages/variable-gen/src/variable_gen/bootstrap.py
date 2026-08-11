@@ -52,8 +52,12 @@ def bootstrap_style(
     font = GSFont()
     font.familyName = config.family.name
     font.unitsPerEm = ttf["head"].unitsPerEm
+    # Glyphs measures the italic angle clockwise from vertical, `post` measures it
+    # counter-clockwise, so the sign flips between them. glyphsLib negates again on
+    # the way back out to UFO, so copying `post` across unchanged lands a
+    # forward-leaning italic at a positive angle in the built font.
     if style.italic:
-        font.customParameters["Italic Angle"] = ttf["post"].italicAngle
+        font.customParameters["Italic Angle"] = -ttf["post"].italicAngle
 
     os2 = ttf["OS/2"]
     master = GSFontMaster()
@@ -63,7 +67,7 @@ def bootstrap_style(
     master.descender = os2.sTypoDescender
     master.capHeight = os2.sCapHeight
     master.xHeight = os2.sxHeight
-    master.italicAngle = ttf["post"].italicAngle
+    master.italicAngle = -ttf["post"].italicAngle
     font.masters = [master]
 
     added = 0
