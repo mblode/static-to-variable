@@ -37,7 +37,12 @@ CORNER_ANGLE = math.radians(28)  # tangent break above this = corner anchor
 RESAMPLE_STEP = 18  # target units between resampled points (dense
 # enough that curves stay smooth at display sizes)
 MIN_RUN_PTS = 1  # min interior points per inter-corner run
-CURVE_FIT_TOLERANCE = 0.4
+# The compatibility input is an 18-unit polyline sampling of the donor, not the
+# analytic curve itself. Chasing that polygon below its sub-unit chord error
+# fragments smooth bowls into dozens of tiny cubics whose handle-length jumps
+# show up during interpolation. A 1.5-unit fit stays visually on the donor while
+# recovering the short, smooth curve chains the samples represent.
+CURVE_FIT_TOLERANCE = 1.5
 CURVE_CORNER_ANGLE = math.radians(20)
 CURVE_LINE_TOLERANCE = 0.08
 
