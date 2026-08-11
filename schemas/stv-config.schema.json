@@ -159,7 +159,17 @@
         "ascender": { "type": "number" },
         "descender": { "type": "number" },
         "capHeight": { "type": "number" },
-        "xHeight": { "type": "number" }
+        "xHeight": { "type": "number" },
+        "winAscent": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Optional clipping extent above the baseline. Keep consistent across a family and large enough for every variation instance."
+        },
+        "winDescent": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Optional positive clipping extent below the baseline. Keep consistent across a family and large enough for every variation instance."
+        }
       }
     },
     "discovery": {

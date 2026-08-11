@@ -21,6 +21,7 @@ from variable_gen.reconstruct_compatible import (  # noqa: E402
     _interpolation_rank,
     _order_normalize,
     _reconstruct_floating_contour,
+    _signed_area,
     _stabilize_cubic_joins,
     _starts_aligned,
     reconstruct,
@@ -117,6 +118,24 @@ class ReconstructTests(unittest.TestCase):
             ring = to_ring(contours[0])[0]
             windings.add(_winding(ring))
         self.assertEqual(len(windings), 1, "winding still differs across weights")
+
+    def test_shuffled_mixed_structure_contours_are_ordered_before_resampling(self):
+        """A contour-order flip must not map unlike pieces across the axis."""
+        outlines = {
+            100: [square(100.0), rounded_square(30.0, x=250.0, y=250.0)],
+            400: [square(140.0), rounded_square(40.0, x=250.0, y=250.0)],
+            900: [rounded_square(60.0, x=250.0, y=250.0), square(200.0)],
+        }
+
+        rec, info = reconstruct(outlines, reference_pos=400)
+
+        self.assertIsNotNone(rec, info)
+        assert rec is not None
+        assert_interpolation_invariant(self, rec)
+        for contours in rec.values():
+            first = to_ring(contours[0])[0]
+            second = to_ring(contours[1])[0]
+            self.assertLess(max(x for x, _ in first), min(x for x, _ in second))
 
     def test_node_count_mismatch_resamples_to_shared_structure(self):
         outlines = scaled_squares()
@@ -292,6 +311,23 @@ class RingAndOrderTests(unittest.TestCase):
         # The big contour is first again at the heavy master.
         first_ring = to_ring(normalized[900][0])[0]
         self.assertGreater(max(x for x, _ in first_ring), 100.0)
+
+    def test_order_normalize_uses_area_for_concentric_same_winding_contours(self):
+        def centered(size):
+            return square(size, x=-size / 2, y=-size / 2)
+
+        outlines = {
+            100: [centered(180.0), centered(60.0)],
+            400: [centered(200.0), centered(70.0)],
+            900: [centered(90.0), centered(240.0)],  # shuffled, same centroid/sign
+        }
+
+        normalized = _order_normalize(outlines, reference_pos=400)
+
+        self.assertIsNotNone(normalized)
+        assert normalized is not None
+        heavy_areas = [abs(_signed_area(to_ring(contour)[0])) for contour in normalized[900]]
+        self.assertGreater(heavy_areas[0], heavy_areas[1])
 
 
 class WindingTests(unittest.TestCase):
