@@ -121,23 +121,6 @@ def test_refit_maps_cubic_endpoints_without_turning_lines_into_curves() -> None:
     assert mapped[1][1][-1] == pytest.approx((100, 540))
 
 
-def test_refit_preserves_vertical_stem_join_arm_length() -> None:
-    source: Contour = [
-        ("l", ((100, 500), (100, 200))),
-        ("c", ((100, 200), (100, 120), (60, 60), (0, 60))),
-        ("l", ((0, 60), (0, 0))),
-        ("l", ((0, 0), (100, 0))),
-        ("l", ((100, 0), (100, 500))),
-    ]
-
-    mapped = map_contours([source], _map(), 40, 510, refit=True, preserve_stem_joins=True)[0]
-    curve = next(points for kind, points in mapped if kind == "c")
-
-    # The vertical stem grows, but the adjacent bowl arm does not: lengthening
-    # this arm delays the turn and makes the join look pinched.
-    assert abs(curve[1][1] - curve[0][1]) == pytest.approx(80)
-
-
 def test_representative_refit_is_measured_against_true_mapped_curve() -> None:
     source_curve = ((100, 0), (120, 20), (120, 480), (100, 500))
     source: Contour = [

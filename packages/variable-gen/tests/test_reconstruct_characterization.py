@@ -145,6 +145,11 @@ class ReconstructTests(unittest.TestCase):
         self.assertEqual(len(structures), 1)
         self.assertIn("curveTo", {op for op, _ in rec[400][0]})
         self.assertLess(sum(op == "lineTo" for op, _ in rec[400][0]), 12)
+        self.assertLessEqual(
+            sum(op == "curveTo" for op, _ in rec[400][0]),
+            2,
+            "a smooth donor curve must not fragment into tiny cubic spans",
+        )
 
     def test_returns_none_or_compatible_for_contour_count_mismatch(self):
         outlines = scaled_squares()
