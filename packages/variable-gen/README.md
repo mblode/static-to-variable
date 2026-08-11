@@ -10,6 +10,7 @@ The package can:
 - rebuild every master from its donors onto one shared point structure (`rebuild`), applying per-glyph strategies from the config
 - refit temporary compatibility resamples into synchronized cubic spans while keeping real corners at shared point indices and smooth joins tangent-safe between masters
 - compare viable split and bridge topologies on interpolated ink when donor contour counts change
+- reconstruct detached accents independently when the base letter changes topology
 - normalize donor-inherited height defects (`normalize`)
 - export UFO/designspace checkpoints with corrected axes (`designspace`)
 - build variable TTFs with a freeze loop + per-weight fidelity check (`build`)
