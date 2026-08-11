@@ -20,6 +20,7 @@ from variable_gen.reconstruct_compatible import (  # noqa: E402
     _corner_correspondence_ok,
     _interpolation_rank,
     _order_normalize,
+    _reconstruct_floating_contour,
     _stabilize_cubic_joins,
     _starts_aligned,
     reconstruct,
@@ -228,6 +229,17 @@ class ReconstructTests(unittest.TestCase):
             ]
         ]
         self.assertLess(_interpolation_rank(clean), _interpolation_rank(folded))
+
+    def test_reconstructs_detached_accent_separately_from_body(self):
+        outlines = {
+            100: [square(100.0), square(25.0, x=55.0, y=240.0)],
+            400: [rounded_square(140.0), square(25.0, x=55.0, y=240.0)],
+            900: [square(200.0), square(25.0, x=55.0, y=240.0)],
+        }
+        rec = _reconstruct_floating_contour(outlines, reference_pos=400)
+        self.assertIsNotNone(rec)
+        assert_interpolation_invariant(self, rec)
+        self.assertEqual({len(contours) for contours in rec.values()}, {2})
 
     def test_info_reports_a_stage(self):
         _, info = reconstruct(scaled_squares(), reference_pos=400)

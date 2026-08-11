@@ -283,12 +283,59 @@ def reconstruct(outlines_by_pos, reference_pos=400):
     separate bar stubs merge into the body at heavy weights)."""
     out, info = _reconstruct_base(outlines_by_pos, reference_pos)
     out, info = _ink_tournament(out, info, outlines_by_pos, reference_pos)
+    if out is None:
+        floating = _reconstruct_floating_contour(outlines_by_pos, reference_pos)
+        if floating is not None:
+            out = floating
+            info = {"stage": "reconstructed", "note": "floating-contour"}
     if out is not None and info.get("stage") == "reconstructed":
         curved = _restore_compatible_curves(out, outlines_by_pos)
         if curved is not None and not _quality_offenders(curved, outlines_by_pos):
             out = curved
             info = {**info, "note": "+".join(filter(None, (info.get("note"), "cubic-refit")))}
     return out, info
+
+
+def _reconstruct_floating_contour(outlines_by_pos, reference_pos):
+    """Reconstruct a separated top accent independently from a changing body.
+
+    A body may change contour count while its accent remains a clean, detached
+    contour (rcaron.ss03). Treating all contours as one topology can pair the
+    accent with a body piece or fail the interpolation gate. This is a fallback
+    only: every master must have exactly one contour wholly above all its other
+    contours, and the recombined result still passes the normal gates.
+    """
+    body = {}
+    floating = {}
+    for pos, contours in outlines_by_pos.items():
+        if len(contours) < 2:
+            return None
+        rings = [to_ring(contour)[0] for contour in contours]
+        if any(len(ring) < 3 for ring in rings):
+            return None
+        boxes = [
+            (min(point[1] for point in ring), max(point[1] for point in ring)) for ring in rings
+        ]
+        floating_index = max(range(len(contours)), key=lambda index: boxes[index][0])
+        other_top = max(box[1] for index, box in enumerate(boxes) if index != floating_index)
+        if boxes[floating_index][0] <= other_top + 1.0:
+            return None
+        body[pos] = [contour for index, contour in enumerate(contours) if index != floating_index]
+        floating[pos] = [contours[floating_index]]
+
+    body_out, _ = reconstruct(body, reference_pos)
+    floating_out, _ = reconstruct(floating, reference_pos)
+    if body_out is None or floating_out is None:
+        return None
+    combined = {pos: [*body_out[pos], *floating_out[pos]] for pos in outlines_by_pos}
+    if (
+        not _struct_ok(combined)
+        or not _cu2qu_safe(combined)
+        or not _interp_ok(combined)
+        or _quality_offenders(combined, outlines_by_pos)
+    ):
+        return None
+    return combined
 
 
 # A candidate whose best-available coarse ink-defect ratio exceeds this is
