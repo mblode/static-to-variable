@@ -130,6 +130,22 @@ class ReconstructTests(unittest.TestCase):
         self.assertIsNotNone(rec, f"resample failed: {info}")
         assert_interpolation_invariant(self, rec)
 
+    def test_reconstructed_curves_do_not_ship_as_dense_polylines(self):
+        outlines = {
+            100: [rounded_square(100.0)],
+            400: [rounded_square(140.0)],
+            900: [rounded_square(200.0)],
+        }
+        # Force reconstruction with one redundant on-curve point in the heavy
+        # master's straight edge; the rounded edge must remain cubic afterward.
+        outlines[900][0].insert(1, ("lineTo", [(100.0, 0.0)]))
+        rec, info = reconstruct(outlines, reference_pos=400)
+        self.assertIsNotNone(rec, f"curve restoration failed: {info}")
+        structures = {tuple((op, len(pts)) for op, pts in rec[pos][0]) for pos in sorted(rec)}
+        self.assertEqual(len(structures), 1)
+        self.assertIn("curveTo", {op for op, _ in rec[400][0]})
+        self.assertLess(sum(op == "lineTo" for op, _ in rec[400][0]), 12)
+
     def test_returns_none_or_compatible_for_contour_count_mismatch(self):
         outlines = scaled_squares()
         outlines[900] = [square(200.0), square(40.0, x=60.0, y=60.0)]

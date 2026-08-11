@@ -368,6 +368,7 @@ def map_contours(
     float_hi: float,
     *,
     refit: bool = False,
+    preserve_stem_joins: bool = False,
 ) -> Contours:
     """Apply the map. A contour floating clear of the lowercase band is an accent
     or a tittle, so it is translated whole rather than strained, keeping its shape
@@ -379,6 +380,10 @@ def map_contours(
     move at all, so the caron of `lcaron` must not move either. Translating every
     floating contour by the rise pushed that caron 44 units clear of the ascender
     it belongs to.
+
+    ``preserve_stem_joins`` is an explicit optical correction on top of the
+    mathematical map: smooth curves next to vertical stems retain their source
+    tangent-arm length instead of absorbing the stem's added height.
     """
     floating = []
     base_top = None
@@ -395,7 +400,7 @@ def map_contours(
         if is_float:
             out.append([(k, tuple((x, y + shift) for x, y in pts)) for k, pts in contour])
         elif refit:
-            out.append(refit_contour(contour, ymap))
+            out.append(refit_contour(contour, ymap, preserve_stem_joins=preserve_stem_joins))
         else:
             out.append([(k, tuple((x, ymap(y)) for x, y in pts)) for k, pts in contour])
     return out
@@ -515,6 +520,12 @@ FIT_GUARD = 0.70
 
 # Tangent turn, in degrees, above which a join is a real corner and must be kept.
 CORNER_ANGLE = 28.0
+
+# A smooth bowl leaving a straight vertical stem should turn with the same
+# economy as the source drawing. The nonlinear height map can otherwise double
+# its first control arm, delaying the turn and pinching the bowl-to-stem join.
+STEM_JOIN_ANGLE = math.radians(10.0)
+STEM_JOIN_GROWTH = 1.05
 
 # A fixed sample count spread over a long span leaves gaps in the internal error
 # metric, so samples are spaced along the chord instead.
@@ -1078,6 +1089,8 @@ def refit_contour(
     contour: Contour,
     ymap: BandMap,
     tolerance: float = FIT_TOLERANCE,
+    *,
+    preserve_stem_joins: bool = False,
 ) -> Contour:
     """Map a contour by transporting the curve itself, then refitting it.
 
@@ -1115,16 +1128,79 @@ def refit_contour(
             index += 1
             continue
         run = [index]
+        run_start = index
         while (
             index + 1 < count and not corner[(index + 1) % count] and contour[index + 1][0] == "c"
         ):
             index += 1
             run.append(index)
         mapped = _MappedRun([contour[i][1] for i in run], ymap)
-        for curve in _fit_chain(mapped, tolerance):
+        fitted = [list(curve) for curve in _fit_chain(mapped, tolerance)]
+        if preserve_stem_joins:
+            _preserve_stem_join_arms(
+                fitted,
+                [contour[i][1] for i in run],
+                contour[run_start - 1],
+                contour[(index + 1) % count],
+            )
+        for curve in fitted:
             out.append(("c", tuple(curve)))
         index += 1
     return out
+
+
+def _preserve_stem_join_arms(fitted, source, previous, following):
+    """Cap tangent-arm growth where a smooth bowl joins a vertical stem.
+
+    The straight stem itself may lengthen, but letting the adjacent curve's
+    vertical control arm lengthen by the same amount postpones its turn into the
+    bowl. That removes side-bearing from the shoulder and creates the pinched
+    join visible in `u`, `n`, and related glyphs. Preserve the source arm when
+    it is adjacent and tangent to a vertical line; shorter fitted arms are left
+    alone because they already turn sooner.
+    """
+    if not fitted:
+        return
+
+    previous_kind, previous_points = previous
+    if previous_kind == "l" and _is_smooth_vertical_join(
+        previous_points[0], previous_points[1], source[0][0], source[0][1]
+    ):
+        source_length = math.dist(source[0][0], source[0][1])
+        _cap_arm(fitted[0], 0, 1, source_length)
+
+    following_kind, following_points = following
+    if following_kind == "l" and _is_smooth_vertical_join(
+        source[-1][-2], source[-1][-1], following_points[0], following_points[1]
+    ):
+        source_length = math.dist(source[-1][-2], source[-1][-1])
+        _cap_arm(fitted[-1], 3, 2, source_length)
+
+
+def _is_smooth_vertical_join(a, join, curve_join, curve_handle):
+    line = (join[0] - a[0], join[1] - a[1])
+    tangent = (curve_handle[0] - curve_join[0], curve_handle[1] - curve_join[1])
+    line_length = math.hypot(*line)
+    tangent_length = math.hypot(*tangent)
+    if line_length <= 1e-9 or tangent_length <= 1e-9:
+        return False
+    if abs(line[0]) > line_length * math.sin(STEM_JOIN_ANGLE):
+        return False
+    dot = (line[0] * tangent[0] + line[1] * tangent[1]) / (line_length * tangent_length)
+    return dot >= math.cos(STEM_JOIN_ANGLE)
+
+
+def _cap_arm(curve, endpoint_index, handle_index, source_length):
+    endpoint = curve[endpoint_index]
+    handle = curve[handle_index]
+    dx, dy = handle[0] - endpoint[0], handle[1] - endpoint[1]
+    length = math.hypot(dx, dy)
+    if length <= source_length * STEM_JOIN_GROWTH or length <= 1e-9:
+        return
+    curve[handle_index] = (
+        endpoint[0] + dx * source_length / length,
+        endpoint[1] + dy * source_length / length,
+    )
 
 
 def draw_contours(contours: Contours, pen: SegmentPen) -> None:

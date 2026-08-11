@@ -8,6 +8,7 @@ The package can:
 
 - bootstrap a minimal `.glyphs` source from a default-master donor (`bootstrap`)
 - rebuild every master from its donors onto one shared point structure (`rebuild`), applying per-glyph strategies from the config
+- refit temporary compatibility resamples into synchronized cubic spans, so independently drawn masters interpolate without shipping faceted polygon outlines
 - normalize donor-inherited height defects (`normalize`)
 - export UFO/designspace checkpoints with corrected axes (`designspace`)
 - build variable TTFs with a freeze loop + per-weight fidelity check (`build`)
