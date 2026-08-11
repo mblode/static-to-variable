@@ -284,7 +284,7 @@ def reconstruct(outlines_by_pos, reference_pos=400):
     out, info = _reconstruct_base(outlines_by_pos, reference_pos)
     out, info = _ink_tournament(out, info, outlines_by_pos, reference_pos)
     if out is not None and info.get("stage") == "reconstructed":
-        curved = _restore_compatible_curves(out)
+        curved = _restore_compatible_curves(out, outlines_by_pos)
         if curved is not None and not _quality_offenders(curved, outlines_by_pos):
             out = curved
             info = {**info, "note": "+".join(filter(None, (info.get("note"), "cubic-refit")))}
@@ -335,6 +335,7 @@ def _ink_tournament(out, info, outlines_by_pos, reference_pos):
             aligned is not None
             and _struct_ok(aligned)
             and _cu2qu_safe(aligned)
+            and _corner_correspondence_ok(aligned, outlines_by_pos)
             and not _quality_offenders(aligned, outlines_by_pos)
             and _interp_ok(aligned)
         ):
@@ -637,6 +638,8 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
             variants.append((merged, mref, "merge-to-min" if pick == 0 else f"merge-to-min@{pick}"))
 
     last = {"stage": None, "note": "no angle worked"}
+    first_topology_candidate = None
+    split_candidates = []
     for variant, vref, tag in variants:
         for angle in CORNER_ANGLE_SWEEP:
             out, info = _reconstruct_at(variant, vref, angle)
@@ -671,7 +674,13 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
                     tags.append(f"angle={round(math.degrees(angle))}")
                 if tags:
                     info["note"] = "+".join(tags)
-                return out, info
+                if len(counts) == 1:
+                    return out, info
+                if first_topology_candidate is None:
+                    first_topology_candidate = (out, info)
+                if tag == "split-to-max":
+                    split_candidates.append((out, info))
+                break
             last = info
     # Last resort before giving up: UNIFORM arc-length resampling — ignore corner
     # anchors and place dense, evenly-spaced points from a canonical (topmost)
@@ -703,12 +712,70 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
             ):
                 ink = _ink_defect(uni, blur=2)
                 full = f"{note}+{tag}" if tag else note
+                if len(counts) > 1 and tag == "split-to-max":
+                    split_candidates.append((uni, {"stage": "reconstructed", "note": full}))
                 if best_uni is None or ink < best_uni[0] - 1e-9:
                     best_uni = (ink, uni, full)
                 break  # aligned passed for this variant; skip its plain uniform
+    if first_topology_candidate is not None:
+        # A contour-count change can often be represented in both directions:
+        # split connected endpoint masters into real pieces, or bridge separate
+        # pieces into one zero-width ring. Both preserve the masters, but a
+        # bridge can open into a visible loop between them (r.ss03). Let viable
+        # splits challenge the first passing repair on interpolated ink, while
+        # retaining stable bridge ordering for transitions that cannot split
+        # cleanly (Idieresis's 3→1→3 contour change).
+        return min(
+            [first_topology_candidate, *split_candidates],
+            key=lambda candidate: _interpolation_rank(candidate[0]),
+        )
     if best_uni is not None:
         return best_uni[1], {"stage": "reconstructed", "note": best_uni[2]}
     return None, last
+
+
+def _interpolation_rank(out):
+    """Prefer clean topology, then the least mid-axis ink distortion."""
+    return (
+        _disjoint_cross(out),
+        _has_interpolated_self_intersection(out),
+        _ink_defect(out, blur=2),
+        _ink_defect(out, blur=1),
+    )
+
+
+def _has_interpolated_self_intersection(out):
+    """Whether a polyline contour folds across itself between masters."""
+    positions = sorted(out)
+    for a, b in zip(positions, positions[1:], strict=False):
+        for t in (0.25, 0.5, 0.75):
+            contours = _interpolate_contours(out[a], out[b], t)
+            if contours is None:
+                return True
+            for contour in contours:
+                ring = _line_pts(contour)
+                count = len(ring)
+                for i in range(count):
+                    a0, a1 = ring[i], ring[(i + 1) % count]
+                    for j in range(i + 2, count):
+                        if i == 0 and j == count - 1:
+                            continue
+                        if _proper_segments_cross(a0, a1, ring[j], ring[(j + 1) % count]):
+                            return True
+    return False
+
+
+def _proper_segments_cross(a0, a1, b0, b1):
+    """Strict segment crossing; shared endpoints and tangencies are harmless."""
+
+    def side(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    if a0 in (b0, b1) or a1 in (b0, b1):
+        return False
+    ab0, ab1 = side(a0, a1, b0), side(a0, a1, b1)
+    ba0, ba1 = side(b0, b1, a0), side(b0, b1, a1)
+    return ab0 * ab1 < -1e-8 and ba0 * ba1 < -1e-8
 
 
 def _line_pts(contour):
@@ -716,7 +783,110 @@ def _line_pts(contour):
     return [p[0] for op, p in contour if op in ("moveTo", "lineTo")]
 
 
-def _restore_compatible_curves(outlines_by_pos):
+def _outline_corner_count(contours):
+    return sum(sum(corners) for contour in contours for _, _, corners in [to_ring(contour)])
+
+
+def _shared_corner_candidates(outlines_by_pos):
+    """Rank polyline nodes that are sharp at the same index in every master."""
+    positions = sorted(outlines_by_pos)
+    if not positions:
+        return []
+    candidates = []
+    contour_count = len(outlines_by_pos[positions[0]])
+    for ci in range(contour_count):
+        rings = {pos: _line_pts(outlines_by_pos[pos][ci]) for pos in positions}
+        if not rings[positions[0]] or len({len(ring) for ring in rings.values()}) != 1:
+            continue
+        for index in range(len(rings[positions[0]])):
+            score = min(_polyline_turn(rings[pos], index) for pos in positions)
+            if score > CURVE_CORNER_ANGLE:
+                candidates.append((score, ci, index))
+    return candidates
+
+
+def _expected_corner_count(originals_by_pos):
+    counts = {_outline_corner_count(contours) for contours in originals_by_pos.values()}
+    return counts.pop() if len(counts) == 1 else None
+
+
+def _corner_correspondence_ok(candidate, originals_by_pos):
+    """Reject a fallback that moves donor corners to different point indices."""
+    expected = _expected_corner_count(originals_by_pos)
+    return expected in (None, 0) or len(_shared_corner_candidates(candidate)) >= expected
+
+
+def _curve_corner_indices(outlines_by_pos, originals_by_pos):
+    candidates = _shared_corner_candidates(outlines_by_pos)
+    expected = _expected_corner_count(originals_by_pos) if originals_by_pos is not None else None
+    if expected is not None:
+        if len(candidates) < expected:
+            return None
+        candidates = sorted(candidates, reverse=True)[:expected]
+    selected = {ci: set() for ci in range(len(outlines_by_pos[next(iter(outlines_by_pos))]))}
+    for _, ci, index in candidates:
+        selected[ci].add(index)
+    return selected
+
+
+def _stabilize_cubic_joins(contours_by_pos, hard_corners_by_pos):
+    """Keep each smooth join's handle-length ratio constant across masters.
+
+    G1 handles with a different incoming/outgoing ratio at each endpoint master
+    need not remain collinear when their coordinates interpolate. Use one shared
+    ratio while preserving each master's total arm length, which changes the fit
+    minimally and guarantees the same tangent through every in-between weight.
+    """
+    positions = sorted(contours_by_pos)
+    segments = {pos: contours_by_pos[pos][1:-1] for pos in positions}
+    if not positions or len(segments[positions[0]]) < 2:
+        return
+    for index in range(len(segments[positions[0]])):
+        pairs = {pos: (segments[pos][index - 1], segments[pos][index]) for pos in positions}
+        if any(
+            previous[0] != "curveTo" or current[0] != "curveTo"
+            for previous, current in pairs.values()
+        ):
+            continue
+        if any(
+            any(_dist(previous[1][-1], point) < 1e-6 for point in hard_corners_by_pos[pos])
+            for pos, (previous, _) in pairs.items()
+        ):
+            continue
+        lengths = {}
+        for pos, (previous, current) in pairs.items():
+            join = previous[1][-1]
+            incoming = _dist(previous[1][-2], join)
+            outgoing = _dist(join, current[1][0])
+            if incoming <= 1e-9 or outgoing <= 1e-9:
+                break
+            lengths[pos] = (incoming, outgoing)
+        if len(lengths) != len(positions):
+            continue
+        ratio = math.exp(sum(math.log(a / b) for a, b in lengths.values()) / len(lengths))
+        for pos, (previous, current) in pairs.items():
+            join = previous[1][-1]
+            incoming = _unit(previous[1][-2], join)
+            outgoing = _unit(join, current[1][0])
+            direction = (incoming[0] + outgoing[0], incoming[1] + outgoing[1])
+            magnitude = math.hypot(*direction)
+            if magnitude <= 1e-9:
+                continue
+            direction = (direction[0] / magnitude, direction[1] / magnitude)
+            total = sum(lengths[pos])
+            incoming_length = total * ratio / (1 + ratio)
+            outgoing_length = total / (1 + ratio)
+            previous[1][-2] = (
+                join[0] - direction[0] * incoming_length,
+                join[1] - direction[1] * incoming_length,
+            )
+            current[1][0] = (
+                join[0] + direction[0] * outgoing_length,
+                join[1] + direction[1] * outgoing_length,
+            )
+
+
+def _restore_compatible_curves(outlines_by_pos, originals_by_pos=None):
     """Replace temporary compatibility polylines with shared cubic structure.
 
     Resampling is useful for establishing point correspondence, but those dense
@@ -735,6 +905,9 @@ def _restore_compatible_curves(outlines_by_pos):
     contour_count = len(outlines_by_pos[positions[0]])
     if any(len(outlines_by_pos[pos]) != contour_count for pos in positions):
         return None
+    selected_corners = _curve_corner_indices(outlines_by_pos, originals_by_pos)
+    if selected_corners is None:
+        return None
 
     result = {pos: [] for pos in positions}
     for ci in range(contour_count):
@@ -743,16 +916,13 @@ def _restore_compatible_curves(outlines_by_pos):
         if len(counts) != 1 or not counts or next(iter(counts)) < 3:
             return None
         count = next(iter(counts))
-        corners = [
-            i
-            for i in range(count)
-            if any(_polyline_turn(rings[pos], i) > CURVE_CORNER_ANGLE for pos in positions)
-        ]
+        hard_corners = selected_corners[ci]
+        corners = sorted(hard_corners)
         # A closed smooth path cannot be fitted as one span because its endpoints
         # coincide. Four stable arc-order anchors give circles and bowls enough
         # freedom without inventing visible corners.
         if len(corners) < 2:
-            corners = sorted({0, count // 4, count // 2, 3 * count // 4})
+            corners = sorted({*corners, 0, count // 4, count // 2, 3 * count // 4})
         elif 0 not in corners:
             # Preserve the already-aligned start point while keeping all real
             # corners as independent tangent boundaries.
@@ -772,6 +942,10 @@ def _restore_compatible_curves(outlines_by_pos):
         for pos in positions:
             contours[pos].append(("closePath", []))
             result[pos].append(contours[pos])
+        _stabilize_cubic_joins(
+            {pos: result[pos][-1] for pos in positions},
+            {pos: {rings[pos][index] for index in hard_corners} for pos in positions},
+        )
     return result if _cu2qu_safe(result) else None
 
 
@@ -1184,12 +1358,44 @@ def _contour_pts(con):
     return pts
 
 
+def _interpolate_contours(contours_a, contours_b, t):
+    """Interpolate compatible segment structures without flattening controls."""
+    if len(contours_a) != len(contours_b):
+        return None
+    out = []
+    for contour_a, contour_b in zip(contours_a, contours_b, strict=True):
+        if len(contour_a) != len(contour_b):
+            return None
+        contour = []
+        for (op_a, points_a), (op_b, points_b) in zip(contour_a, contour_b, strict=True):
+            if op_a != op_b or len(points_a) != len(points_b):
+                return None
+            points = []
+            for point_a, point_b in zip(points_a, points_b, strict=True):
+                if point_a is None or point_b is None:
+                    if point_a is not None or point_b is not None:
+                        return None
+                    points.append(None)
+                else:
+                    points.append(
+                        (
+                            point_a[0] * (1 - t) + point_b[0] * t,
+                            point_a[1] * (1 - t) + point_b[1] * t,
+                        )
+                    )
+            contour.append((op_a, points))
+        out.append(contour)
+    return out
+
+
 def _interp_ok(out, tol=0.18, perim_tol=0.83):
     """A point-compatible reconstruction can still interpolate badly if point
     correspondence across masters is wrong (e.g. k's diagonal): the masters look
-    fine but the in-between weights collapse. Lerp the points of each adjacent
-    master pair at t=0.5 and require the midpoint ink area to stay near the mean
-    of the two endpoints — a collapse (points crossing) spikes it away.
+    fine but the in-between weights collapse. Interpolate the actual segment
+    structure of each adjacent master pair at t=0.5 and require the midpoint ink
+    area to stay near the mean of the two endpoints — a collapse spikes it away.
+    Cubic controls remain controls here; treating them as polygon vertices rejects
+    clean curves and is not the geometry the variable font renders.
 
     Area alone misses a TWIST that conserves ink (Taviraj K's counter-closing
     bridge): mis-corresponded points fold the midpoint ring onto itself without
@@ -1206,34 +1412,27 @@ def _interp_ok(out, tol=0.18, perim_tol=0.83):
         mean = (area_a + area_b) / 2
         if mean <= 0:
             continue
-        mid = []
-        for con_a, con_b in zip(ca, cb, strict=False):
-            pa, pb = _contour_pts(con_a), _contour_pts(con_b)
-            if len(pa) != len(pb):
-                return False
-            midpts = [
-                ((pa[i][0] + pb[i][0]) / 2, (pa[i][1] + pb[i][1]) / 2) for i in range(len(pa))
-            ]
-            if len(midpts) >= 3:
-                pm = _ring_perimeter(midpts)
-                pmean = (_ring_perimeter(pa) + _ring_perimeter(pb)) / 2
+        mid = _interpolate_contours(ca, cb, 0.5)
+        if mid is None:
+            return False
+        for con_a, con_b, con_m in zip(ca, cb, mid, strict=True):
+            ring_a = to_ring(con_a)[0]
+            ring_b = to_ring(con_b)[0]
+            ring_m = to_ring(con_m)[0]
+            if len(ring_m) >= 3:
+                pm = _ring_perimeter(ring_m)
+                pmean = (_ring_perimeter(ring_a) + _ring_perimeter(ring_b)) / 2
                 # ignore tiny contours (accent dots): a few units of rounding
                 # would dominate the ratio
                 if pmean > 500 and pm / pmean < perim_tol:
                     return False
-            con = (
-                [("moveTo", [midpts[0]])]
-                + [("lineTo", [p]) for p in midpts[1:]]
-                + [("closePath", [])]
-            )
-            mid.append(con)
         if abs(_glyph_area(mid) / mean - 1.0) > tol:
             return False
         # per-contour safety net: a single contour CROSSING itself (e.g. the %
         # slash twisting into a bowtie) barely moves the total area but collapses
         # its own to near-zero. Only flag a severe collapse (< 45% of the mean) so
         # counters that legitimately shrink with weight (8, 0) aren't false-failed.
-        for con_a, con_b, con_m in zip(ca, cb, mid, strict=False):
+        for con_a, con_b, con_m in zip(ca, cb, mid, strict=True):
             cm = (abs(_signed_area(to_ring(con_a)[0])) + abs(_signed_area(to_ring(con_b)[0]))) / 2
             if cm > 1500 and _glyph_area([con_m]) / cm < 0.45:
                 return False

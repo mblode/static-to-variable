@@ -290,7 +290,9 @@ def run_interpolatable_designspace(designspace_path: Path, report_path: Path) ->
             stale.unlink()
     source_paths = [str(path) for path in designspace_source_paths(designspace_path)]
 
-    problems = interpolatable.main([*source_paths, "--quiet"])
+    # FontTools returns None (rather than an empty mapping) when every source is
+    # clean. Normalize that successful result before serializing/summarizing it.
+    problems = interpolatable.main([*source_paths, "--quiet"]) or {}
     payload = json_safe(problems)
     report_path.write_text(json.dumps(payload, indent=2))
     issue_counts: Counter[str] = Counter()

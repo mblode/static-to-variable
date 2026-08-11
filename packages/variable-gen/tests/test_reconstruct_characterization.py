@@ -17,7 +17,10 @@ sys.path.insert(0, str(PACKAGE_SRC))
 from variable_gen.outlines import _winding, signature  # noqa: E402
 from variable_gen.reconstruct_compatible import (  # noqa: E402
     _already_compatible,
+    _corner_correspondence_ok,
+    _interpolation_rank,
     _order_normalize,
+    _stabilize_cubic_joins,
     _starts_aligned,
     reconstruct,
     to_ring,
@@ -144,12 +147,59 @@ class ReconstructTests(unittest.TestCase):
         structures = {tuple((op, len(pts)) for op, pts in rec[pos][0]) for pos in sorted(rec)}
         self.assertEqual(len(structures), 1)
         self.assertIn("curveTo", {op for op, _ in rec[400][0]})
-        self.assertLess(sum(op == "lineTo" for op, _ in rec[400][0]), 12)
+        self.assertLessEqual(sum(op == "lineTo" for op, _ in rec[400][0]), 3)
         self.assertLessEqual(
             sum(op == "curveTo" for op, _ in rec[400][0]),
             2,
             "a smooth donor curve must not fragment into tiny cubic spans",
         )
+
+    def test_rejects_fallback_with_drifting_corner_indices(self):
+        originals = scaled_squares()
+
+        def sampled_square(offset: int):
+            points = [
+                (0.0, 0.0),
+                (50.0, 0.0),
+                (100.0, 0.0),
+                (100.0, 50.0),
+                (100.0, 100.0),
+                (50.0, 100.0),
+                (0.0, 100.0),
+                (0.0, 50.0),
+            ]
+            points = points[offset:] + points[:offset]
+            return [
+                ("moveTo", [points[0]]),
+                *(("lineTo", [point]) for point in points[1:]),
+                ("closePath", []),
+            ]
+
+        candidate = {
+            100: [sampled_square(0)],
+            400: [sampled_square(0)],
+            900: [sampled_square(1)],
+        }
+        self.assertFalse(_corner_correspondence_ok(candidate, originals))
+
+    def test_smooth_cubic_join_uses_one_arm_ratio_across_masters(self):
+        def contour(incoming, outgoing):
+            return [
+                ("moveTo", [(0.0, 0.0)]),
+                ("curveTo", [(20.0, 0.0), (100.0 - incoming, 100.0), (100.0, 100.0)]),
+                ("curveTo", [(100.0 + outgoing, 100.0), (180.0, 20.0), (200.0, 0.0)]),
+                ("closePath", []),
+            ]
+
+        contours = {100: contour(20.0, 40.0), 400: contour(30.0, 30.0), 900: contour(40.0, 20.0)}
+        _stabilize_cubic_joins(contours, {position: set() for position in contours})
+        ratios = []
+        for outline in contours.values():
+            join = outline[1][1][-1]
+            incoming = join[0] - outline[1][1][-2][0]
+            outgoing = outline[2][1][0][0] - join[0]
+            ratios.append(incoming / outgoing)
+        self.assertAlmostEqual(min(ratios), max(ratios))
 
     def test_returns_none_or_compatible_for_contour_count_mismatch(self):
         outlines = scaled_squares()
@@ -162,6 +212,22 @@ class ReconstructTests(unittest.TestCase):
             self.assertIn("note", info)
         else:
             assert_interpolation_invariant(self, rec)
+
+    def test_topology_choice_prefers_cleaner_interpolation(self):
+        clean = scaled_squares()
+        folded = scaled_squares()
+        # Corresponding nodes cross between the first two masters, creating ink
+        # outside both endpoints despite clean endpoint outlines.
+        folded[400] = [
+            [
+                ("moveTo", [(0.0, 0.0)]),
+                ("lineTo", [(140.0, 140.0)]),
+                ("lineTo", [(140.0, 0.0)]),
+                ("lineTo", [(0.0, 140.0)]),
+                ("closePath", []),
+            ]
+        ]
+        self.assertLess(_interpolation_rank(clean), _interpolation_rank(folded))
 
     def test_info_reports_a_stage(self):
         _, info = reconstruct(scaled_squares(), reference_pos=400)

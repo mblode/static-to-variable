@@ -6,8 +6,10 @@ fixtures, no licensed fonts involved).
 """
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(PACKAGE_SRC))
@@ -21,6 +23,7 @@ from variable_gen.audit_support import (  # noqa: E402
     glyph_intersection_metrics,
     glyph_point_deviation,
     json_safe,
+    run_interpolatable_designspace,
     sample_cubic,
     sample_quadratic,
     segments_intersect,
@@ -86,6 +89,21 @@ class JsonSafeTests(unittest.TestCase):
 
     def test_non_string_keys_coerced(self):
         self.assertEqual(json_safe({1: "a"}), {"1": "a"})
+
+
+class InterpolatableReportTests(unittest.TestCase):
+    def test_none_result_means_clean_designspace(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch("variable_gen.audit_support.designspace_source_paths", return_value=[]),
+            mock.patch("variable_gen.audit_support.interpolatable.main", return_value=None),
+        ):
+            report = Path(directory) / "interpolatable.json"
+            summary = run_interpolatable_designspace(Path("clean.designspace"), report)
+            contents = report.read_text()
+
+        self.assertEqual(summary, {"problem_glyphs": 0, "issue_types": {}})
+        self.assertEqual(contents, "{}")
 
 
 @unittest.skipUnless(DONOR.exists(), "minimal example donors not present")
