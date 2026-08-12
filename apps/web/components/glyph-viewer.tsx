@@ -2,8 +2,8 @@
 
 import { ArrowDownIcon } from "blode-icons-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { Component, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -26,13 +26,60 @@ const CODEPOINTS = [...range(0x21, 0x7e), ...range(0xa1, 0xff)].filter(
   (cp) => cp !== 0xad
 );
 
-// Seed the editable specimen once via innerHTML instead of a React child. React
-// never reconciles a `dangerouslySetInnerHTML` subtree while the string is
-// unchanged, so once the browser mutates the contentEditable region (typing,
-// IME, a translation extension) React won't later try to remove a text node
-// that has moved out from under it — the source of the `removeChild`
-// NotFoundError this specimen used to throw.
-const SPECIMEN_HTML = { __html: "One file, every weight in between." };
+// Seed the editable specimen once outside React's child reconciliation. React
+// never owns the text node after mount, so once the browser mutates the
+// contentEditable region (typing, IME, a translation extension) React won't
+// later try to remove a text node that has moved out from under it — the source
+// of the `removeChild` NotFoundError this specimen used to throw.
+const SPECIMEN_TEXT = "One file, every weight in between.";
+
+class GlyphViewerErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-[200px] px-5 py-12 text-center text-muted-foreground text-sm sm:px-8 sm:py-16">
+          Preview unavailable. Refresh to try again.
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+function EditableSpecimen({ style }: { style: CSSProperties }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || el.textContent) {
+      return;
+    }
+    el.textContent = SPECIMEN_TEXT;
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      aria-label="Type to preview the font"
+      className="min-h-[200px] cursor-text overflow-hidden text-balance px-5 py-12 text-[clamp(2.25rem,6.5vw,4.5rem)] leading-[1.08] tracking-tight outline-none sm:px-8 sm:py-16"
+      contentEditable
+      role="textbox"
+      spellCheck={false}
+      style={style}
+      suppressHydrationWarning
+    />
+  );
+}
 
 async function activateFont(
   file: string,
@@ -126,37 +173,31 @@ export function SingleGlyphViewer({
         </div>
       </div>
 
-      <div
-        aria-label="Type to preview the font"
-        className="min-h-[200px] cursor-text overflow-hidden text-balance px-5 py-12 text-[clamp(2.25rem,6.5vw,4.5rem)] leading-[1.08] tracking-tight outline-none sm:px-8 sm:py-16"
-        contentEditable
-        dangerouslySetInnerHTML={SPECIMEN_HTML}
-        role="textbox"
-        spellCheck={false}
-        style={previewStyle}
-      />
+      <GlyphViewerErrorBoundary>
+        <EditableSpecimen style={previewStyle} />
 
-      {showGlyphs ? (
-        <div
-          className="grid gap-px border-t bg-border p-px [grid-template-columns:repeat(auto-fill,minmax(84px,1fr))]"
-          style={previewStyle}
-        >
-          {CODEPOINTS.map((cp) => (
-            <div
-              className="group relative flex aspect-square items-center justify-center overflow-hidden bg-background p-3 hover:bg-muted/60"
-              key={cp}
-              title={`U+${cp.toString(16).toUpperCase().padStart(4, "0")}`}
-            >
-              <span className="text-[26px] leading-none">
-                {String.fromCodePoint(cp)}
-              </span>
-              <span className="absolute inset-x-0 bottom-1 text-center font-mono text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
-                {cp.toString(16).toUpperCase().padStart(4, "0")}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
+        {showGlyphs ? (
+          <div
+            className="grid gap-px border-t bg-border p-px [grid-template-columns:repeat(auto-fill,minmax(84px,1fr))]"
+            style={previewStyle}
+          >
+            {CODEPOINTS.map((cp) => (
+              <div
+                className="group relative flex aspect-square items-center justify-center overflow-hidden bg-background p-3 hover:bg-muted/60"
+                key={cp}
+                title={`U+${cp.toString(16).toUpperCase().padStart(4, "0")}`}
+              >
+                <span className="text-[26px] leading-none">
+                  {String.fromCodePoint(cp)}
+                </span>
+                <span className="absolute inset-x-0 bottom-1 text-center font-mono text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                  {cp.toString(16).toUpperCase().padStart(4, "0")}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </GlyphViewerErrorBoundary>
 
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t px-4 py-3 text-muted-foreground text-xs sm:px-6">
         <span>
