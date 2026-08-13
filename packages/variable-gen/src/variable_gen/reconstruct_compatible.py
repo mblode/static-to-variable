@@ -35,6 +35,11 @@ from variable_gen.audit_support import segments_intersect
 from variable_gen.outlines import signature
 
 CORNER_ANGLE = math.radians(28)  # tangent break above this = corner anchor
+# CFF integer rounding often collapses a cubic handle onto (or 1 unit from)
+# its on-curve node. Treating that stub as a real tangent invents false corners
+# (Thin ``d`` @ 532: 7 vs Book/XB's 6) and forces projection/union-heal paths
+# that destroy stem tops. Fall back to the chord when a handle is this short.
+MIN_HANDLE_LEN = 2.5
 RESAMPLE_STEP = 18  # target units between resampled points (dense
 # enough that curves stay smooth at display sizes)
 # When union-heal invents short-leg cusp folds at stem/bowl joins (d), retry
@@ -156,14 +161,14 @@ def to_ring(contour, corner_angle=CORNER_ANGLE):
             seg_samples[i] = []
         elif kind == "cubic":
             c1, c2 = ctrl
-            out_tan[i] = _unit(a, c1) if _dist(a, c1) > 1e-6 else _unit(a, c2)
-            in_tan[(i + 1) % n] = _unit(c2, b) if _dist(c2, b) > 1e-6 else _unit(c1, b)
+            out_tan[i] = _cubic_out_tan(a, c1, c2, b)
+            in_tan[(i + 1) % n] = _cubic_in_tan(a, c1, c2, b)
             steps = max(2, int(_dist(a, c1) + _dist(c1, c2) + _dist(c2, b)) // 24)
             seg_samples[i] = [_cubic(a, c1, c2, b, j / steps) for j in range(1, steps)]
         else:  # quad
             c = ctrl[0]
-            out_tan[i] = _unit(a, c)
-            in_tan[(i + 1) % n] = _unit(c, b)
+            out_tan[i] = _unit(a, c) if _dist(a, c) > MIN_HANDLE_LEN else _unit(a, b)
+            in_tan[(i + 1) % n] = _unit(c, b) if _dist(c, b) > MIN_HANDLE_LEN else _unit(a, b)
             steps = max(2, int(_dist(a, c) + _dist(c, b)) // 24)
             seg_samples[i] = [_quad(a, c, b, j / steps) for j in range(1, steps)]
     corners = _corner_flags_tan(in_tan, out_tan, corner_angle)
@@ -196,6 +201,24 @@ def _unit(a, b):
     dx, dy = b[0] - a[0], b[1] - a[1]
     m = math.hypot(dx, dy)
     return (dx / m, dy / m) if m > 1e-9 else (0.0, 0.0)
+
+
+def _cubic_out_tan(a, c1, c2, b):
+    """Outgoing tangent at ``a``; ignore CFF-collapsed stub handles."""
+    if _dist(a, c1) > MIN_HANDLE_LEN:
+        return _unit(a, c1)
+    if _dist(a, c2) > MIN_HANDLE_LEN:
+        return _unit(a, c2)
+    return _unit(a, b)
+
+
+def _cubic_in_tan(a, c1, c2, b):
+    """Incoming tangent at ``b``; ignore CFF-collapsed stub handles."""
+    if _dist(c2, b) > MIN_HANDLE_LEN:
+        return _unit(c2, b)
+    if _dist(c1, b) > MIN_HANDLE_LEN:
+        return _unit(c1, b)
+    return _unit(a, b)
 
 
 def _corner_flags_tan(in_tan, out_tan, corner_angle=CORNER_ANGLE):
@@ -312,8 +335,10 @@ def reconstruct(outlines_by_pos, reference_pos=400, *, _fold_retry=True):
                 if healed is not None:
                     # Union-heal+cubic-refit can pass SI yet invent short-leg
                     # cusp folds at stem/bowl joins (visible stairsteps on d).
-                    # Retry once with coarser resampling before freezing — that
-                    # keeps weight variation while clearing the cusps.
+                    # Retry once with coarser resampling; if folds remain, keep
+                    # the pre-refit compatibility polyline so weight still
+                    # varies — freezing to Book@400 is worse than a dense
+                    # interpolating outline.
                     if _has_excess_short_folds(healed, outlines_by_pos):
                         if _fold_retry and RESAMPLE_STEP < FOLD_RETRY_RESAMPLE_STEP:
                             saved = RESAMPLE_STEP
@@ -338,11 +363,17 @@ def reconstruct(outlines_by_pos, reference_pos=400, *, _fold_retry=True):
                                         )
                                     ),
                                 }
-                        return None, {
-                            "stage": None,
-                            "note": "union-heal fold gate",
+                        info = {
+                            **info,
+                            "note": "+".join(
+                                filter(
+                                    None,
+                                    (info.get("note"), "fold-gate-polyline"),
+                                )
+                            ),
                         }
-                    out, info = healed, hinfo
+                    else:
+                        out, info = healed, hinfo
                 # else keep the clean polyline result (pre-cubic-refit)
     return out, info
 
@@ -884,24 +915,35 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
     # necessarily the right one — keep the passer whose mid-axis ink defect is
     # lowest.
     best_uni = None  # (ink score, out, note)
+    best_relaxed = None  # interp soft, but no mid-axis SI
+    best_relaxed_si = None  # last resort: weight varies even with mid SI
     for v_outlines, vref, tag in variants:
         for fn, note in ((_uniform_aligned, "uniform-aligned"), (_uniform, "uniform")):
             uni = fn(v_outlines, vref)
-            if (
-                uni is not None
-                and _struct_ok(uni)
-                and _cu2qu_safe(uni)
-                and not _quality_offenders(uni, outlines_by_pos)
-                and _interp_ok(uni)
-                and not _has_interpolated_self_intersection(uni)
-            ):
-                ink = _ink_defect(uni, blur=2)
-                full = f"{note}+{tag}" if tag else note
+            if uni is None or not _struct_ok(uni) or not _cu2qu_safe(uni):
+                continue
+            if _quality_offenders(uni, outlines_by_pos):
+                continue
+            ink = _ink_defect(uni, blur=2)
+            full = f"{note}+{tag}" if tag else note
+            has_si = _has_interpolated_self_intersection(uni)
+            clean = _interp_ok(uni) and not has_si
+            if clean:
                 if len(counts) > 1 and tag == "split-to-max":
                     split_candidates.append((uni, {"stage": "reconstructed", "note": full}))
                 if best_uni is None or ink < best_uni[0] - 1e-9:
                     best_uni = (ink, uni, full)
                 break  # aligned passed for this variant; skip its plain uniform
+            # Topology-changing glyphs often fail the midpoint-area gate on every
+            # corner path. Prefer weight-varying uniforms over freezing to
+            # Book@400; still prefer non-SI over SI when both exist.
+            slot = best_relaxed_si if has_si else best_relaxed
+            if slot is None or ink < slot[0] - 1e-9:
+                chosen = (ink, uni, f"{full}+relax-gates")
+                if has_si:
+                    best_relaxed_si = chosen
+                else:
+                    best_relaxed = chosen
     if first_topology_candidate is not None:
         # A contour-count change can often be represented in both directions:
         # split connected endpoint masters into real pieces, or bridge separate
@@ -919,6 +961,10 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
             return min(ranked, key=lambda candidate: _interpolation_rank(candidate[0]))
     if best_uni is not None:
         return best_uni[1], {"stage": "reconstructed", "note": best_uni[2]}
+    if best_relaxed is not None:
+        return best_relaxed[1], {"stage": "reconstructed", "note": best_relaxed[2]}
+    if best_relaxed_si is not None:
+        return best_relaxed_si[1], {"stage": "reconstructed", "note": best_relaxed_si[2]}
     return None, last
 
 
@@ -1039,8 +1085,22 @@ def _shared_corner_candidates(outlines_by_pos):
 
 
 def _expected_corner_count(originals_by_pos):
-    counts = {_outline_corner_count(contours) for contours in originals_by_pos.values()}
-    return counts.pop() if len(counts) == 1 else None
+    """Shared hard-corner budget for cubic-refit.
+
+    Unanimous counts win. A single-corner flicker across masters (CFF stub
+    inventing one false corner on Thin ``d``) uses the majority. Wider
+    disagreement is a real topology difference — return None so cubic-refit
+    does not invent a wrong hard-corner set.
+    """
+    counts = [_outline_corner_count(contours) for contours in originals_by_pos.values()]
+    if not counts:
+        return None
+    distinct = set(counts)
+    if len(distinct) == 1:
+        return counts[0]
+    if max(counts) - min(counts) > 1:
+        return None
+    return sorted(distinct, key=lambda c: (-counts.count(c), c))[0]
 
 
 def _corner_correspondence_ok(candidate, originals_by_pos):
@@ -1049,9 +1109,28 @@ def _corner_correspondence_ok(candidate, originals_by_pos):
     return expected in (None, 0) or len(_shared_corner_candidates(candidate)) >= expected
 
 
+def _reference_corner_candidates(outlines_by_pos, reference_pos=400):
+    """Sharp polyline nodes on the reference master (projection-aligned structure)."""
+    if reference_pos not in outlines_by_pos:
+        reference_pos = sorted(outlines_by_pos)[len(outlines_by_pos) // 2]
+    candidates = []
+    for ci, contour in enumerate(outlines_by_pos[reference_pos]):
+        pts = _line_pts(contour)
+        for index in range(len(pts)):
+            score = _polyline_turn(pts, index)
+            if score > CURVE_CORNER_ANGLE:
+                candidates.append((score, ci, index))
+    return candidates
+
+
 def _curve_corner_indices(outlines_by_pos, originals_by_pos):
     candidates = _shared_corner_candidates(outlines_by_pos)
     expected = _expected_corner_count(originals_by_pos) if originals_by_pos is not None else None
+    if expected is not None and len(candidates) < expected:
+        # Index-matched sharps can be empty when a false donor corner forced
+        # arc-length projection: anchors share indices with the reference, but
+        # other masters are smooth there. Use the reference master's sharps.
+        candidates = _reference_corner_candidates(outlines_by_pos)
     if expected is not None:
         if len(candidates) < expected:
             return None
