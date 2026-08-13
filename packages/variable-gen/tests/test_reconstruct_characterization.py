@@ -18,6 +18,9 @@ from variable_gen.outlines import _winding, signature  # noqa: E402
 from variable_gen.reconstruct_compatible import (  # noqa: E402
     _already_compatible,
     _corner_correspondence_ok,
+    _cubic_in_tan,
+    _cubic_out_tan,
+    _expected_corner_count,
     _interpolation_rank,
     _order_normalize,
     _reconstruct_floating_contour,
@@ -328,6 +331,87 @@ class RingAndOrderTests(unittest.TestCase):
         assert normalized is not None
         heavy_areas = [abs(_signed_area(to_ring(contour)[0])) for contour in normalized[900]]
         self.assertGreater(heavy_areas[0], heavy_areas[1])
+
+
+class DegenerateHandleTests(unittest.TestCase):
+    def test_collapsed_outgoing_handle_skips_stub(self):
+        """CFF rounding can leave a 0–1 unit stub handle (Thin ``d`` @ 532)."""
+        a, b = (222.0, 533.0), (74.0, 413.0)
+        # Stub c1 is 1 unit away; prefer the longer c2 over the stub tangent.
+        self.assertEqual(
+            _cubic_out_tan(a, (222.0, 532.0), (128.0, 523.0), b),
+            _cubic_out_tan(a, (128.0, 523.0), (128.0, 523.0), b),
+        )
+
+    def test_collapsed_incoming_handle_skips_zero_length(self):
+        start, end = (291.0, 535.0), (222.0, 533.0)
+        # c2 collapsed onto the end node → fall back to c1 → end.
+        self.assertEqual(
+            _cubic_in_tan(start, (245.0, 537.0), end, end),
+            _cubic_in_tan(start, (245.0, 537.0), (245.0, 537.0), end),
+        )
+
+
+class ExpectedCornerCountTests(unittest.TestCase):
+    def test_unanimous_counts(self):
+        outlines = scaled_squares()
+        self.assertEqual(_expected_corner_count(outlines), 4)
+
+    def test_single_corner_flicker_uses_majority(self):
+        outlines = scaled_squares()
+        # Extra notch on the light master only (one-corner flicker).
+        light = [
+            ("moveTo", [(0.0, 0.0)]),
+            ("lineTo", [(100.0, 0.0)]),
+            ("lineTo", [(100.0, 100.0)]),
+            ("lineTo", [(50.0, 70.0)]),
+            ("lineTo", [(0.0, 100.0)]),
+            ("closePath", []),
+        ]
+        outlines[100] = [light]
+        self.assertEqual(_expected_corner_count(outlines), 4)
+
+    def test_wide_disagreement_returns_none(self):
+        outlines = scaled_squares()
+        # Star-like zigzag: many real corners, not a one-count flicker.
+        heavy = [
+            ("moveTo", [(100.0, 0.0)]),
+            ("lineTo", [(120.0, 60.0)]),
+            ("lineTo", [(200.0, 60.0)]),
+            ("lineTo", [(140.0, 100.0)]),
+            ("lineTo", [(160.0, 180.0)]),
+            ("lineTo", [(100.0, 130.0)]),
+            ("lineTo", [(40.0, 180.0)]),
+            ("lineTo", [(60.0, 100.0)]),
+            ("lineTo", [(0.0, 60.0)]),
+            ("lineTo", [(80.0, 60.0)]),
+            ("closePath", []),
+        ]
+        outlines[900] = [heavy]
+        self.assertIsNone(_expected_corner_count(outlines))
+
+
+class ContourCountChangeTests(unittest.TestCase):
+    def test_merging_extra_contour_still_weight_varies(self):
+        """A stub contour that exists only at one weight must not freeze the glyph.
+
+        Failure this prevents: topology-change glyphs (r.ss03 / tcommaaccent)
+        returning None and being pinned to Book@400.
+        """
+        stub = [square(20.0, x=250.0, y=250.0)]
+        outlines = {
+            100: [square(100.0), *stub],
+            400: [square(140.0)],
+            900: [square(200.0)],
+        }
+        rec, info = reconstruct(outlines, reference_pos=400)
+        self.assertIsNotNone(rec, f"expected weight-varying fallback, got {info}")
+        assert_interpolation_invariant(self, rec)
+        widths = []
+        for pos in sorted(rec):
+            xs = [p[0] for op, pts in rec[pos][0] if op in ("moveTo", "lineTo") for p in pts]
+            widths.append(max(xs) - min(xs))
+        self.assertNotEqual(widths[0], widths[-1], f"widths stuck: {widths}")
 
 
 class WindingTests(unittest.TestCase):
