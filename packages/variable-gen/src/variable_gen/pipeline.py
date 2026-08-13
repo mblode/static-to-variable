@@ -265,29 +265,45 @@ def _audit_stage(repo_root: Path) -> Stage:
         )
 
     failures: list[str] = []
+    observations: list[str] = []
     summary: dict[str, Any] = {}
     for family_key, family in data.items():
         family_summary = family.get("summary", {}) if isinstance(family, dict) else {}
+        focus = family.get("interpolation_focus_summary", {}) if isinstance(family, dict) else {}
+        if not isinstance(focus, dict):
+            focus = {}
         problem_glyphs = int(family_summary.get("problem_glyphs", 0) or 0)
+        interpolatable = int(
+            family_summary.get("interpolatable_problem_glyphs", 0)
+            or focus.get("interpolatable_problem_glyphs", 0)
+            or 0
+        )
+        intersections = int(
+            family_summary.get("glyphs_with_intersections", 0)
+            or focus.get("glyphs_with_intersections", 0)
+            or 0
+        )
         summary[f"{family_key}_problem_glyphs"] = problem_glyphs
         summary[f"{family_key}_clean_glyphs"] = family_summary.get("clean_glyphs", 0)
-        summary[f"{family_key}_interpolatable_problem_glyphs"] = family_summary.get(
-            "interpolatable_problem_glyphs",
-            0,
-        )
+        summary[f"{family_key}_interpolatable_problem_glyphs"] = interpolatable
+        summary[f"{family_key}_glyphs_with_intersections"] = intersections
+        if interpolatable:
+            failures.append(f"{family_key} interpolatable_problem_glyphs={interpolatable}")
+        if intersections:
+            failures.append(f"{family_key} glyphs_with_intersections={intersections}")
         if problem_glyphs:
-            failures.append(f"{family_key} problem_glyphs={problem_glyphs}")
+            observations.append(f"{family_key} problem_glyphs={problem_glyphs}")
 
     return Stage(
         id="full_audit",
         name="Full Variable Audit Diagnostics",
-        kind="diagnostic",
-        status="pass",
-        blocking=False,
+        kind="blocking",
+        status="fail" if failures else "pass",
+        blocking=True,
         artifact=path.as_posix(),
         summary=summary,
-        failures=[],
-        observations=failures,
+        failures=failures,
+        observations=observations,
     )
 
 

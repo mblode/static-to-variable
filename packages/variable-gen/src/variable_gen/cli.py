@@ -173,6 +173,8 @@ def _pipeline_command(args: argparse.Namespace) -> int:
             )
             if worst:
                 print("   worst:", worst)
+            if fails:
+                return 1
         return 0
 
     if args.command == "release":

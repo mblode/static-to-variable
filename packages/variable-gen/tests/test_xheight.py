@@ -188,3 +188,17 @@ def test_scanline_runs_use_nonzero_winding() -> None:
     segments = [segment[1] for segment in _rectangle(10, 0, 30, 20)]
 
     assert runs_at(segments, 10) == [(10, 30)]
+
+
+def test_pin_horizontals_keeps_wide_band_from_absorbing_strain() -> None:
+    # Tall stems + a wide mid bar (crossbar-like): pin should keep the bar's
+    # local rate near 1 (translate) while stems stretch.
+    stem = _rectangle(0, 0, 40, 500)
+    bar = _rectangle(0, 220, 200, 280)
+    contours = [stem, bar]
+    free = build_map(contours, 50, 500, 510, 700, 40, pin_horizontals=False)
+    pinned = build_map(contours, 50, 500, 510, 700, 40, pin_horizontals=True)
+    # Mid-bar zone: pinned map should strain less than the free map.
+    assert pinned.rate(250) < free.rate(250)
+    assert pinned.rate(250) < 1.05
+    assert pinned(500) == pytest.approx(550)
