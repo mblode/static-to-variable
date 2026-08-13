@@ -37,6 +37,9 @@ from variable_gen.outlines import signature
 CORNER_ANGLE = math.radians(28)  # tangent break above this = corner anchor
 RESAMPLE_STEP = 18  # target units between resampled points (dense
 # enough that curves stay smooth at display sizes)
+# When union-heal invents short-leg cusp folds at stem/bowl joins (d), retry
+# once with a coarser sample so weight still varies instead of freezing.
+FOLD_RETRY_RESAMPLE_STEP = 32
 MIN_RUN_PTS = 1  # min interior points per inter-corner run
 # The compatibility input is an 18-unit polyline sampling of the donor, not the
 # analytic curve itself. Chasing that polygon below its sub-unit chord error
@@ -274,7 +277,7 @@ CORNER_ANGLE_SWEEP = [
 ]
 
 
-def reconstruct(outlines_by_pos, reference_pos=400):
+def reconstruct(outlines_by_pos, reference_pos=400, *, _fold_retry=True):
     """outlines_by_pos: {axis_pos: contours}. Returns (compatible|None, info).
     Tries a sweep of corner-detection thresholds; returns the first that yields a
     fully interpolation-compatible result, then (for 3+ masters) swaps in the
@@ -282,6 +285,7 @@ def reconstruct(outlines_by_pos, reference_pos=400):
     better — see _interior_dev. If masters disagree on contour COUNT, first
     unions overlapping contours per master (handles glyphs like $ / ¢ whose
     separate bar stubs merge into the body at heavy weights)."""
+    global RESAMPLE_STEP
     out, info = _reconstruct_base(outlines_by_pos, reference_pos)
     out, info = _ink_tournament(out, info, outlines_by_pos, reference_pos)
     if out is None:
@@ -308,9 +312,32 @@ def reconstruct(outlines_by_pos, reference_pos=400):
                 if healed is not None:
                     # Union-heal+cubic-refit can pass SI yet invent short-leg
                     # cusp folds at stem/bowl joins (visible stairsteps on d).
-                    # Prefer freezing the clean donor over shipping kinks or a
-                    # dense polyline that facets at display size.
+                    # Retry once with coarser resampling before freezing — that
+                    # keeps weight variation while clearing the cusps.
                     if _has_excess_short_folds(healed, outlines_by_pos):
+                        if _fold_retry and RESAMPLE_STEP < FOLD_RETRY_RESAMPLE_STEP:
+                            saved = RESAMPLE_STEP
+                            try:
+                                RESAMPLE_STEP = FOLD_RETRY_RESAMPLE_STEP
+                                retry, rinfo = reconstruct(
+                                    outlines_by_pos,
+                                    reference_pos,
+                                    _fold_retry=False,
+                                )
+                            finally:
+                                RESAMPLE_STEP = saved
+                            if retry is not None and not _has_excess_short_folds(
+                                retry, outlines_by_pos
+                            ):
+                                return retry, {
+                                    **rinfo,
+                                    "note": "+".join(
+                                        filter(
+                                            None,
+                                            (rinfo.get("note"), "coarse-resample"),
+                                        )
+                                    ),
+                                }
                         return None, {
                             "stage": None,
                             "note": "union-heal fold gate",
