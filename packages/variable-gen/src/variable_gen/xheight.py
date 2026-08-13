@@ -350,6 +350,12 @@ def _smooth(values, weights, radius=SMOOTH_RADIUS):
     return out
 
 
+# Bands with cost at or above this are treated as horizontal strokes: rate is
+# pinned near zero and MAX_STRAIN spare must not spill into them.
+PIN_HORIZONTAL_COST = 0.85
+PINNED_RATE = 1e-3
+
+
 def build_map(
     contours: Contours,
     delta: float,
@@ -359,6 +365,9 @@ def build_map(
     stem: float,
     *,
     uniform_lower: bool = False,
+    pin_horizontals: bool = False,
+    pin_cost: float = PIN_HORIZONTAL_COST,
+    smooth_radius: int | None = None,
 ) -> BandMap:
     """Turn one glyph's own geometry into a monotonic C1 y map.
 
@@ -370,8 +379,15 @@ def build_map(
     ``uniform_lower`` makes the baseline-to-x-height band approach one affine
     rate (apart from its short C1 joins). Use it when a later horizontal scale
     should be matched vertically to preserve isotropic stroke weight.
+
+    ``pin_horizontals`` keeps high-cost (wide-run) bands from absorbing strain or
+    receiving spare after the local rate cap — the stated “protect horizontals”
+    contract that Book/ExtraBlack previously violated via spill + smoothing.
     """
     segments = flatten_contours(contours)
+    radius = SMOOTH_RADIUS if smooth_radius is None else smooth_radius
+    if pin_horizontals and smooth_radius is None:
+        radius = 1
 
     def region(lo, high, rise, *, uniform=False):
         if high - lo < 1e-6:
@@ -379,6 +395,7 @@ def build_map(
         steps = max(2, int(math.ceil((high - lo) / RATE_STEP)))
         edges = [lo + (high - lo) * i / steps for i in range(steps + 1)]
         heights = [b - a for a, b in zip(edges, edges[1:], strict=False)]
+        pinned = [False] * len(heights)
         if uniform:
             rates = [1.0] * len(heights)
         else:
@@ -386,8 +403,21 @@ def build_map(
                 band_cost(segments, (a + b) / 2, stem)
                 for a, b in zip(edges, edges[1:], strict=False)
             ]
-            rates = _smooth([1.0 / c for c in costs], heights)
-        moves = _allocate_smoothed(heights, rates, rise)
+            raw = []
+            for i, cost in enumerate(costs):
+                if pin_horizontals and cost >= pin_cost:
+                    raw.append(PINNED_RATE)
+                    pinned[i] = True
+                else:
+                    raw.append(1.0 / cost)
+            rates = _smooth(raw, heights, radius=radius)
+            # Re-assert pins after smoothing so neighbour bleed cannot re-open
+            # a crossbar band.
+            if pin_horizontals:
+                for i, is_pinned in enumerate(pinned):
+                    if is_pinned:
+                        rates[i] = PINNED_RATE
+        moves = _allocate_smoothed(heights, rates, rise, pinned=pinned)
         shifts, running = [0.0], 0.0
         for move in moves:
             running += move
@@ -403,13 +433,28 @@ def build_map(
     return BandMap(breaks, shifts, ascender, x_top, hi)
 
 
-def _allocate_smoothed(heights, rates, rise, limit=None):
-    """Spread ``rise`` in proportion to each band's smoothed rate weight."""
+def _allocate_smoothed(heights, rates, rise, limit=None, pinned=None):
+    """Spread ``rise`` in proportion to each band's smoothed rate weight.
+
+    When ``pinned`` marks horizontal bands, spare after the local rate cap is
+    redistributed only among unpinned bands (or discarded if none remain) so
+    crossbars do not absorb stem overflow.
+    """
     limit = (MAX_STRAIN if rise >= 0 else 0.5) * HERMITE_RATE_GUARD
-    total = sum(h * r for h, r in zip(heights, rates, strict=False))
+    pinned = pinned or [False] * len(heights)
+    total = sum(
+        h * r for h, r, is_pinned in zip(heights, rates, pinned, strict=False) if not is_pinned
+    )
+    if not total:
+        total = sum(h * r for h, r in zip(heights, rates, strict=False))
     if not total:
         return [0.0] * len(heights)
-    moves = [rise * h * r / total for h, r in zip(heights, rates, strict=False)]
+    moves = []
+    for h, r, is_pinned in zip(heights, rates, pinned, strict=False):
+        if is_pinned:
+            moves.append(0.0)
+        else:
+            moves.append(rise * h * r / total)
     for _ in range(12):
         over = [
             i
@@ -423,12 +468,31 @@ def _allocate_smoothed(heights, rates, rise, limit=None):
             capped = math.copysign(heights[i] * limit, rise)
             spare += moves[i] - capped
             moves[i] = capped
-        free = [i for i in range(len(moves)) if i not in over]
+        free = [i for i in range(len(moves)) if i not in over and not pinned[i]]
         weight = sum(heights[i] * rates[i] for i in free)
-        if not weight:
+        if weight:
+            for i in free:
+                moves[i] += spare * heights[i] * rates[i] / weight
+            continue
+        # No unpinned band left under the rate cap — overstrain stems rather
+        # than spill into pinned horizontal bands.
+        sinks = [i for i in over if not pinned[i]] or [
+            i for i in range(len(moves)) if not pinned[i]
+        ]
+        if not sinks:
             break
-        for i in free:
-            moves[i] += spare * heights[i] * rates[i] / weight
+        sink_w = sum(heights[i] for i in sinks)
+        for i in sinks:
+            moves[i] += spare * heights[i] / sink_w
+    # Exact rise: any residual from pin/cap rounding lands on unpinned stems.
+    got = sum(moves)
+    rem = rise - got
+    if abs(rem) > 1e-9:
+        sinks = [i for i in range(len(moves)) if not pinned[i]]
+        if sinks:
+            sink_w = sum(abs(moves[i]) + heights[i] * 0.01 for i in sinks)
+            for i in sinks:
+                moves[i] += rem * (abs(moves[i]) + heights[i] * 0.01) / sink_w
     return moves
 
 

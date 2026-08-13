@@ -221,6 +221,13 @@ def check_fidelity(config: ProjectConfig, style_key: str):
     style = config.styles[style_key]
     tag = _axis_tag(style)
     donor_by_id = {d.id: d for d in style.donors}
+    # open_bar intentionally removes the through-bar, so instance area is below
+    # the closed-bar donor — skip those glyphs rather than false-fail fidelity.
+    # Frozen glyphs pin to the default master, so non-default weights diverge.
+    skip_glyphs = set(config.glyphs.freeze)
+    for name, strat in config.glyphs.strategies.items():
+        if strat.strategy in {"open_bar", "freeze"}:
+            skip_glyphs.add(name)
     vf = TTFont(str(style.output))
     fails = []
     for master in style.masters:
@@ -229,7 +236,7 @@ def check_fidelity(config: ProjectConfig, style_key: str):
         gd = donor.getGlyphSet()
         gi = instantiateVariableFont(copy.deepcopy(vf), {tag: pos}, inplace=False).getGlyphSet()
         for g in vf.getGlyphOrder():
-            if g == ".notdef" or g not in gd:
+            if g == ".notdef" or g not in gd or g in skip_glyphs:
                 continue
             ai = _area(gi, g)
             ad = _area(gd, g)

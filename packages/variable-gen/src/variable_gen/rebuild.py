@@ -41,6 +41,7 @@ from variable_gen.reconstruct_compatible import (
     _struct_ok,
     open_bar,
     reconstruct,
+    union_overlaps,
 )
 
 
@@ -211,8 +212,13 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
     default_name = default_master.name
     reference_pos = pos_by_name[default_name]
 
-    # per-glyph strategy table (config form of OPEN_BAR_GLYPHS + friends)
-    strategies = config.glyphs.strategies
+    # per-glyph strategy table (config form of OPEN_BAR_GLYPHS + friends).
+    # glyphs.freeze pins names to the default-master donor (implicit freeze).
+    from variable_gen.config import GlyphStrategy
+
+    strategies = dict(config.glyphs.strategies)
+    for freeze_name in config.glyphs.freeze:
+        strategies.setdefault(freeze_name, GlyphStrategy(strategy="freeze", params={}))
 
     # Source uses friendly names (rcommaaccent), donors use uniXXXX — resolve the
     # donor glyph name by codepoint when the source name isn't present in donors.
@@ -281,12 +287,16 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
         if strat is not None and strat.strategy == "freeze":
             reg = donor_outline(donors[default_name], donor_name_for(glyph))
             if reg is not None:
+                contours = reg[0]
+                cleaned = union_overlaps(contours)
+                if cleaned is not None:
+                    contours = cleaned
                 glyph.layers = []
                 for name, _, _ in plan:
                     layer = GSLayer()
                     layer.layerId = layer.associatedMasterId = ids[name]
                     glyph.layers.append(layer)
-                    draw_into(layer, reg[0])
+                    draw_into(layer, contours)
                     layer.width = reg[1]
                 stats.frozen += 1
                 stats.glyphs[glyph.name] = "frozen"

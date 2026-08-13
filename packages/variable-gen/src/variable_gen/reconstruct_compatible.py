@@ -31,6 +31,7 @@ from __future__ import annotations
 import itertools
 import math
 
+from variable_gen.audit_support import segments_intersect
 from variable_gen.outlines import signature
 
 CORNER_ANGLE = math.radians(28)  # tangent break above this = corner anchor
@@ -291,9 +292,49 @@ def reconstruct(outlines_by_pos, reference_pos=400):
     if out is not None and info.get("stage") == "reconstructed":
         curved = _restore_compatible_curves(out, outlines_by_pos)
         if curved is not None and not _quality_offenders(curved, outlines_by_pos):
-            out = curved
-            info = {**info, "note": "+".join(filter(None, (info.get("note"), "cubic-refit")))}
+            if not _has_interpolated_self_intersection(curved):
+                out = curved
+                info = {
+                    **info,
+                    "note": "+".join(filter(None, (info.get("note"), "cubic-refit"))),
+                }
+            else:
+                # Cubic refit can reintroduce bowl/stem crossings the polyline
+                # masters didn't show (d at Thin/ExtraBlack). Union each master
+                # then re-reconstruct so weight still varies without freezing.
+                healed, hinfo = _heal_self_intersecting_curves(
+                    curved, outlines_by_pos, reference_pos
+                )
+                if healed is not None:
+                    out, info = healed, hinfo
+                # else keep the clean polyline result (pre-cubic-refit)
     return out, info
+
+
+def _heal_self_intersecting_curves(curved, outlines_by_pos, reference_pos):
+    """Boolean-union cubic-refit masters, then rebuild a compatible variable set."""
+    unioned = {pos: union_overlaps(contours) for pos, contours in curved.items()}
+    if any(contours is None for contours in unioned.values()):
+        return None, None
+    out, info = _reconstruct_base(unioned, reference_pos)
+    out, info = _ink_tournament(out, info, unioned, reference_pos)
+    if out is None or info.get("stage") != "reconstructed":
+        return None, None
+    if _has_interpolated_self_intersection(out):
+        return None, None
+    refit = _restore_compatible_curves(out, unioned)
+    if (
+        refit is not None
+        and not _quality_offenders(refit, outlines_by_pos)
+        and not _has_interpolated_self_intersection(refit)
+        and _struct_ok(refit)
+        and _cu2qu_safe(refit)
+        and _interp_ok(refit)
+    ):
+        note = "+".join(filter(None, (info.get("note"), "union-heal", "cubic-refit")))
+        return refit, {**info, "note": note}
+    note = "+".join(filter(None, (info.get("note"), "union-heal")))
+    return out, {**info, "note": note}
 
 
 def _reconstruct_floating_contour(outlines_by_pos, reference_pos):
@@ -618,6 +659,7 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
         and _cu2qu_safe(working)
         and _interp_ok(working)
         and not _quality_offenders(working, outlines_by_pos)
+        and not _has_interpolated_self_intersection(working)
     ):
         return working, {"stage": "compatible", "note": ""}
 
@@ -633,6 +675,7 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
         and _cu2qu_safe(cc)
         and not _quality_offenders(cc, outlines_by_pos)
         and _interp_ok(cc)
+        and not _has_interpolated_self_intersection(cc)
     ):
         return cc, {"stage": "reconstructed", "note": "counter-closing"}
 
@@ -715,6 +758,9 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
                 if not _cu2qu_safe(out):
                     last = {"stage": None, "note": "cu2qu gate: segment regroup"}
                     continue
+                if _has_interpolated_self_intersection(out):
+                    last = {"stage": None, "note": "self-intersection gate"}
+                    continue
                 tags = []
                 if tag:
                     tags.append(tag)
@@ -757,6 +803,7 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
                 and _cu2qu_safe(uni)
                 and not _quality_offenders(uni, outlines_by_pos)
                 and _interp_ok(uni)
+                and not _has_interpolated_self_intersection(uni)
             ):
                 ink = _ink_defect(uni, blur=2)
                 full = f"{note}+{tag}" if tag else note
@@ -773,10 +820,13 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
         # splits challenge the first passing repair on interpolated ink, while
         # retaining stable bridge ordering for transitions that cannot split
         # cleanly (Idieresis's 3→1→3 contour change).
-        return min(
-            [first_topology_candidate, *split_candidates],
-            key=lambda candidate: _interpolation_rank(candidate[0]),
-        )
+        ranked = [
+            candidate
+            for candidate in [first_topology_candidate, *split_candidates]
+            if not _has_interpolated_self_intersection(candidate[0])
+        ]
+        if ranked:
+            return min(ranked, key=lambda candidate: _interpolation_rank(candidate[0]))
     if best_uni is not None:
         return best_uni[1], {"stage": "reconstructed", "note": best_uni[2]}
     return None, last
@@ -792,38 +842,83 @@ def _interpolation_rank(out):
     )
 
 
-def _has_interpolated_self_intersection(out):
-    """Whether a polyline contour folds across itself between masters."""
-    positions = sorted(out)
-    for a, b in zip(positions, positions[1:], strict=False):
-        for t in (0.25, 0.5, 0.75):
-            contours = _interpolate_contours(out[a], out[b], t)
-            if contours is None:
+def _contours_self_intersect(contours) -> bool:
+    """True when any outline segments cross, including across contours.
+
+    Samples cubics/quads — a pure curveTo contour has no lineTo nodes, so using
+    only on-curve move/line points was blind to real bowl/stem crossings.
+    """
+    rings = [_sampled_pts(contour) for contour in contours]
+    segments: list[tuple[int, int, tuple[float, float], tuple[float, float]]] = []
+    for contour_index, ring in enumerate(rings):
+        count = len(ring)
+        if count < 2:
+            continue
+        for segment_index in range(count):
+            segments.append(
+                (
+                    contour_index,
+                    segment_index,
+                    ring[segment_index],
+                    ring[(segment_index + 1) % count],
+                )
+            )
+    for index, (contour_a, segment_a, a0, a1) in enumerate(segments):
+        ring_len = len(rings[contour_a])
+        for contour_b, segment_b, b0, b1 in segments[index + 1 :]:
+            if contour_a == contour_b and (
+                abs(segment_a - segment_b) <= 1 or {segment_a, segment_b} == {0, ring_len - 1}
+            ):
+                continue
+            # Match check-glide-outlines / audit_support: collinear and near
+            # grazes count. The stricter "proper cross" gate missed ExtraBlack
+            # bowl/stem folds on d after the contrast transform.
+            if segments_intersect(a0, a1, b0, b1):
                 return True
-            for contour in contours:
-                ring = _line_pts(contour)
-                count = len(ring)
-                for i in range(count):
-                    a0, a1 = ring[i], ring[(i + 1) % count]
-                    for j in range(i + 2, count):
-                        if i == 0 and j == count - 1:
-                            continue
-                        if _proper_segments_cross(a0, a1, ring[j], ring[(j + 1) % count]):
-                            return True
     return False
 
 
-def _proper_segments_cross(a0, a1, b0, b1):
-    """Strict segment crossing; shared endpoints and tangencies are harmless."""
+def _has_interpolated_self_intersection(out):
+    """Whether masters or in-between samples self-intersect (any contour pair)."""
+    positions = sorted(out)
+    for pos in positions:
+        if _contours_self_intersect(out[pos]):
+            return True
+    for a, b in zip(positions, positions[1:], strict=False):
+        for t in (0.25, 0.5, 0.75):
+            contours = _interpolate_contours(out[a], out[b], t)
+            if contours is None or _contours_self_intersect(contours):
+                return True
+    return False
 
-    def side(p, q, r):
-        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
 
-    if a0 in (b0, b1) or a1 in (b0, b1):
-        return False
-    ab0, ab1 = side(a0, a1, b0), side(a0, a1, b1)
-    ba0, ba1 = side(b0, b1, a0), side(b0, b1, a1)
-    return ab0 * ab1 < -1e-8 and ba0 * ba1 < -1e-8
+SI_SAMPLE_STEPS = 8
+
+
+def _sampled_pts(contour, steps=SI_SAMPLE_STEPS):
+    """Closed-ring sample of a contour including cubic/quadratic curve chords."""
+    pts: list[tuple[float, float]] = []
+    cur = None
+    for op, args in contour:
+        if op == "moveTo":
+            cur = args[0]
+            pts = [cur]
+        elif op == "lineTo":
+            cur = args[0]
+            pts.append(cur)
+        elif op == "curveTo":
+            c1, c2, end = args
+            for i in range(1, steps + 1):
+                pts.append(_cubic(cur, c1, c2, end, i / steps))
+            cur = end
+        elif op == "qCurveTo":
+            # Explicit on-curve points only; off-curve chains are rare after
+            # reconstruct (cu2qu / cubic-refit). Keep nodes for a coarse check.
+            for p in args:
+                if p is not None:
+                    pts.append(p)
+                    cur = p
+    return pts
 
 
 def _line_pts(contour):
@@ -1882,7 +1977,17 @@ def open_bar(glyph_outlines_by_pos, letter_outlines_by_pos, anchor, reference_po
         body_out = _resample_contour_set(per, positions, ref)
         if body_out is None:
             return None
-    return {pos: [body_out[pos], *_bar_nubs(body_out[pos], bar_geom[pos])] for pos in positions}
+    # Nubs intentionally overlap the body so KEEP_OVERLAPS paints a solid join.
+    # Boolean-union + re-reconstruct so masters stay interpolatable and the
+    # outline audit no longer sees the overlap as a self-intersection.
+    overlapped = {
+        pos: [body_out[pos], *_bar_nubs(body_out[pos], bar_geom[pos])] for pos in positions
+    }
+    unioned = {pos: union_overlaps(overlapped[pos]) for pos in positions}
+    if any(contours is None for contours in unioned.values()):
+        return overlapped
+    rec, _info = reconstruct(unioned, reference_pos=ref)
+    return rec if rec is not None else unioned
 
 
 def _to_n_contours(contours, target, bridge_pick=0):
