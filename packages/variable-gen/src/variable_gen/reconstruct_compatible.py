@@ -306,9 +306,72 @@ def reconstruct(outlines_by_pos, reference_pos=400):
                     curved, outlines_by_pos, reference_pos
                 )
                 if healed is not None:
+                    # Union-heal+cubic-refit can pass SI yet invent short-leg
+                    # cusp folds at stem/bowl joins (visible stairsteps on d).
+                    # Prefer freezing the clean donor over shipping kinks or a
+                    # dense polyline that facets at display size.
+                    if _has_excess_short_folds(healed, outlines_by_pos):
+                        return None, {
+                            "stage": None,
+                            "note": "union-heal fold gate",
+                        }
                     out, info = healed, hinfo
                 # else keep the clean polyline result (pre-cubic-refit)
     return out, info
+
+
+def _oncurve_ring(contour):
+    """On-curve points of a (op, pts) contour, in draw order (open until close)."""
+    pts = []
+    for op, args in contour:
+        if op == "moveTo":
+            pts = [args[0]]
+        elif op == "lineTo":
+            pts.append(args[0])
+        elif op == "curveTo":
+            pts.append(args[2])
+        elif op == "qCurveTo":
+            pts.append(args[-1])
+    return pts
+
+
+def _short_leg_fold_count(contours, *, ang_min=120.0, leg_max=60.0) -> int:
+    """Count cusp-like folds: sharp turns (≥ ang_min°) with a short adjacent leg.
+
+    Intentional stem/bowl corners also turn sharply, but both legs are long.
+    Union-heal artifacts reverse locally with one short leg — the stairstep
+    visible on reconstructed ``d``.
+    """
+    folds = 0
+    for contour in contours:
+        ring = _oncurve_ring(contour)
+        n = len(ring)
+        if n < 3:
+            continue
+        for i in range(n):
+            a, b, c = ring[(i - 1) % n], ring[i], ring[(i + 1) % n]
+            v1 = (b[0] - a[0], b[1] - a[1])
+            v2 = (c[0] - b[0], c[1] - b[1])
+            n1 = math.hypot(*v1)
+            n2 = math.hypot(*v2)
+            if n1 < 1e-6 or n2 < 1e-6:
+                continue
+            cosang = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))
+            ang = math.degrees(math.acos(cosang))
+            if ang >= ang_min and min(n1, n2) < leg_max:
+                folds += 1
+    return folds
+
+
+def _has_excess_short_folds(outlines_by_pos, originals_by_pos) -> bool:
+    """True when any master gained short-leg folds vs its donor original."""
+    for pos, contours in outlines_by_pos.items():
+        original = originals_by_pos.get(pos)
+        if original is None:
+            continue
+        if _short_leg_fold_count(contours) > _short_leg_fold_count(original):
+            return True
+    return False
 
 
 def _heal_self_intersecting_curves(curved, outlines_by_pos, reference_pos):
