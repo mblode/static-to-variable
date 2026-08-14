@@ -36,10 +36,10 @@ npm run changeset        # add a changeset before opening a release PR
 
 ## Glide lives in a separate private repo
 
-The Glide and Circular build is not in this repo. It is [mblode/static-to-variable-glide](https://github.com/mblode/static-to-variable-glide), checked out at `glide/` and gitignored here, so no licensed foundry material (Circular XX) lands in the public repo. It holds the donors, both `stv.config.json` files, the `.glyphs` sources and the x-height transform, with every path relative to itself:
+The Glide and Circular build is not in this repo. It is [mblode/static-to-variable-glide](https://github.com/mblode/static-to-variable-glide), checked out as a sibling at `../static-to-variable-glide` so no licensed foundry material (Circular XX) lands in the public repo. It holds the donors, both `stv.config.json` files, the `.glyphs` sources and the x-height transform, with every path relative to itself:
 
 ```bash
-.venv/bin/python -m variable_gen.cli build --config glide/configs/glide.json --style all
+.venv/bin/python -m variable_gen.cli build --config ../static-to-variable-glide/configs/glide.json --style all
 ```
 
 The exception is `apps/web/app/fonts` and `apps/web/lib/og-assets`: those Glide woff2/ttf are committed build artifacts the marketing site needs, same as the showcase fonts.
