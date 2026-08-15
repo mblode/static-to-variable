@@ -1,5 +1,5 @@
 import { renderZoneOgImage } from "@/app/og-image-shared";
-import { FONTS } from "@/lib/fonts";
+import { OgLogo } from "@/app/og-logo";
 
 export {
   OG_CONTENT_TYPE as contentType,
@@ -15,9 +15,9 @@ export const alt = "Every family rebuilt as a variable font";
  */
 export default function Image() {
   return renderZoneOgImage({
-    badge: "SHOWCASE",
-    eyebrow: "blode.co/static-to-variable/showcase",
-    subtitle: `${FONTS.length} families Google Fonts ships only as static styles, each with a live weight axis.`,
+    background: "#f5f0e6",
+    color: "#1a1510",
+    logo: <OgLogo />,
     title: "Variable fonts that didn't exist",
   });
 }
