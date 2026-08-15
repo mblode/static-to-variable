@@ -163,9 +163,10 @@ def _pipeline_command(args: argparse.Namespace) -> int:
         from .build import UNDERWEIGHT_RATIO, build_style, check_fidelity
 
         for key in keys:
+            frozen: list[str] = []
             if not args.check_only:
-                build_style(config, key)
-            fails = check_fidelity(config, key)
+                frozen = build_style(config, key)
+            fails = check_fidelity(config, key, extra_skip=frozen)
             worst = sorted(fails, key=lambda f: f[2])[:12]
             print(
                 f"[{key}] underweight (<{UNDERWEIGHT_RATIO}x mapped donor) at any named "

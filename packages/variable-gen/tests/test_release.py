@@ -9,6 +9,7 @@ PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(PACKAGE_SRC))
 
 from fontTools.ttLib import TTFont  # noqa: E402
+from fontTools.ttLib.tables._f_v_a_r import NamedInstance  # noqa: E402
 
 from variable_gen.config import load_config  # noqa: E402
 from variable_gen.release import MAC, WIN, fix_instances, fix_vertical_metrics  # noqa: E402
@@ -76,6 +77,26 @@ class ReleaseVerticalMetricsTests(unittest.TestCase):
 
 
 class ReleaseVariationNameTests(unittest.TestCase):
+    def test_default_instance_postscript_name_matches_name_id_6(self):
+        font = TTFont(FIXTURE)
+        defaults = {axis.axisTag: axis.defaultValue for axis in font["fvar"].axes}
+        instance = NamedInstance()
+        instance.coordinates = defaults
+        instance.subfamilyNameID = font["name"].addName("Regular", platforms=[WIN, MAC])
+        instance.postscriptNameID = font["name"].addName("Temporary-Regular", platforms=[WIN, MAC])
+        font["fvar"].instances.append(instance)
+        for platform in (WIN, MAC):
+            font["name"].setName("STVMinimal", 6, *platform)
+        fix_instances(font, load_config(MINIMAL_CONFIG), italic=False)
+        default_instance = next(
+            instance for instance in font["fvar"].instances if instance.coordinates == defaults
+        )
+
+        self.assertEqual(
+            font["name"].getDebugName(default_instance.postscriptNameID),
+            "STVMinimal",
+        )
+
     def test_fvar_and_stat_names_exist_on_every_declared_platform(self):
         font = TTFont(FIXTURE)
         fix_instances(font, load_config(MINIMAL_CONFIG), italic=False)

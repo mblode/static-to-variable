@@ -20,6 +20,7 @@ into an :class:`OnlineVarStoreBuilder`, each varying value gets a
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from fontTools.misc.fixedTools import floatToFixedToFloat
@@ -239,24 +240,28 @@ def _axis_triple(font: TTFont, axis_tag: str) -> tuple[float, float, float] | No
 
 def vary_kern(
     varfont: TTFont,
-    donors: list[tuple[float, KernMap]],
+    donors: Sequence[tuple[float | dict[str, float], KernMap]],
     *,
     axis_tag: str = "wght",
 ) -> KernReport:
     """Add weight variation to ``varfont``'s existing kern values.
 
-    ``donors`` pairs each master's axis position with that donor's flattened
+    ``donors`` pairs each master's design-space location with that donor's flattened
     kerning. The font's current values stay exactly as they are at the default
-    position — every master's sampled value is rebased onto the value already in
-    the table — so this can only add variation, never shift the default weight's
+    location — every master's sampled value is rebased onto the value already in
+    the table — so this can only add variation, never shift the default master's
     kerning.
+
+    A numeric location remains accepted for the historical one-axis API. A
+    mapping preserves all axes, allowing a repeated weight in different optical
+    rows to contribute a distinct VariationModel master.
 
     Never raises for kerning reasons; a font it cannot vary is left untouched.
     """
     if len(donors) < 2:
         return KernReport(note="fewer than two donors")
-    triple = _axis_triple(varfont, axis_tag)
-    if triple is None:
+    primary_triple = _axis_triple(varfont, axis_tag)
+    if primary_triple is None:
         return KernReport(note=f"no {axis_tag} axis")
     gdef = getattr(varfont.get("GDEF"), "table", None)
     if gdef is not None and getattr(gdef, "VarStore", None) is not None:
@@ -267,22 +272,46 @@ def vary_kern(
     # hair off the position a renderer actually resolves to, and every delta
     # there comes back scaled by 0.9999-ish — which rounds half the kern values
     # off by one unit at that weight.
-    locations = [
-        {axis_tag: floatToFixedToFloat(normalizeValue(position, triple), 14)}
-        for position, _ in donors
-    ]
+    fvar_axes = list(varfont["fvar"].axes) if "fvar" in varfont else []
+    axis_tags = [axis.axisTag for axis in fvar_axes] or [axis_tag]
+    triples = {
+        axis.axisTag: (axis.minValue, axis.defaultValue, axis.maxValue) for axis in fvar_axes
+    }
+    triples.setdefault(axis_tag, primary_triple)
+    locations = []
+    for raw_location, _ in donors:
+        location = (
+            {axis_tag: float(raw_location)}
+            if isinstance(raw_location, int | float)
+            else raw_location
+        )
+        loc = {
+            tag: floatToFixedToFloat(
+                normalizeValue(location.get(tag, triples[tag][1]), triples[tag]), 14
+            )
+            for tag in axis_tags
+        }
+        locations.append(loc)
+    canonical_locations = {tuple(location[tag] for tag in axis_tags) for location in locations}
+    if len(canonical_locations) != len(locations):
+        return KernReport(note="duplicate donor design-space location")
     default_index = next(
-        (index for index, loc in enumerate(locations) if abs(loc[axis_tag]) < 1e-9), None
+        (
+            index
+            for index, loc in enumerate(locations)
+            if all(abs(loc[tag]) < 1e-9 for tag in axis_tags)
+        ),
+        None,
     )
     if default_index is None:
-        return KernReport(note="no donor at the default axis position")
+        return KernReport(note="no donor at the default axis position across the design space")
 
     subtables = _pair_subtables(varfont)
     if not subtables:
         return KernReport(note="font has no kern pair positioning")
 
-    model = VariationModel(locations, axisOrder=[axis_tag])
-    store_builder = OnlineVarStoreBuilder([axis_tag])
+    model = VariationModel(locations, axisOrder=axis_tags)
+    store_builder = OnlineVarStoreBuilder(axis_tags)
     store_builder.setModel(model)
     kern_maps = [kern for _, kern in donors]
     glyph_order = varfont.getGlyphOrder()

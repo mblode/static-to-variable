@@ -1,0 +1,257 @@
+{
+  "version": 3,
+  "id": "two-axis-fixture",
+  "family": {
+    "name": "Two Axis Fixture",
+    "version": "1.000",
+    "vendor": "TEST",
+    "designer": "Static to Variable",
+    "designerUrl": "https://example.com",
+    "vendorUrl": "https://example.com"
+  },
+  "axes": [
+    {
+      "tag": "wght",
+      "name": "Weight",
+      "minimum": 100,
+      "default": 400,
+      "maximum": 950,
+      "map": [
+        [100, 100],
+        [400, 400],
+        [700, 650],
+        [950, 950]
+      ],
+      "namedInstances": { "100": "Thin", "400": "Regular", "950": "ExtraBlack" }
+    },
+    {
+      "tag": "opsz",
+      "name": "Optical size",
+      "minimum": 12,
+      "default": 16,
+      "maximum": 28,
+      "namedInstances": { "12": "Text", "16": "UI", "28": "Display" }
+    }
+  ],
+  "styles": {
+    "roman": {
+      "italic": false,
+      "donors": [
+        {
+          "id": "t100",
+          "name": "Text Thin",
+          "path": "t100.ttf",
+          "location": { "wght": 100, "opsz": 12 }
+        },
+        {
+          "id": "t400",
+          "name": "Text Regular",
+          "path": "t400.ttf",
+          "location": { "wght": 400, "opsz": 12 }
+        },
+        {
+          "id": "t950",
+          "name": "Text ExtraBlack",
+          "path": "t950.ttf",
+          "location": { "wght": 950, "opsz": 12 }
+        },
+        {
+          "id": "u100",
+          "name": "UI Thin",
+          "path": "u100.ttf",
+          "location": { "wght": 100, "opsz": 16 }
+        },
+        {
+          "id": "u400",
+          "name": "UI Regular",
+          "path": "u400.ttf",
+          "location": { "wght": 400, "opsz": 16 }
+        },
+        {
+          "id": "u950",
+          "name": "UI ExtraBlack",
+          "path": "u950.ttf",
+          "location": { "wght": 950, "opsz": 16 }
+        },
+        {
+          "id": "d100",
+          "name": "Display Thin",
+          "path": "d100.ttf",
+          "location": { "wght": 100, "opsz": 28 }
+        },
+        {
+          "id": "d400",
+          "name": "Display Regular",
+          "path": "d400.ttf",
+          "location": { "wght": 400, "opsz": 28 }
+        },
+        {
+          "id": "d950",
+          "name": "Display ExtraBlack",
+          "path": "d950.ttf",
+          "location": { "wght": 950, "opsz": 28 }
+        }
+      ],
+      "masters": [
+        {
+          "name": "Text Thin",
+          "donorId": "t100",
+          "location": { "wght": 100, "opsz": 12 }
+        },
+        {
+          "name": "Text Regular",
+          "donorId": "t400",
+          "location": { "wght": 400, "opsz": 12 }
+        },
+        {
+          "name": "Text ExtraBlack",
+          "donorId": "t950",
+          "location": { "wght": 950, "opsz": 12 }
+        },
+        {
+          "name": "UI Thin",
+          "donorId": "u100",
+          "location": { "wght": 100, "opsz": 16 }
+        },
+        {
+          "name": "UI Regular",
+          "donorId": "u400",
+          "location": { "wght": 400, "opsz": 16 },
+          "default": true
+        },
+        {
+          "name": "UI ExtraBlack",
+          "donorId": "u950",
+          "location": { "wght": 950, "opsz": 16 }
+        },
+        {
+          "name": "Display Thin",
+          "donorId": "d100",
+          "location": { "wght": 100, "opsz": 28 }
+        },
+        {
+          "name": "Display Regular",
+          "donorId": "d400",
+          "location": { "wght": 400, "opsz": 28 }
+        },
+        {
+          "name": "Display ExtraBlack",
+          "donorId": "d950",
+          "location": { "wght": 950, "opsz": 28 }
+        }
+      ],
+      "source": "fixture.glyphs",
+      "output": "fixture-vf.ttf"
+    },
+    "italic": {
+      "italic": true,
+      "donors": [
+        {
+          "id": "it100",
+          "name": "Text Thin Italic",
+          "path": "it100.ttf",
+          "location": { "wght": 100, "opsz": 12 }
+        },
+        {
+          "id": "it400",
+          "name": "Text Regular Italic",
+          "path": "it400.ttf",
+          "location": { "wght": 400, "opsz": 12 }
+        },
+        {
+          "id": "it950",
+          "name": "Text ExtraBlack Italic",
+          "path": "it950.ttf",
+          "location": { "wght": 950, "opsz": 12 }
+        },
+        {
+          "id": "iu100",
+          "name": "UI Thin Italic",
+          "path": "iu100.ttf",
+          "location": { "wght": 100, "opsz": 16 }
+        },
+        {
+          "id": "iu400",
+          "name": "UI Regular Italic",
+          "path": "iu400.ttf",
+          "location": { "wght": 400, "opsz": 16 }
+        },
+        {
+          "id": "iu950",
+          "name": "UI ExtraBlack Italic",
+          "path": "iu950.ttf",
+          "location": { "wght": 950, "opsz": 16 }
+        },
+        {
+          "id": "id100",
+          "name": "Display Thin Italic",
+          "path": "id100.ttf",
+          "location": { "wght": 100, "opsz": 28 }
+        },
+        {
+          "id": "id400",
+          "name": "Display Regular Italic",
+          "path": "id400.ttf",
+          "location": { "wght": 400, "opsz": 28 }
+        },
+        {
+          "id": "id950",
+          "name": "Display ExtraBlack Italic",
+          "path": "id950.ttf",
+          "location": { "wght": 950, "opsz": 28 }
+        }
+      ],
+      "masters": [
+        {
+          "name": "Text Thin Italic",
+          "donorId": "it100",
+          "location": { "wght": 100, "opsz": 12 }
+        },
+        {
+          "name": "Text Regular Italic",
+          "donorId": "it400",
+          "location": { "wght": 400, "opsz": 12 }
+        },
+        {
+          "name": "Text ExtraBlack Italic",
+          "donorId": "it950",
+          "location": { "wght": 950, "opsz": 12 }
+        },
+        {
+          "name": "UI Thin Italic",
+          "donorId": "iu100",
+          "location": { "wght": 100, "opsz": 16 }
+        },
+        {
+          "name": "UI Regular Italic",
+          "donorId": "iu400",
+          "location": { "wght": 400, "opsz": 16 },
+          "default": true
+        },
+        {
+          "name": "UI ExtraBlack Italic",
+          "donorId": "iu950",
+          "location": { "wght": 950, "opsz": 16 }
+        },
+        {
+          "name": "Display Thin Italic",
+          "donorId": "id100",
+          "location": { "wght": 100, "opsz": 28 }
+        },
+        {
+          "name": "Display Regular Italic",
+          "donorId": "id400",
+          "location": { "wght": 400, "opsz": 28 }
+        },
+        {
+          "name": "Display ExtraBlack Italic",
+          "donorId": "id950",
+          "location": { "wght": 950, "opsz": 28 }
+        }
+      ],
+      "source": "fixture-italic.glyphs",
+      "output": "fixture-italic-vf.ttf"
+    }
+  },
+  "output": { "dir": "out", "formats": ["ttf"], "releaseDir": "release" }
+}
