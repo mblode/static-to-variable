@@ -25,7 +25,8 @@ import sys
 from pathlib import Path
 
 import glyphsLib
-from fontTools.pens.areaPen import AreaPen
+import pathops
+from fontTools.pens.recordingPen import DecomposingRecordingPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
@@ -43,31 +44,84 @@ def _run(cmd, repo_root: Path):
 
 def _positions(style: Style) -> list[int | float]:
     tag = _axis_tag(style)
-    return sorted(m.location[tag] for m in style.masters)
+    return sorted({m.location[tag] for m in style.masters})
+
+
+def _master_rows(style: Style) -> list[list[dict[str, float]]]:
+    """Masters grouped by every axis except the primary, each row sorted by it."""
+    tag = _axis_tag(style)
+    rows: dict[tuple, list[dict[str, float]]] = {}
+    for master in style.masters:
+        extra = tuple(sorted((key, master.location[key]) for key in master.location if key != tag))
+        rows.setdefault(extra, []).append(dict(master.location))
+    return [sorted(row, key=lambda loc: loc[tag]) for row in rows.values()]
 
 
 def _axis_tag(style: Style) -> str:
-    # every master shares the same axis tags; use the first master's
-    return next(iter(style.masters[0].location))
+    # Weight is the interpolating axis reconstruct and kerning already assume.
+    # Location dicts are sorted alphabetically, so opsz would otherwise win.
+    loc = style.masters[0].location
+    if "wght" in loc:
+        return "wght"
+    return next(iter(loc))
 
 
 def freeze_to_book(config: ProjectConfig, style_key: str, names) -> None:
-    """Pin the named glyphs to the default master's donor outline across every
-    master (constant -> can't collapse)."""
+    """Freeze weight interpolation without erasing other-axis variation.
+
+    Every optical row is pinned to its own default-weight donor. This keeps a
+    collapsed glyph safe along ``wght`` while preserving intentional Text/UI/
+    Display differences. If those row drawings are incompatible, fontmake's
+    next pass reports the glyph by name instead of silently replacing all rows
+    with the global default outline.
+    """
     style = config.styles[style_key]
-    book = TTFont(str(default_donor_path(style))).getGlyphSet()
+    primary_tag = _axis_tag(style)
+    primary_default = next(axis.default for axis in config.axes if axis.tag == primary_tag)
+    donor_by_id = {donor.id: donor for donor in style.donors}
+    rows: dict[tuple[tuple[str, float], ...], list] = {}
+    for master in style.masters:
+        extra = tuple(
+            (axis.tag, master.location[axis.tag]) for axis in config.axes if axis.tag != primary_tag
+        )
+        rows.setdefault(extra, []).append(master)
+    row_defaults = {}
+    for extra, masters in rows.items():
+        row_default = next(
+            (master for master in masters if master.location[primary_tag] == primary_default),
+            None,
+        )
+        if row_default is None:
+            coords = ", ".join(f"{tag}={value:g}" for tag, value in extra) or "default row"
+            raise PipelineError(
+                f"[{style_key}] cannot freeze row {coords}: no master at "
+                f"{primary_tag}={primary_default:g}"
+            )
+        glyph_set = TTFont(str(donor_by_id[row_default.donor_id].path)).getGlyphSet()
+        for master in masters:
+            row_defaults[master.name] = glyph_set
+
     with open(style.source) as source_file:
         font = glyphsLib.load(source_file)
-    ids = [m.id for m in font.masters]
+    glyph_set_by_id = {
+        master.id: row_defaults[master.name]
+        for master in font.masters
+        if master.name in row_defaults
+    }
     by = {g.name: g for g in font.glyphs}
     for nm in names:
-        g, o = by.get(nm), donor_outline(book, nm)
-        if not g or o is None:
+        glyph = by.get(nm)
+        if glyph is None:
             continue
-        for layer in g.layers:
-            if layer.layerId in ids:
-                draw_into(layer, o[0])
-                layer.width = o[1]
+        for layer in glyph.layers:
+            glyph_set = glyph_set_by_id.get(layer.layerId)
+            if glyph_set is None:
+                continue
+            outline = donor_outline(glyph_set, nm)
+            if outline is None:
+                continue
+            draw_into(layer, outline[0])
+            layer.width = outline[1]
     font.save(str(style.source))
 
 
@@ -194,66 +248,105 @@ def _collapsing_glyphs(config: ProjectConfig, style_key: str, tol=0.22) -> list[
     style = config.styles[style_key]
     tag = _axis_tag(style)
     vf = TTFont(str(style.output))
-    masters = _positions(style)
-    pairs = list(zip(masters, masters[1:], strict=False))
-    weights = sorted(set(masters) | {(a + b) / 2 for a, b in pairs})
-    inst = {
-        w: instantiateVariableFont(copy.deepcopy(vf), {tag: w}, inplace=False).getGlyphSet()
-        for w in weights
-    }
     bad = []
-    for g in vf.getGlyphOrder():
-        if g == ".notdef":
-            continue
-        for a, b in pairs:
-            m = (a + b) / 2
-            aa, ab, am = _area(inst[a], g), _area(inst[b], g), _area(inst[m], g)
-            if not aa or not ab or am is None:
+    for row in _master_rows(style):
+        extras = {key: value for key, value in row[0].items() if key != tag}
+        weights = [loc[tag] for loc in row]
+        pairs = list(zip(weights, weights[1:], strict=False))
+        points = sorted(set(weights) | {(a + b) / 2 for a, b in pairs})
+        inst = {
+            w: instantiateVariableFont(
+                copy.deepcopy(vf), {tag: w, **extras}, inplace=False
+            ).getGlyphSet()
+            for w in points
+        }
+        for g in vf.getGlyphOrder():
+            if g == ".notdef" or g in bad:
                 continue
-            mean = (aa + ab) / 2
-            if mean > 800 and abs(am / mean - 1.0) > tol:
-                bad.append(g)
-                break
+            for a, b in pairs:
+                mid = (a + b) / 2
+                aa, ab, am = _area(inst[a], g), _area(inst[b], g), _area(inst[mid], g)
+                if not aa or not ab or am is None:
+                    continue
+                mean = (aa + ab) / 2
+                if mean > 800 and abs(am / mean - 1.0) > tol:
+                    bad.append(g)
+                    break
     return bad
 
 
-def check_fidelity(config: ProjectConfig, style_key: str):
+def check_fidelity(
+    config: ProjectConfig,
+    style_key: str,
+    extra_skip: list[str] | tuple[str, ...] = (),
+):
     style = config.styles[style_key]
-    tag = _axis_tag(style)
     donor_by_id = {d.id: d for d in style.donors}
     # open_bar intentionally removes the through-bar, so instance area is below
     # the closed-bar donor — skip those glyphs rather than false-fail fidelity.
     # Frozen glyphs pin to the default master, so non-default weights diverge.
     skip_glyphs = set(config.glyphs.freeze)
+    skip_glyphs.update(extra_skip)
     for name, strat in config.glyphs.strategies.items():
         if strat.strategy in {"open_bar", "freeze"}:
             skip_glyphs.add(name)
     vf = TTFont(str(style.output))
+    master_locs = [dict(master.location) for master in style.masters]
+    instances = [
+        instantiateVariableFont(copy.deepcopy(vf), loc, inplace=False).getGlyphSet()
+        for loc in master_locs
+    ]
+    instances_by_location = list(zip(master_locs, instances, strict=True))
+    for glyph_name in vf.getGlyphOrder():
+        constant_in_every_row = True
+        for row in _master_rows(style):
+            row_areas = [
+                area
+                for location, glyph_set in instances_by_location
+                if location in row
+                for area in [_area(glyph_set, glyph_name)]
+                if area
+            ]
+            if len(row_areas) >= 2 and max(row_areas) > min(row_areas) * 1.02:
+                constant_in_every_row = False
+                break
+        if constant_in_every_row:
+            skip_glyphs.add(glyph_name)
     fails = []
-    for master in style.masters:
-        pos = master.location[tag]
+    for master, gi in zip(style.masters, instances, strict=True):
+        location = ",".join(f"{axis.tag}={master.location[axis.tag]:g}" for axis in config.axes)
         donor = TTFont(str(donor_by_id[master.donor_id].path))
         gd = donor.getGlyphSet()
-        gi = instantiateVariableFont(copy.deepcopy(vf), {tag: pos}, inplace=False).getGlyphSet()
         for g in vf.getGlyphOrder():
             if g == ".notdef" or g not in gd or g in skip_glyphs:
                 continue
             ai = _area(gi, g)
             ad = _area(gd, g)
             if ai and ad and ad > 1000 and ai / ad < UNDERWEIGHT_RATIO:
-                fails.append((pos, g, round(ai / ad, 2)))
+                fails.append((location, g, round(ai / ad, 2)))
     return fails
 
 
 def _area(gs, n):
+    """Return rendered ink area after applying the outline's nonzero fill.
+
+    ``AreaPen`` sums contour areas, which double-counts same-winding overlaps.
+    Reconstructed masters deliberately remove those overlaps, so comparing the
+    raw sums makes an identical rendered shape look underweight.  Simplifying
+    with pathops first measures the union the rasterizer actually fills while
+    retaining the existing fidelity threshold.
+    """
     if n not in gs:
         return None
-    pen = AreaPen(gs)
     try:
-        gs[n].draw(pen)
+        recording = DecomposingRecordingPen(gs)
+        gs[n].draw(recording)
+        path = pathops.Path()
+        recording.replay(path.getPen())
+        path.simplify()
     except Exception:  # noqa: BLE001
         return None
-    return abs(pen.value)
+    return abs(path.area)
 
 
 def main(argv: list[str] | None = None) -> int:

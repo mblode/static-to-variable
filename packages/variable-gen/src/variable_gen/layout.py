@@ -232,33 +232,35 @@ def _axis_value(location: dict[str, float], axis_tag: str) -> float:
 
 
 def _designspace(
-    masters: list[tuple[TTFont, float]],
-    axis_tag: str,
-    axis_name: str,
-    default_value: float,
+    masters: list[tuple[TTFont, dict[str, float]]],
+    axes: list[tuple[str, str, float, float, float]],
+    default_location: dict[str, float],
 ) -> DesignSpaceDocument:
     doc = DesignSpaceDocument()
-    axis = AxisDescriptor()
-    axis.tag = axis_tag
-    axis.name = axis_name
-    axis.minimum = min(pos for _, pos in masters)
-    axis.default = default_value
-    axis.maximum = max(pos for _, pos in masters)
-    doc.addAxis(axis)
+    names = {}
+    for tag, name, minimum, default, maximum in axes:
+        axis = AxisDescriptor()
+        axis.tag = tag
+        axis.name = name
+        axis.minimum = minimum
+        axis.default = default
+        axis.maximum = maximum
+        doc.addAxis(axis)
+        names[tag] = name
 
-    for font, pos in masters:
+    for font, location in masters:
         source = SourceDescriptor()
         source.font = font
-        source.location = {axis_name: pos}
-        source.styleName = f"{axis_tag}{pos:g}"
-        if pos == default_value:
+        source.location = {names[tag]: value for tag, value in location.items()}
+        source.styleName = " ".join(f"{tag}{value:g}" for tag, value in location.items())
+        if location == default_location:
             source.copyInfo = True
         doc.addSource(source)
 
-    for _, pos in masters:
+    for _, location in masters:
         inst = InstanceDescriptor()
-        inst.location = {axis_name: pos}
-        inst.styleName = f"{axis_tag}{pos:g}"
+        inst.location = {names[tag]: value for tag, value in location.items()}
+        inst.styleName = " ".join(f"{tag}{value:g}" for tag, value in location.items())
         doc.addInstance(inst)
     return doc
 
@@ -283,14 +285,19 @@ def donor_kern(donor_path: Path, varfont: TTFont) -> dict[tuple[str, str], int]:
 def _vary_kerning(
     varfont: TTFont, existing: list[tuple[Path, dict[str, float]]], axis_tag: str
 ) -> KernReport:
-    donors: list[tuple[float, dict[tuple[str, str], int]]] = []
+    donors: list[tuple[dict[str, float], dict[tuple[str, str], int]]] = []
+    seen: set[tuple[tuple[str, float], ...]] = set()
     for path, location in existing:
         try:
-            position = _axis_value(location, axis_tag)
+            _axis_value(location, axis_tag)
         except KeyError:
             return KernReport(note=f"{path.name} has no {axis_tag} location")
+        canonical = tuple(sorted((tag, float(value)) for tag, value in location.items()))
+        if canonical in seen:
+            return KernReport(note=f"duplicate donor location {dict(canonical)}")
+        seen.add(canonical)
         try:
-            donors.append((position, donor_kern(path, varfont)))
+            donors.append((dict(location), donor_kern(path, varfont)))
         except KerningTooLarge as exc:
             return KernReport(note=f"{path.name}: {exc}")
     if not any(kern for _, kern in donors):
@@ -393,23 +400,21 @@ def _variable_merge(
 ) -> LayoutReport | None:
     """Tier 1: merge every donor's whole layout with varLib. ``None`` if it
     cannot be done, leaving ``varfont`` for the caller to restore."""
-    default_value: float | None = None
+    default_location: dict[str, float] | None = None
     for path, loc in existing:
         if path.resolve() == default_donor.resolve():
-            try:
-                default_value = _axis_value(loc, axis_tag)
-            except KeyError:
-                default_value = None
+            default_location = dict(loc)
             break
 
     try:
-        prepared: list[tuple[TTFont, float]] = []
+        prepared: list[tuple[TTFont, dict[str, float]]] = []
         order = list(varfont.getGlyphOrder())
         for path, loc in existing:
-            pos = _axis_value(loc, axis_tag)
-            if default_value is None and path.resolve() == default_donor.resolve():
-                default_value = pos
-            inst = instantiateVariableFont(copy.deepcopy(varfont), {axis_tag: pos}, inplace=False)
+            _axis_value(loc, axis_tag)
+            location = dict(loc)
+            if default_location is None and path.resolve() == default_donor.resolve():
+                default_location = location
+            inst = instantiateVariableFont(copy.deepcopy(varfont), location, inplace=False)
             for tag in LAYOUT_TABLES:
                 if tag in inst:
                     del inst[tag]
@@ -424,12 +429,23 @@ def _variable_merge(
                 if tag in inst:
                     _ = inst[tag]  # decompile before glyph-order swap
             inst.setGlyphOrder(order)
-            prepared.append((inst, pos))
+            prepared.append((inst, location))
 
-        if default_value is None:
-            default_value = sorted(pos for _, pos in prepared)[len(prepared) // 2]
+        fvar_axes = list(varfont["fvar"].axes)
+        axes = [
+            (
+                axis.axisTag,
+                axis_name if axis.axisTag == axis_tag else axis.axisTag,
+                axis.minValue,
+                axis.defaultValue,
+                axis.maxValue,
+            )
+            for axis in fvar_axes
+        ]
+        if default_location is None:
+            default_location = {axis.axisTag: axis.defaultValue for axis in fvar_axes}
 
-        candidate, _, _ = varlib_build(_designspace(prepared, axis_tag, axis_name, default_value))
+        candidate, _, _ = varlib_build(_designspace(prepared, axes, default_location))
         if not _compiles(candidate):
             raise RuntimeError("variable layout merge failed compile gate")
 

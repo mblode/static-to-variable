@@ -76,7 +76,7 @@ def normalize_style(config: ProjectConfig, style_key: str) -> NormalizeStats:
         return NormalizeStats(style=style_key, vertical_normalized=0, skipped=True)
 
     style = config.styles[style_key]
-    default_pos = config.axes[0].default
+    primary_default = config.axes[0].default
 
     rep = TTFont(str(_first_donor_path(config, style)))
     cmap_rev = {v: k for k, v in rep.getBestCmap().items()}
@@ -84,54 +84,72 @@ def normalize_style(config: ProjectConfig, style_key: str) -> NormalizeStats:
     with open(style.source) as source_file:
         font = glyphsLib.load(source_file)
     mids = [m.id for m in font.masters]
-    default_id = next((m.id for m in font.masters if m.axes[0] == default_pos), None)
+    rows: dict[tuple[float, ...], list] = {}
+    for master in font.masters:
+        rows.setdefault(tuple(float(value) for value in master.axes[1:]), []).append(master)
 
     n_fixed = 0
     for glyph in font.glyphs:
         if not _stable_height(cmap_rev, glyph.name):
             continue
         layers = {layer.layerId: layer for layer in glyph.layers if layer.layerId in mids}
-        ref = layers.get(default_id)
-        if ref is None or len(layers) < 2:
-            continue
-        ref_m = layer_metrics(ref)
-        if ref_m is None or ref_m[1] is None:
-            continue
-        ref_ymin, ref_ymax = ref_m[1], ref_m[2]
-        ref_h = ref_ymax - ref_ymin
-        if ref_h <= 0:
-            continue
-
-        boxes: dict[str, tuple[float, float]] = {}
-        complete = True
-        for mid, layer in layers.items():
-            m = layer_metrics(layer)
-            if m is None or m[1] is None:
-                complete = False
-                break
-            boxes[mid] = (m[1], m[2])
-        if not (complete and boxes):
-            continue
-        float_up = max(b[0] for b in boxes.values()) - ref_ymin
-        falls_short = ref_ymax - min(b[1] for b in boxes.values())
-        if float_up <= FLOAT_TOL and falls_short <= SHORT_TOL:
-            continue  # consistent with the default master (only overshoots) — leave alone
-
-        # Map every master's vertical extent onto the default master's box
-        # (scale + shift Y): Y' = ref_ymin + (Y - ymin) * ref_h/h. X untouched.
-        for mid, layer in layers.items():
-            if mid == default_id:
+        glyph_fixed = False
+        for row_masters in rows.values():
+            # Normalize weight defects against the default weight *inside this
+            # optical row*. A single global reference would silently flatten
+            # the Text pole's intended vertical changes onto the UI pole.
+            default_master = next(
+                (master for master in row_masters if master.axes[0] == primary_default),
+                None,
+            )
+            if default_master is None:
                 continue
-            ymin, ymax = boxes[mid]
-            h = ymax - ymin
-            if h <= 0:
+            row_layers = {
+                master.id: layers[master.id] for master in row_masters if master.id in layers
+            }
+            ref = row_layers.get(default_master.id)
+            if ref is None or len(row_layers) < 2:
                 continue
-            sy = ref_h / h
-            for path in layer.paths or []:
-                for node in path.nodes:
-                    x, y = node.position
-                    node.position = (x, ref_ymin + (y - ymin) * sy)
-        n_fixed += 1
+            ref_m = layer_metrics(ref)
+            if ref_m is None or ref_m[1] is None:
+                continue
+            ref_ymin, ref_ymax = ref_m[1], ref_m[2]
+            ref_h = ref_ymax - ref_ymin
+            if ref_h <= 0:
+                continue
+
+            boxes: dict[str, tuple[float, float]] = {}
+            complete = True
+            for mid, layer in row_layers.items():
+                metrics = layer_metrics(layer)
+                if metrics is None or metrics[1] is None:
+                    complete = False
+                    break
+                boxes[mid] = (metrics[1], metrics[2])
+            if not (complete and boxes):
+                continue
+            float_up = max(box[0] for box in boxes.values()) - ref_ymin
+            falls_short = ref_ymax - min(box[1] for box in boxes.values())
+            if float_up <= FLOAT_TOL and falls_short <= SHORT_TOL:
+                continue
+
+            # Map weights in this row onto this row's default box. X and every
+            # other optical row remain untouched.
+            for mid, layer in row_layers.items():
+                if mid == default_master.id:
+                    continue
+                ymin, ymax = boxes[mid]
+                height = ymax - ymin
+                if height <= 0:
+                    continue
+                scale_y = ref_h / height
+                for path in layer.paths or []:
+                    for node in path.nodes:
+                        x, y = node.position
+                        node.position = (x, ref_ymin + (y - ymin) * scale_y)
+            glyph_fixed = True
+        if glyph_fixed:
+            n_fixed += 1
 
     font.save(str(style.source))
     return NormalizeStats(style=style_key, vertical_normalized=n_fixed)
