@@ -8,9 +8,12 @@ weight matches its mapped donor. Every input (masters, donor paths, output paths
 comes from a v3 ``ProjectConfig`` instead of the hardcoded ``PLANS``/``BUILD``
 literals.
 
-The freeze behaviour is preserved exactly (parity depends on it): the loop
-detects glyphs that collapse at master-pair midpoints in the BUILT VF, freezes
-them to the default-master donor (constant -> can't collapse), and rebuilds.
+The generated-outline freeze behaviour is preserved exactly (parity depends on
+it): the loop detects glyphs that collapse at master-pair midpoints in the BUILT
+VF, freezes them to the default-master donor (constant -> can't collapse), and
+rebuilds. Explicitly marked authored rows are never destructive-repair targets;
+incomplete provenance, incompatibility, collapse, or compiled-source drift is a
+named hard error instead.
 
 Run:  uv run python -m variable_gen.cli build --config <path> --style all
 """
@@ -22,6 +25,7 @@ import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import glyphsLib
@@ -30,12 +34,34 @@ from fontTools.pens.recordingPen import DecomposingRecordingPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
+from variable_gen.authorship import AuthoredSource, inspect_authored_source
 from variable_gen.common import PipelineError, fontmake_command, merge_style_report
 from variable_gen.config import ProjectConfig, Style, default_donor_path
 from variable_gen.designspace import export_designspace
 from variable_gen.outlines import donor_outline, draw_into
 
 UNDERWEIGHT_RATIO = 0.92
+AUTHORED_FIDELITY_RATIO = 0.98
+
+
+@dataclass(frozen=True)
+class CollapseFinding:
+    """One interpolation-safety failure at a sampled primary-axis midpoint."""
+
+    glyph: str
+    location: tuple[tuple[str, float], ...]
+    left: float
+    right: float
+    midpoint_area: float
+    endpoint_mean_area: float
+
+    def describe(self) -> str:
+        location = ", ".join(f"{tag}={value:g}" for tag, value in self.location)
+        ratio = self.midpoint_area / self.endpoint_mean_area
+        return (
+            f"{self.glyph} at {location} between {self.left:g} and {self.right:g} "
+            f"(midpoint/endpoint-mean area={ratio:.3f})"
+        )
 
 
 def _run(cmd, repo_root: Path):
@@ -76,6 +102,12 @@ def freeze_to_book(config: ProjectConfig, style_key: str, names) -> None:
     with the global default outline.
     """
     style = config.styles[style_key]
+    authored = inspect_authored_source(config, style_key)
+    protected = sorted(set(names) & authored.glyphs)
+    if protected:
+        raise PipelineError(
+            f"[{style_key}] authored glyphs cannot be donor-frozen: {', '.join(protected)}"
+        )
     primary_tag = _axis_tag(style)
     primary_default = next(axis.default for axis in config.axes if axis.tag == primary_tag)
     donor_by_id = {donor.id: donor for donor in style.donors}
@@ -158,6 +190,10 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
 
         print(f"[{style_key}] no source at {style.source} — bootstrapping + rebuilding from donors")
         rebuild_style(config, style_key)
+    # Validate provenance before fontmake writes an output. Authored optical
+    # rows are all-or-nothing across the primary axis: a lone Regular drawing
+    # is never projected into Thin/ExtraBlack by this engine.
+    authored = inspect_authored_source(config, style_key)
     fontmake = fontmake_command(config.repo_root)
     out = style.output
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -185,11 +221,20 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
             # The build SUCCEEDED structurally, but the glyphsLib/cu2qu round-trip
             # can still leave complex glyphs that COLLAPSE at interpolated weights.
             # Detect them in the actual VF and freeze to the default donor, rebuild.
-            collapsed = [g for g in _collapsing_glyphs(config, style_key) if g not in frozen]
+            collapsed = _freeze_candidates(
+                style_key,
+                authored,
+                _collapse_findings(config, style_key),
+                frozen,
+            )
             if collapsed:
                 frozen += collapsed
                 freeze_to_book(config, style_key, collapsed)
                 continue
+            authored_fidelity = check_authored_fidelity(config, style_key, authored)
+            if authored_fidelity:
+                details = "\n".join(f"  {failure}" for failure in authored_fidelity)
+                raise PipelineError(f"[{style_key}] authored master fidelity failed:\n{details}")
             # fontmake leaves the default instance's fvar subfamily name empty
             # (its elidable "Regular" label collapses to ""), so repair instance
             # names in the build artifact too, not just at release time.
@@ -235,6 +280,12 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
             | set(re.findall(r"in glyph (\S+?):", err))
         )
         fresh = [n for n in names if n not in frozen]
+        authored_failures = sorted(set(fresh) & authored.glyphs)
+        if authored_failures:
+            raise PipelineError(
+                f"[{style_key}] authored glyphs are incompatible and cannot be donor-frozen: "
+                f"{', '.join(authored_failures)}"
+            )
         if not fresh:
             sys.stderr.write(err[-2000:])
             raise PipelineError(f"[{style_key}] build failed, no glyph parsed")
@@ -245,10 +296,48 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
 
 def _collapsing_glyphs(config: ProjectConfig, style_key: str, tol=0.22) -> list[str]:
     """Glyphs whose ink area collapses at a master-pair midpoint in the BUILT VF."""
+    return list(
+        dict.fromkeys(finding.glyph for finding in _collapse_findings(config, style_key, tol))
+    )
+
+
+def _freeze_candidates(
+    style_key: str,
+    authored: AuthoredSource,
+    findings: list[CollapseFinding],
+    already_frozen: list[str],
+) -> list[str]:
+    """Choose generated glyphs to freeze and reject authored failures."""
+
+    authored_findings = [finding for finding in findings if authored.has_glyph(finding.glyph)]
+    if authored_findings:
+        details = "\n".join(f"  {finding.describe()}" for finding in authored_findings)
+        raise PipelineError(
+            f"[{style_key}] authored glyph interpolation is unsafe; refusing donor freeze:\n"
+            f"{details}"
+        )
+    return [
+        glyph
+        for glyph in dict.fromkeys(finding.glyph for finding in findings)
+        if glyph not in already_frozen
+    ]
+
+
+def _collapse_findings(
+    config: ProjectConfig,
+    style_key: str,
+    tol: float = 0.22,
+) -> list[CollapseFinding]:
+    """Return named midpoint failures without deciding how to repair them.
+
+    Generated glyphs may still use the historical donor-freeze repair. Marked
+    authored glyphs consume these diagnostics as hard errors instead, keeping
+    interpolation safety intact without destroying the drawings.
+    """
     style = config.styles[style_key]
     tag = _axis_tag(style)
     vf = TTFont(str(style.output))
-    bad = []
+    findings: list[CollapseFinding] = []
     for row in _master_rows(style):
         extras = {key: value for key, value in row[0].items() if key != tag}
         weights = [loc[tag] for loc in row]
@@ -261,7 +350,7 @@ def _collapsing_glyphs(config: ProjectConfig, style_key: str, tol=0.22) -> list[
             for w in points
         }
         for g in vf.getGlyphOrder():
-            if g == ".notdef" or g in bad:
+            if g == ".notdef":
                 continue
             for a, b in pairs:
                 mid = (a + b) / 2
@@ -270,9 +359,119 @@ def _collapsing_glyphs(config: ProjectConfig, style_key: str, tol=0.22) -> list[
                     continue
                 mean = (aa + ab) / 2
                 if mean > 800 and abs(am / mean - 1.0) > tol:
-                    bad.append(g)
+                    location = dict(extras)
+                    location[tag] = mid
+                    findings.append(
+                        CollapseFinding(
+                            glyph=g,
+                            location=tuple(sorted(location.items())),
+                            left=a,
+                            right=b,
+                            midpoint_area=am,
+                            endpoint_mean_area=mean,
+                        )
+                    )
                     break
-    return bad
+    return findings
+
+
+def check_authored_fidelity(
+    config: ProjectConfig,
+    style_key: str,
+    authored: AuthoredSource | None = None,
+) -> list[str]:
+    """Compare marked source layers with compiled exact-master instances.
+
+    fontmake converts cubic Glyphs outlines to quadratic TrueType contours, so
+    point-for-point equality is not meaningful. Rendered nonzero-fill area and
+    advance width are stable across that conversion and catch destructive
+    filters or a wrong master mapping without relaxing donor fidelity.
+    """
+
+    style = config.styles[style_key]
+    authored = authored or inspect_authored_source(config, style_key)
+    if not authored.layers:
+        return []
+
+    axis_tags = tuple(axis.tag for axis in config.axes)
+    with style.source.open(encoding="utf-8") as source_file:
+        source = glyphsLib.load(source_file)
+    configured_by_name = {
+        master.name: tuple((tag, float(master.location[tag])) for tag in axis_tags)
+        for master in style.masters
+    }
+    locations_by_id = {}
+    for master in source.masters:
+        location = configured_by_name.get(master.name)
+        if location is None and len(master.axes) == len(axis_tags):
+            location = tuple(
+                (tag, float(value)) for tag, value in zip(axis_tags, master.axes, strict=True)
+            )
+        if location is not None:
+            locations_by_id[master.id] = location
+    source_sets: dict[tuple[tuple[str, float], ...], dict[str, object]] = {}
+    source_widths: dict[tuple[str, tuple[tuple[str, float], ...]], float] = {}
+    for glyph in source.glyphs:
+        for layer in glyph.layers:
+            location = locations_by_id.get(layer.layerId)
+            if location is None:
+                continue
+            source_sets.setdefault(location, {})[glyph.name] = layer
+            source_widths[(glyph.name, location)] = float(layer.width)
+
+    variable = TTFont(str(style.output))
+    variable_axes = (
+        {axis.axisTag for axis in variable["fvar"].axes} if "fvar" in variable else set()
+    )
+    instances: dict[tuple[tuple[str, float], ...], TTFont] = {}
+    failures: list[str] = []
+    for glyph_name, layers in sorted(authored.layers.items()):
+        for location in sorted(layers):
+            source_set = source_sets.get(location)
+            if source_set is None or glyph_name not in source_set:
+                failures.append(f"{glyph_name} at {_describe_location(location)} missing in source")
+                continue
+            instance = instances.get(location)
+            if instance is None:
+                coordinates = {tag: value for tag, value in location if tag in variable_axes}
+                instance = (
+                    instantiateVariableFont(copy.deepcopy(variable), coordinates, inplace=False)
+                    if variable_axes
+                    else copy.deepcopy(variable)
+                )
+                instances[location] = instance
+            output_set = instance.getGlyphSet()
+            if glyph_name not in output_set:
+                failures.append(f"{glyph_name} at {_describe_location(location)} missing in output")
+                continue
+
+            source_area = _area(source_set, glyph_name)
+            output_area = _area(output_set, glyph_name)
+            if not source_area or not output_area:
+                failures.append(
+                    f"{glyph_name} at {_describe_location(location)} has no measurable ink"
+                )
+            else:
+                ratio = output_area / source_area
+                if not AUTHORED_FIDELITY_RATIO <= ratio <= 1 / AUTHORED_FIDELITY_RATIO:
+                    failures.append(
+                        f"{glyph_name} at {_describe_location(location)} area ratio {ratio:.3f} "
+                        f"outside [{AUTHORED_FIDELITY_RATIO:.2f}, "
+                        f"{1 / AUTHORED_FIDELITY_RATIO:.3f}]"
+                    )
+
+            source_width = source_widths[(glyph_name, location)]
+            output_width = float(instance["hmtx"].metrics[glyph_name][0])
+            if abs(output_width - source_width) > 1:
+                failures.append(
+                    f"{glyph_name} at {_describe_location(location)} advance "
+                    f"{output_width:g} != source {source_width:g}"
+                )
+    return failures
+
+
+def _describe_location(location: tuple[tuple[str, float], ...]) -> str:
+    return ", ".join(f"{tag}={value:g}" for tag, value in location)
 
 
 def check_fidelity(
