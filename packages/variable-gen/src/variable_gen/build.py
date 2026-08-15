@@ -25,7 +25,8 @@ import sys
 from pathlib import Path
 
 import glyphsLib
-from fontTools.pens.areaPen import AreaPen
+import pathops
+from fontTools.pens.recordingPen import DecomposingRecordingPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
@@ -327,14 +328,25 @@ def check_fidelity(
 
 
 def _area(gs, n):
+    """Return rendered ink area after applying the outline's nonzero fill.
+
+    ``AreaPen`` sums contour areas, which double-counts same-winding overlaps.
+    Reconstructed masters deliberately remove those overlaps, so comparing the
+    raw sums makes an identical rendered shape look underweight.  Simplifying
+    with pathops first measures the union the rasterizer actually fills while
+    retaining the existing fidelity threshold.
+    """
     if n not in gs:
         return None
-    pen = AreaPen(gs)
     try:
-        gs[n].draw(pen)
+        recording = DecomposingRecordingPen(gs)
+        gs[n].draw(recording)
+        path = pathops.Path()
+        recording.replay(path.getPen())
+        path.simplify()
     except Exception:  # noqa: BLE001
         return None
-    return abs(pen.value)
+    return abs(path.area)
 
 
 def main(argv: list[str] | None = None) -> int:
