@@ -104,7 +104,7 @@ def fix_instances(font, config: ProjectConfig, italic: bool):
             ps = f"{ps_family}-Italic" if is_regular else f"{ps_family}-{ps_base}Italic"
         else:
             sub = base
-            ps = f"{ps_family}-{ps_base}"
+            ps = ps_family if is_regular else f"{ps_family}-{ps_base}"
         # varLib may intentionally share a name ID between an axis-value label
         # and a named instance. Rewriting that record would turn a STAT label
         # such as "Text" into "Regular Text". Give the instance its own ID and
