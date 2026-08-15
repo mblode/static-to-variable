@@ -1,4 +1,5 @@
 import { renderZoneOgImage } from "@/app/og-image-shared";
+import { OgLogo } from "@/app/og-logo";
 
 export {
   OG_CONTENT_TYPE as contentType,
@@ -15,11 +16,9 @@ export const alt = "Static to Variable: static fonts into one variable font";
  */
 export default function OpengraphImage() {
   return renderZoneOgImage({
-    badge: "FONTS",
-    eyebrow: "blode.co/static-to-variable",
-    // Deliberately shorter than the meta description, which runs long for the
-    // SERP. A card is read in a feed, at a glance.
-    subtitle: "Point it at thin, regular and bold. Get every weight between.",
+    background: "#f5f0e6",
+    color: "#1a1510",
+    logo: <OgLogo />,
     title: "Static to Variable",
   });
 }

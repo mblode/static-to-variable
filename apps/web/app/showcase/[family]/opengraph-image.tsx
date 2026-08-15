@@ -1,4 +1,5 @@
 import { renderZoneOgImage } from "@/app/og-image-shared";
+import { OgLogo } from "@/app/og-logo";
 import { FONTS } from "@/lib/fonts";
 
 export {
@@ -31,11 +32,9 @@ export default async function Image({
   const font = FONTS.find((f) => f.id === family);
 
   return renderZoneOgImage({
-    badge: "SHOWCASE",
-    eyebrow: "blode.co/static-to-variable/showcase",
-    subtitle: font
-      ? `Rebuilt from ${font.staticStyles ?? "static"} static styles into one variable font. Weight axis ${font.axis.min} to ${font.axis.max}.`
-      : "Rebuilt from static styles into one variable font.",
+    background: "#f5f0e6",
+    color: "#1a1510",
+    logo: <OgLogo />,
     title: `${font?.name ?? "Variable font"} variable font`,
   });
 }
