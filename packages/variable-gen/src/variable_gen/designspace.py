@@ -17,6 +17,7 @@ Run:  uv run python -m variable_gen.cli designspace --config <path> --style all
 from __future__ import annotations
 
 import shutil
+from itertools import product
 from pathlib import Path
 
 import glyphsLib
@@ -27,7 +28,7 @@ from fontTools.designspaceLib import (
 )
 from glyphsLib.builder import to_designspace
 
-from variable_gen.config import ProjectConfig
+from variable_gen.config import ConfigAxis, ProjectConfig
 
 
 def fix_designspace_axis(
@@ -36,30 +37,44 @@ def fix_designspace_axis(
     axis_tag: str,
     axis_name: str,
     default_weight: float,
-    weight_names: dict[int, str],
+    weight_names: dict[float, str],
     family: str,
     is_italic: bool,
     write_instances: bool = True,
+    minimum: float | None = None,
+    maximum: float | None = None,
+    mapping: tuple[tuple[float, float], ...] = (),
 ) -> None:
     """Correct the variable axis, pin the default, and emit clean named instances
     + STAT axis labels. glyphsLib emits a broken axis (min=max=default, bogus avar
     map); this rebuilds it from the actual source master locations."""
+    found_axis = False
     for axis in ds.axes:
         if axis.tag != axis_tag:
             continue
+        found_axis = True
         locs = []
         for src in ds.sources:
-            val = src.location.get(axis.name) or src.location.get(axis.tag)
+            val = src.location.get(axis.name)
+            if val is None:
+                val = src.location.get(axis.tag)
             if val is not None:
                 locs.append(val)
         if not locs:
             continue
-        axis.minimum = min(locs)
-        axis.maximum = max(locs)
+        axis.minimum = min(locs) if minimum is None else minimum
+        axis.maximum = max(locs) if maximum is None else maximum
         axis.default = (
             default_weight if axis.minimum <= default_weight <= axis.maximum else min(locs)
         )
-        axis.map = []  # drop incorrect avar mapping
+        # Drop glyphsLib's bogus map, but retain an explicitly configured avar
+        # mapping. DesignspaceLib stores user -> design coordinates here.
+        axis.map = list(mapping)
+        if mapping:
+            for source in ds.sources:
+                key = axis.name if axis.name in source.location else axis.tag
+                if key in source.location:
+                    source.location[key] = axis.map_forward(source.location[key])
 
         # STAT axis-value labels for every named stop in range.
         axis.axisLabels = [
@@ -68,7 +83,11 @@ def fix_designspace_axis(
                 userValue=pos,
                 # Regular<->Bold RIBBI link (default weight -> 700 when present)
                 linkedUserValue=(
-                    700 if pos == default_weight and axis.minimum <= 700 <= axis.maximum else None
+                    700
+                    if axis_tag == "wght"
+                    and pos == default_weight
+                    and axis.minimum <= 700 <= axis.maximum
+                    else None
                 ),
                 elidable=(pos == default_weight),
             )
@@ -76,6 +95,9 @@ def fix_designspace_axis(
             if axis.minimum <= pos <= axis.maximum
         ]
         print(f"  Fixed {axis.tag}: min={axis.minimum} default={axis.default} max={axis.maximum}")
+
+    if not found_axis:
+        raise ValueError(f"designspace has no configured {axis_tag!r} axis")
 
     if write_instances:
         _write_weight_instances(
@@ -94,16 +116,18 @@ def _write_weight_instances(ds, *, axis_name, axis_tag, weight_names, family, is
 
     wmin = min(_loc(s) for s in ds.sources)
     wmax = max(_loc(s) for s in ds.sources)
+    axis = next(item for item in ds.axes if item.tag == axis_tag)
     ds.instances = []
     for pos, base_name in sorted(weight_names.items()):
-        if not (wmin <= pos <= wmax):
+        design_pos = axis.map_forward(pos)
+        if not (wmin <= design_pos <= wmax):
             continue
         style = f"{base_name} Italic" if is_italic else base_name
         inst = InstanceDescriptor()
         inst.familyName = family
         inst.styleName = style
         inst.name = f"{family} {style}"
-        inst.location = {axis_name: pos}
+        inst.location = {axis_name: design_pos}
         inst.lib = {"public.fontInfo": {}}
         ds.addInstance(inst)
     print(f"  Wrote {len(ds.instances)} named instances ({'italic' if is_italic else 'roman'})")
@@ -157,9 +181,12 @@ def build_designspace(
     axis_tag: str,
     axis_name: str,
     default_weight: float,
-    weight_names: dict[int, str],
+    weight_names: dict[float, str],
     master_ufo_dir: Path,
     write_instances: bool = True,
+    axis_minimum: float | None = None,
+    axis_maximum: float | None = None,
+    axis_mapping: tuple[tuple[float, float], ...] = (),
 ) -> Path:
     """Convert one ``.glyphs`` source to UFOs + a corrected designspace, written
     under ``master_ufo_dir``. Returns the designspace path."""
@@ -179,6 +206,9 @@ def build_designspace(
         family=family,
         is_italic=is_italic,
         write_instances=write_instances,
+        minimum=axis_minimum,
+        maximum=axis_maximum,
+        mapping=axis_mapping,
     )
 
     master_ufo_dir.mkdir(parents=True, exist_ok=True)
@@ -218,16 +248,7 @@ def export_designspace(config: ProjectConfig, style_key: str) -> Path:
     style = config.styles[style_key]
     ds_name, ufo_prefix = _ds_naming(config, style_key)
     primary = config.axes[0]
-    weight_names = {int(pos): name for pos, name in primary.named_instances.items()}
-    extra_axes = [
-        {
-            "tag": axis.tag,
-            "name": axis.name,
-            "default": axis.default,
-            "named": {int(pos): name for pos, name in axis.named_instances.items()},
-        }
-        for axis in config.axes[1:]
-    ]
+    weight_names = dict(primary.named_instances)
     path = build_designspace(
         style.source,
         ds_name,
@@ -239,58 +260,87 @@ def export_designspace(config: ProjectConfig, style_key: str) -> Path:
         default_weight=primary.default,
         weight_names=weight_names,
         master_ufo_dir=config.repo_root / "master_ufo",
-        write_instances=not extra_axes,
+        write_instances=len(config.axes) == 1,
+        axis_minimum=primary.minimum,
+        axis_maximum=primary.maximum,
+        axis_mapping=primary.mapping,
     )
-    if extra_axes:
-        _expand_opsz_instances(
+    if len(config.axes) > 1:
+        _configure_multi_axis_designspace(
             path,
             family=config.family.name,
             is_italic=style.italic,
-            weight_name=primary.name,
-            weight_names=weight_names,
-            extra=extra_axes[0],
+            axes=config.axes,
         )
     return path
 
 
-def _expand_opsz_instances(
+def _instance_positions(axis: ConfigAxis) -> list[tuple[float, str]]:
+    positions = sorted(axis.named_instances.items())
+    if not positions:
+        return [(axis.default, f"{axis.default:g}")]
+    return positions
+
+
+def _instance_style(
+    axes: tuple[ConfigAxis, ...], values: tuple[tuple[float, str], ...], is_italic: bool
+) -> str:
+    parts = [values[0][1]]
+    parts.extend(
+        label
+        for axis, (position, label) in zip(axes[1:], values[1:], strict=True)
+        if position != axis.default
+    )
+    base = " ".join(parts) or "Regular"
+    if is_italic:
+        at_default = all(value[0] == axis.default for axis, value in zip(axes, values, strict=True))
+        return "Italic" if at_default else f"{base} Italic"
+    return base
+
+
+def _configure_multi_axis_designspace(
     ds_path: Path,
     *,
-    family,
-    is_italic,
-    weight_name,
-    weight_names,
-    extra,
+    family: str,
+    is_italic: bool,
+    axes: tuple[ConfigAxis, ...],
 ) -> None:
-    """Named instances at every wght × opsz stop."""
+    """Correct every axis and emit named instances at the full axis product."""
     from fontTools.designspaceLib import DesignSpaceDocument
 
     ds = DesignSpaceDocument.fromfile(str(ds_path))
-    fix_designspace_axis(
-        ds,
-        axis_tag=extra["tag"],
-        axis_name=extra["name"],
-        default_weight=extra["default"],
-        weight_names=extra["named"],
-        family=family,
-        is_italic=is_italic,
-        write_instances=False,
-    )
+    for axis in axes[1:]:
+        fix_designspace_axis(
+            ds,
+            axis_tag=axis.tag,
+            axis_name=axis.name,
+            default_weight=axis.default,
+            weight_names=dict(axis.named_instances),
+            family=family,
+            is_italic=is_italic,
+            write_instances=False,
+            minimum=axis.minimum,
+            maximum=axis.maximum,
+            mapping=axis.mapping,
+        )
     ds.instances = []
-    for w_pos, w_name in sorted(weight_names.items()):
-        for o_pos, o_name in sorted(extra["named"].items()):
-            style = f"{w_name} {o_name}"
-            if is_italic:
-                style = f"{style} Italic"
-            inst = InstanceDescriptor()
-            inst.familyName = family
-            inst.styleName = style
-            inst.name = f"{family} {style}"
-            inst.location = {weight_name: w_pos, extra["name"]: o_pos}
-            inst.lib = {"public.fontInfo": {}}
-            ds.addInstance(inst)
+    ladders = [_instance_positions(axis) for axis in axes]
+    for values in product(*ladders):
+        style = _instance_style(axes, values, is_italic)
+        inst = InstanceDescriptor()
+        inst.familyName = family
+        inst.styleName = style
+        inst.name = f"{family} {style}"
+        descriptors = {axis.tag: axis for axis in ds.axes}
+        inst.location = {
+            axis.name: descriptors[axis.tag].map_forward(position)
+            for axis, (position, _label) in zip(axes, values, strict=True)
+        }
+        inst.lib = {"public.fontInfo": {}}
+        ds.addInstance(inst)
     ds.write(str(ds_path))
-    print(f"  Wrote {len(ds.instances)} named instances (wght × {extra['tag']})")
+    tags = " × ".join(axis.tag for axis in axes)
+    print(f"  Wrote {len(ds.instances)} named instances ({tags})")
 
 
 def main(argv: list[str] | None = None) -> int:
