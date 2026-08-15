@@ -15,6 +15,7 @@ PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(PACKAGE_SRC))
 
 from fontTools.ttLib import TTFont  # noqa: E402
+from fontTools.ttLib.tables._f_v_a_r import Axis  # noqa: E402
 from fontTools.varLib.instancer import instantiateVariableFont  # noqa: E402
 
 from variable_gen.kerning import (  # noqa: E402
@@ -24,7 +25,7 @@ from variable_gen.kerning import (  # noqa: E402
     has_kern,
     vary_kern,
 )
-from variable_gen.layout import attach_layout, donor_kern, port_layout  # noqa: E402
+from variable_gen.layout import _vary_kerning, attach_layout, donor_kern, port_layout  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "sample-vf.ttf"
@@ -47,6 +48,17 @@ def ported_fixture():
 
 def donor_set(varfont):
     return [(location["wght"], donor_kern(path, varfont)) for path, location in ALL_DONORS]
+
+
+def add_opsz_axis(varfont):
+    axis = Axis()
+    axis.axisTag = "opsz"
+    axis.minValue = 12.0
+    axis.defaultValue = 16.0
+    axis.maxValue = 28.0
+    axis.flags = 0
+    axis.axisNameID = varfont["fvar"].axes[0].axisNameID
+    varfont["fvar"].axes.append(axis)
 
 
 class FlattenKernTests(unittest.TestCase):
@@ -158,6 +170,36 @@ class VaryKernTests(unittest.TestCase):
 
         self.assertGreater(expected.varying, 0)
         self.assertLess(report.varying, expected.varying)
+
+    def test_repeated_weights_in_optical_rows_remain_distinct_masters(self):
+        vf = ported_fixture()
+        add_opsz_axis(vf)
+        weight_donors = donor_set(vf)
+        donors = [
+            ({"wght": weight, "opsz": optical_size}, kern)
+            for optical_size in (12.0, 16.0)
+            for weight, kern in weight_donors
+        ]
+
+        report = vary_kern(vf, donors, axis_tag="wght")
+
+        self.assertTrue(report.applied)
+        self.assertEqual(report.masters, 6)
+        vf.save(BytesIO())
+
+    def test_layout_fallback_does_not_drop_duplicate_weights_across_opsz(self):
+        vf = ported_fixture()
+        add_opsz_axis(vf)
+        masters = [
+            (path, {"wght": location["wght"], "opsz": optical_size})
+            for optical_size in (12.0, 16.0)
+            for path, location in ALL_DONORS
+        ]
+
+        report = _vary_kerning(vf, masters, "wght")
+
+        self.assertTrue(report.applied)
+        self.assertEqual(report.masters, 6)
 
 
 class FlattenLimitTests(unittest.TestCase):

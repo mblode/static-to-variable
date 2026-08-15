@@ -188,7 +188,7 @@ def load_config(path: str | Path) -> ProjectConfig:
     if not raw_styles:
         raise ConfigError(f"{config_path}: at least one style is required")
     styles = {
-        key: _parse_style(key, payload, repo_root, axis_tags, config_path)
+        key: _parse_style(key, payload, repo_root, axes, config_path)
         for key, payload in sorted(raw_styles.items())
     }
 
@@ -316,11 +316,12 @@ def _parse_style(
     key: str,
     raw: Any,
     repo_root: Path,
-    axis_tags: set[str],
+    axes: tuple[ConfigAxis, ...],
     config_path: Path,
 ) -> Style:
     if not isinstance(raw, dict):
         raise ConfigError(f"{config_path}: style {key!r} must be an object")
+    axis_tags = {axis.tag for axis in axes}
 
     italic = raw.get("italic", False)
     if not isinstance(italic, bool):
@@ -344,6 +345,7 @@ def _parse_style(
         key,
         config_path,
     )
+    _validate_master_locations(masters, axes, key, config_path)
 
     source_value = _required_str(raw, "source", config_path)
     output_value = _required_str(raw, "output", config_path)
@@ -363,6 +365,50 @@ def _parse_style(
         ),
         config_base_source=base_source_value,
     )
+
+
+def _validate_master_locations(
+    masters: tuple[Master, ...],
+    axes: tuple[ConfigAxis, ...],
+    style_key: str,
+    config_path: Path,
+) -> None:
+    """Validate the regular row grid assumed by reconstruction and freezing."""
+    tags = [axis.tag for axis in axes]
+    seen: dict[tuple[float, ...], str] = {}
+    for master in masters:
+        location = tuple(master.location[tag] for tag in tags)
+        previous = seen.get(location)
+        if previous is not None:
+            raise ConfigError(
+                f"{config_path}: style {style_key!r} masters {previous!r} and "
+                f"{master.name!r} share location {dict(zip(tags, location, strict=True))}"
+            )
+        seen[location] = master.name
+
+    default_master = next(master for master in masters if master.default)
+    configured_default = {axis.tag: axis.default for axis in axes}
+    if default_master.location != configured_default:
+        raise ConfigError(
+            f"{config_path}: style {style_key!r} default master {default_master.name!r} "
+            f"must be at {configured_default}, got {default_master.location}"
+        )
+
+    if len(axes) < 2:
+        return
+    primary = axes[0]
+    rows: dict[tuple[float, ...], set[float]] = {}
+    for master in masters:
+        row = tuple(master.location[axis.tag] for axis in axes[1:])
+        rows.setdefault(row, set()).add(master.location[primary.tag])
+    missing_default = [row for row, positions in rows.items() if primary.default not in positions]
+    if missing_default:
+        extra_tags = [axis.tag for axis in axes[1:]]
+        formatted = [dict(zip(extra_tags, row, strict=True)) for row in missing_default]
+        raise ConfigError(
+            f"{config_path}: style {style_key!r} every optical row needs a "
+            f"{primary.tag}={primary.default:g} master; missing in {formatted}"
+        )
 
 
 def _parse_donor(

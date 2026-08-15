@@ -1,0 +1,61 @@
+{
+  "version": 3,
+  "id": "two-axis-fixture",
+  "family": {
+    "name": "Two Axis Fixture",
+    "version": "1.000",
+    "vendor": "TEST",
+    "designer": "Static to Variable",
+    "designerUrl": "https://example.com",
+    "vendorUrl": "https://example.com"
+  },
+  "axes": [
+    {
+      "tag": "wght",
+      "name": "Weight",
+      "minimum": 100,
+      "default": 400,
+      "maximum": 950,
+      "map": [[100, 100], [400, 400], [700, 650], [950, 950]],
+      "namedInstances": {"100": "Thin", "400": "Regular", "950": "ExtraBlack"}
+    },
+    {
+      "tag": "opsz",
+      "name": "Optical size",
+      "minimum": 12,
+      "default": 16,
+      "maximum": 28,
+      "namedInstances": {"12": "Text", "16": "UI", "28": "Display"}
+    }
+  ],
+  "styles": {
+    "roman": {
+      "italic": false,
+      "donors": [
+        {"id": "t100", "name": "Text Thin", "path": "t100.ttf", "location": {"wght": 100, "opsz": 12}},
+        {"id": "t400", "name": "Text Regular", "path": "t400.ttf", "location": {"wght": 400, "opsz": 12}},
+        {"id": "t950", "name": "Text ExtraBlack", "path": "t950.ttf", "location": {"wght": 950, "opsz": 12}},
+        {"id": "u100", "name": "UI Thin", "path": "u100.ttf", "location": {"wght": 100, "opsz": 16}},
+        {"id": "u400", "name": "UI Regular", "path": "u400.ttf", "location": {"wght": 400, "opsz": 16}},
+        {"id": "u950", "name": "UI ExtraBlack", "path": "u950.ttf", "location": {"wght": 950, "opsz": 16}},
+        {"id": "d100", "name": "Display Thin", "path": "d100.ttf", "location": {"wght": 100, "opsz": 28}},
+        {"id": "d400", "name": "Display Regular", "path": "d400.ttf", "location": {"wght": 400, "opsz": 28}},
+        {"id": "d950", "name": "Display ExtraBlack", "path": "d950.ttf", "location": {"wght": 950, "opsz": 28}}
+      ],
+      "masters": [
+        {"name": "Text Thin", "donorId": "t100", "location": {"wght": 100, "opsz": 12}},
+        {"name": "Text Regular", "donorId": "t400", "location": {"wght": 400, "opsz": 12}},
+        {"name": "Text ExtraBlack", "donorId": "t950", "location": {"wght": 950, "opsz": 12}},
+        {"name": "UI Thin", "donorId": "u100", "location": {"wght": 100, "opsz": 16}},
+        {"name": "UI Regular", "donorId": "u400", "location": {"wght": 400, "opsz": 16}, "default": true},
+        {"name": "UI ExtraBlack", "donorId": "u950", "location": {"wght": 950, "opsz": 16}},
+        {"name": "Display Thin", "donorId": "d100", "location": {"wght": 100, "opsz": 28}},
+        {"name": "Display Regular", "donorId": "d400", "location": {"wght": 400, "opsz": 28}},
+        {"name": "Display ExtraBlack", "donorId": "d950", "location": {"wght": 950, "opsz": 28}}
+      ],
+      "source": "fixture.glyphs",
+      "output": "fixture-vf.ttf"
+    }
+  },
+  "output": {"dir": "out", "formats": ["ttf"], "releaseDir": "release"}
+}

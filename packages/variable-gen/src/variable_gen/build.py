@@ -66,22 +66,61 @@ def _axis_tag(style: Style) -> str:
 
 
 def freeze_to_book(config: ProjectConfig, style_key: str, names) -> None:
-    """Pin the named glyphs to the default master's donor outline across every
-    master (constant -> can't collapse)."""
+    """Freeze weight interpolation without erasing other-axis variation.
+
+    Every optical row is pinned to its own default-weight donor. This keeps a
+    collapsed glyph safe along ``wght`` while preserving intentional Text/UI/
+    Display differences. If those row drawings are incompatible, fontmake's
+    next pass reports the glyph by name instead of silently replacing all rows
+    with the global default outline.
+    """
     style = config.styles[style_key]
-    book = TTFont(str(default_donor_path(style))).getGlyphSet()
+    primary_tag = _axis_tag(style)
+    primary_default = next(axis.default for axis in config.axes if axis.tag == primary_tag)
+    donor_by_id = {donor.id: donor for donor in style.donors}
+    rows: dict[tuple[tuple[str, float], ...], list] = {}
+    for master in style.masters:
+        extra = tuple(
+            (axis.tag, master.location[axis.tag]) for axis in config.axes if axis.tag != primary_tag
+        )
+        rows.setdefault(extra, []).append(master)
+    row_defaults = {}
+    for extra, masters in rows.items():
+        row_default = next(
+            (master for master in masters if master.location[primary_tag] == primary_default),
+            None,
+        )
+        if row_default is None:
+            coords = ", ".join(f"{tag}={value:g}" for tag, value in extra) or "default row"
+            raise PipelineError(
+                f"[{style_key}] cannot freeze row {coords}: no master at "
+                f"{primary_tag}={primary_default:g}"
+            )
+        glyph_set = TTFont(str(donor_by_id[row_default.donor_id].path)).getGlyphSet()
+        for master in masters:
+            row_defaults[master.name] = glyph_set
+
     with open(style.source) as source_file:
         font = glyphsLib.load(source_file)
-    ids = [m.id for m in font.masters]
+    glyph_set_by_id = {
+        master.id: row_defaults[master.name]
+        for master in font.masters
+        if master.name in row_defaults
+    }
     by = {g.name: g for g in font.glyphs}
     for nm in names:
-        g, o = by.get(nm), donor_outline(book, nm)
-        if not g or o is None:
+        glyph = by.get(nm)
+        if glyph is None:
             continue
-        for layer in g.layers:
-            if layer.layerId in ids:
-                draw_into(layer, o[0])
-                layer.width = o[1]
+        for layer in glyph.layers:
+            glyph_set = glyph_set_by_id.get(layer.layerId)
+            if glyph_set is None:
+                continue
+            outline = donor_outline(glyph_set, nm)
+            if outline is None:
+                continue
+            draw_into(layer, outline[0])
+            layer.width = outline[1]
     font.save(str(style.source))
 
 
@@ -241,7 +280,6 @@ def check_fidelity(
     extra_skip: list[str] | tuple[str, ...] = (),
 ):
     style = config.styles[style_key]
-    tag = _axis_tag(style)
     donor_by_id = {d.id: d for d in style.donors}
     # open_bar intentionally removes the through-bar, so instance area is below
     # the closed-bar donor — skip those glyphs rather than false-fail fidelity.
@@ -257,13 +295,25 @@ def check_fidelity(
         instantiateVariableFont(copy.deepcopy(vf), loc, inplace=False).getGlyphSet()
         for loc in master_locs
     ]
+    instances_by_location = list(zip(master_locs, instances, strict=True))
     for glyph_name in vf.getGlyphOrder():
-        areas = [a for a in (_area(gs, glyph_name) for gs in instances) if a]
-        if len(areas) >= 2 and max(areas) <= min(areas) * 1.02:
+        constant_in_every_row = True
+        for row in _master_rows(style):
+            row_areas = [
+                area
+                for location, glyph_set in instances_by_location
+                if location in row
+                for area in [_area(glyph_set, glyph_name)]
+                if area
+            ]
+            if len(row_areas) >= 2 and max(row_areas) > min(row_areas) * 1.02:
+                constant_in_every_row = False
+                break
+        if constant_in_every_row:
             skip_glyphs.add(glyph_name)
     fails = []
     for master, gi in zip(style.masters, instances, strict=True):
-        pos = master.location[tag]
+        location = ",".join(f"{axis.tag}={master.location[axis.tag]:g}" for axis in config.axes)
         donor = TTFont(str(donor_by_id[master.donor_id].path))
         gd = donor.getGlyphSet()
         for g in vf.getGlyphOrder():
@@ -272,7 +322,7 @@ def check_fidelity(
             ai = _area(gi, g)
             ad = _area(gd, g)
             if ai and ad and ad > 1000 and ai / ad < UNDERWEIGHT_RATIO:
-                fails.append((pos, g, round(ai / ad, 2)))
+                fails.append((location, g, round(ai / ad, 2)))
     return fails
 
 
