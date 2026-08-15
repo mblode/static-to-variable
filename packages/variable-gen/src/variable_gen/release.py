@@ -75,6 +75,15 @@ def fix_instances(font, config: ProjectConfig, italic: bool):
         return
     ps_family = _ps_family(config)
     name = font["name"]
+    stat_name_ids: set[int] = set()
+    if "STAT" in font:
+        stat = font["STAT"].table
+        if stat.DesignAxisRecord:
+            stat_name_ids.update(axis.AxisNameID for axis in stat.DesignAxisRecord.Axis)
+        if stat.AxisValueArray:
+            stat_name_ids.update(value.ValueNameID for value in stat.AxisValueArray.AxisValue)
+        if stat.ElidedFallbackNameID is not None:
+            stat_name_ids.add(stat.ElidedFallbackNameID)
     for inst in font["fvar"].instances:
         parts: list[str] = []
         at_default = True
@@ -96,7 +105,14 @@ def fix_instances(font, config: ProjectConfig, italic: bool):
         else:
             sub = base
             ps = f"{ps_family}-{ps_base}"
-        setname(font, sub, inst.subfamilyNameID)
+        # varLib may intentionally share a name ID between an axis-value label
+        # and a named instance. Rewriting that record would turn a STAT label
+        # such as "Text" into "Regular Text". Give the instance its own ID and
+        # leave axis metadata untouched.
+        if inst.subfamilyNameID in stat_name_ids:
+            inst.subfamilyNameID = name.addName(sub, platforms=[WIN, MAC])
+        else:
+            setname(font, sub, inst.subfamilyNameID)
         if inst.postscriptNameID in (None, 0, 0xFFFF):
             inst.postscriptNameID = name.addName(ps, platforms=[WIN, MAC])
         else:

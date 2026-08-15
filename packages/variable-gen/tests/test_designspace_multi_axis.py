@@ -5,6 +5,7 @@ from io import BytesIO
 from pathlib import Path
 
 from fontTools.fontBuilder import FontBuilder
+from fontTools.otlLib.builder import buildStatTable
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.designspaceLib import (
     AxisDescriptor,
@@ -25,6 +26,7 @@ from variable_gen.designspace import (  # noqa: E402
     _configure_multi_axis_designspace,
     fix_designspace_axis,
 )
+from variable_gen.release import fix_instances  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "two-axis-project.json"
 
@@ -236,3 +238,53 @@ def test_two_axis_binary_build_is_deterministic(tmp_path: Path) -> None:
     variable_font.save(second, reorderTables=False)
 
     assert first.getvalue() == second.getvalue()
+
+
+def test_release_keeps_stat_optical_labels_distinct_from_instance_names(
+    tmp_path: Path,
+) -> None:
+    config = load_config(FIXTURE)
+    variable_font = _build_tiny_two_axis_font(tmp_path)
+    buildStatTable(
+        variable_font,
+        [
+            {"tag": "wght", "name": "Weight"},
+            {
+                "tag": "opsz",
+                "name": "Optical size",
+                "values": [
+                    {"value": 12, "name": "Text"},
+                    {"value": 16, "name": "UI", "flags": 0x2},
+                    {"value": 28, "name": "Display"},
+                ],
+            },
+        ],
+    )
+    stat = variable_font["STAT"].table
+    optical_labels = [
+        variable_font["name"].getDebugName(value.ValueNameID)
+        for value in stat.AxisValueArray.AxisValue
+        if value.AxisIndex == 1
+    ]
+    text_name_id = next(
+        value.ValueNameID
+        for value in stat.AxisValueArray.AxisValue
+        if value.AxisIndex == 1 and value.Value == 12
+    )
+    text_instance = next(
+        instance
+        for instance in variable_font["fvar"].instances
+        if instance.coordinates == {"wght": 400, "opsz": 12}
+    )
+    text_instance.subfamilyNameID = text_name_id
+
+    fix_instances(variable_font, config, italic=False)
+
+    assert optical_labels == ["Text", "UI", "Display"]
+    assert [
+        variable_font["name"].getDebugName(value.ValueNameID)
+        for value in stat.AxisValueArray.AxisValue
+        if value.AxisIndex == 1
+    ] == optical_labels
+    assert variable_font["name"].getDebugName(text_instance.subfamilyNameID) == "Regular Text"
+    assert text_instance.subfamilyNameID != text_name_id
