@@ -31,7 +31,7 @@ from pathlib import Path
 
 import glyphsLib
 from fontTools.ttLib import TTFont
-from glyphsLib.classes import GSFontMaster, GSLayer
+from glyphsLib.classes import GSAxis, GSFontMaster, GSLayer
 
 from variable_gen import reconstruct_compatible as rc
 from variable_gen.config import ProjectConfig, Style
@@ -69,9 +69,12 @@ METRIC_ATTRS = ("ascender", "descender", "capHeight", "xHeight", "italicAngle")
 
 
 def make_master(template, name, pos, mid):
-    """Build a GSFontMaster at axis position ``pos`` from a template master."""
+    """Build a GSFontMaster at axis position ``pos`` from a template master.
+
+    ``pos`` is a number (one axis) or a list of numbers (one per config axis).
+    """
     m = GSFontMaster()
-    m.name, m.id, m.axes = name, mid, [pos]
+    m.name, m.id, m.axes = name, mid, pos if isinstance(pos, list) else [pos]
     for a in METRIC_ATTRS:
         if hasattr(template, a):
             setattr(m, a, getattr(template, a))
@@ -124,14 +127,99 @@ def _int_if_whole(value: float) -> float | int:
 
 
 def _style_plan(config: ProjectConfig, style: Style) -> list[tuple[str, Path, int | float]]:
-    """Ordered (master name, donor .otf path, axis position) — the config form of
-    ``PLANS[family]["masters"]``. Position uses the first (primary) axis."""
-    tag = config.axes[0].tag
+    """Ordered (master name, donor .otf path, reconstruct key).
+
+    One axis: the key is that axis value (unchanged). Two or more axes: masters
+    are grouped by every axis except the first, and the key is the first-axis
+    value plus a unique offset per group so reconstruct stays 1D per row.
+    """
+    tags = [axis.tag for axis in config.axes]
+    primary = tags[0]
     donor_by_id = {donor.id: donor for donor in style.donors}
-    return [
-        (master.name, donor_by_id[master.donor_id].path, _int_if_whole(master.location[tag]))
-        for master in style.masters
-    ]
+    groups: dict[tuple, list] = {}
+    for master in style.masters:
+        group = tuple(_int_if_whole(master.location[tag]) for tag in tags[1:])
+        groups.setdefault(group, []).append(master)
+    plan: list[tuple[str, Path, int | float]] = []
+    for index, group in enumerate(groups):
+        shift = index * 10000
+        for master in groups[group]:
+            key = _int_if_whole(master.location[primary]) + shift
+            plan.append((master.name, donor_by_id[master.donor_id].path, key))
+    return plan
+
+
+def _plan_groups(
+    plan: list[tuple[str, Path, int | float]],
+) -> list[list[tuple[str, Path, int | float]]]:
+    """Split a multi-axis plan into 1D reconstruct rows (key // 10000)."""
+    groups: dict[int, list[tuple[str, Path, int | float]]] = {}
+    for item in plan:
+        groups.setdefault(int(item[2]) // 10000, []).append(item)
+    return [groups[key] for key in sorted(groups)]
+
+
+def reconstruct_plan(
+    donor_outlines: dict[str, dict],
+    plan: list[tuple[str, Path, int | float]],
+    pos_by_name: dict,
+    reference_pos,
+    workers: int,
+) -> dict[str, tuple]:
+    """Reconstruct each optical-size row independently, then merge.
+
+    ``reconstruct`` is 1D. A 3×2 wght×opsz grid must not be fed in as six
+    keys on one axis — that is both wrong and extremely slow.
+    """
+    merged: dict[str, tuple] = {}
+    groups = _plan_groups(plan)
+    for group in groups:
+        shift = int(group[0][2]) // 10000 * 10000
+        jobs = {
+            name: {pos_by_name[master]: outs[master][0] for master, _, _ in group}
+            for name, outs in donor_outlines.items()
+        }
+        part = reconstruct_all(jobs, reference_pos + shift, workers)
+        for name, (rec, info) in part.items():
+            previous = merged.get(name)
+            if previous is None:
+                merged[name] = (rec, info)
+            elif rec is None or previous[0] is None:
+                merged[name] = (None, info)
+            else:
+                merged[name] = ({**previous[0], **rec}, info)
+    if len(groups) < 2:
+        return merged
+
+    def _signature(contours) -> tuple:
+        return tuple(len(contour) for contour in contours)
+
+    mismatched = []
+    for name, (rec, _info) in merged.items():
+        if rec is None:
+            continue
+        row_sigs = []
+        for group in groups:
+            default_in_row = min(
+                group,
+                key=lambda item: abs((item[2] % 10000) - (reference_pos % 10000)),
+            )
+            row_sigs.append(_signature(rec[default_in_row[2]]))
+        if len(set(row_sigs)) > 1:
+            mismatched.append(name)
+    if mismatched:
+        print(f"  reconciling {len(mismatched)} glyphs across optical-size rows")
+        jobs = {
+            name: {pos_by_name[master]: donor_outlines[name][master][0] for master, _, _ in plan}
+            for name in mismatched
+        }
+        merged.update(reconstruct_all(jobs, reference_pos, workers))
+    return merged
+
+
+def _master_axis_values(config: ProjectConfig, style: Style, name: str) -> list[int | float]:
+    master = next(item for item in style.masters if item.name == name)
+    return [_int_if_whole(master.location[axis.tag]) for axis in config.axes]
 
 
 def _vertical_metrics(config: ProjectConfig, default_donor_path: Path) -> dict[str, int | float]:
@@ -248,7 +336,12 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
 
     template = font.masters[0]
     ids = {name: f"{config.id}-{style_key}-{name}" for name, _, _ in plan}
-    font.masters = [make_master(template, name, pos, ids[name]) for name, _, pos in plan]
+    if hasattr(font, "axes") and config.axes:
+        font.axes = [GSAxis(name=axis.name, tag=axis.tag) for axis in config.axes]
+    font.masters = [
+        make_master(template, name, _master_axis_values(config, style, name), ids[name])
+        for name, _, _ in plan
+    ]
     default_donor_path = next(path for name, path, _ in plan if name == default_name)
     metrics = _vertical_metrics(config, default_donor_path)
     for m in font.masters:  # adopt the family's vertical metrics
@@ -270,13 +363,13 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
         if all(o is not None for o in resolved.values()):
             donor_outlines[glyph.name] = resolved
 
-    recon_jobs = {
-        name: {pos_by_name[master]: outs[master][0] for master, _, _ in plan}
-        for name, outs in donor_outlines.items()
-    }
-    workers = reconstruct_workers(len(recon_jobs))
-    print(f"[{style_key}] reconstructing {len(recon_jobs)} glyphs on {workers} core(s)")
-    reconstructed = reconstruct_all(recon_jobs, reference_pos, workers)
+    workers = reconstruct_workers(len(donor_outlines))
+    groups = _plan_groups(plan)
+    print(
+        f"[{style_key}] reconstructing {len(donor_outlines)} glyphs on {workers} core(s)"
+        f" ({len(groups)} interpolating row(s))"
+    )
+    reconstructed = reconstruct_plan(donor_outlines, plan, pos_by_name, reference_pos, workers)
 
     stats = RebuildStats()
     for glyph in font.glyphs:
@@ -420,7 +513,9 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
         stats.frozen += 1
         stats.glyphs[glyph.name] = "frozen"
 
-    font.save(str(style.source))
+    tmp = style.source.with_suffix(".glyphs.tmp")
+    font.save(str(tmp))
+    tmp.replace(style.source)
     return stats
 
 

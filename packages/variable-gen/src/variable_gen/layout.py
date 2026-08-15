@@ -284,11 +284,17 @@ def _vary_kerning(
     varfont: TTFont, existing: list[tuple[Path, dict[str, float]]], axis_tag: str
 ) -> KernReport:
     donors: list[tuple[float, dict[tuple[str, str], int]]] = []
+    seen: set[float] = set()
     for path, location in existing:
         try:
             position = _axis_value(location, axis_tag)
         except KeyError:
             return KernReport(note=f"{path.name} has no {axis_tag} location")
+        # A wght×opsz grid repeats each weight. Keep the first row (default
+        # optical size) so VariationModel locations stay unique.
+        if position in seen:
+            continue
+        seen.add(position)
         try:
             donors.append((position, donor_kern(path, varfont)))
         except KerningTooLarge as exc:
