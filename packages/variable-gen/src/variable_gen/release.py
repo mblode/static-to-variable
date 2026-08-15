@@ -73,21 +73,29 @@ def fix_instances(font, config: ProjectConfig, italic: bool):
     the default instance and italic PS names that collide with the roman's)."""
     if "fvar" not in font:
         return
-    axis_tag = config.axes[0].tag
-    default = config.axes[0].default
-    weight_names = {int(pos): nm for pos, nm in config.axes[0].named_instances.items()}
     ps_family = _ps_family(config)
     name = font["name"]
     for inst in font["fvar"].instances:
-        wght = int(round(inst.coordinates.get(axis_tag, default)))
-        base = weight_names.get(wght, str(wght))
-        is_regular = wght == int(default)
+        parts: list[str] = []
+        at_default = True
+        for index, axis in enumerate(config.axes):
+            value = int(round(inst.coordinates.get(axis.tag, axis.default)))
+            label = {int(pos): nm for pos, nm in axis.named_instances.items()}.get(
+                value, str(value)
+            )
+            if index == 0 or value != int(axis.default):
+                parts.append(label)
+            if value != int(axis.default):
+                at_default = False
+        base = " ".join(parts) if parts else "Regular"
+        ps_base = "".join(parts) if parts else "Regular"
+        is_regular = at_default
         if italic:
             sub = "Italic" if is_regular else f"{base} Italic"
-            ps = f"{ps_family}-Italic" if is_regular else f"{ps_family}-{base}Italic"
+            ps = f"{ps_family}-Italic" if is_regular else f"{ps_family}-{ps_base}Italic"
         else:
             sub = base
-            ps = f"{ps_family}-{base}"
+            ps = f"{ps_family}-{ps_base}"
         setname(font, sub, inst.subfamilyNameID)
         if inst.postscriptNameID in (None, 0, 0xFFFF):
             inst.postscriptNameID = name.addName(ps, platforms=[WIN, MAC])

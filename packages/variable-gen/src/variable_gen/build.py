@@ -43,12 +43,26 @@ def _run(cmd, repo_root: Path):
 
 def _positions(style: Style) -> list[int | float]:
     tag = _axis_tag(style)
-    return sorted(m.location[tag] for m in style.masters)
+    return sorted({m.location[tag] for m in style.masters})
+
+
+def _master_rows(style: Style) -> list[list[dict[str, float]]]:
+    """Masters grouped by every axis except the primary, each row sorted by it."""
+    tag = _axis_tag(style)
+    rows: dict[tuple, list[dict[str, float]]] = {}
+    for master in style.masters:
+        extra = tuple(sorted((key, master.location[key]) for key in master.location if key != tag))
+        rows.setdefault(extra, []).append(dict(master.location))
+    return [sorted(row, key=lambda loc: loc[tag]) for row in rows.values()]
 
 
 def _axis_tag(style: Style) -> str:
-    # every master shares the same axis tags; use the first master's
-    return next(iter(style.masters[0].location))
+    # Weight is the interpolating axis reconstruct and kerning already assume.
+    # Location dicts are sorted alphabetically, so opsz would otherwise win.
+    loc = style.masters[0].location
+    if "wght" in loc:
+        return "wght"
+    return next(iter(loc))
 
 
 def freeze_to_book(config: ProjectConfig, style_key: str, names) -> None:
@@ -194,30 +208,38 @@ def _collapsing_glyphs(config: ProjectConfig, style_key: str, tol=0.22) -> list[
     style = config.styles[style_key]
     tag = _axis_tag(style)
     vf = TTFont(str(style.output))
-    masters = _positions(style)
-    pairs = list(zip(masters, masters[1:], strict=False))
-    weights = sorted(set(masters) | {(a + b) / 2 for a, b in pairs})
-    inst = {
-        w: instantiateVariableFont(copy.deepcopy(vf), {tag: w}, inplace=False).getGlyphSet()
-        for w in weights
-    }
     bad = []
-    for g in vf.getGlyphOrder():
-        if g == ".notdef":
-            continue
-        for a, b in pairs:
-            m = (a + b) / 2
-            aa, ab, am = _area(inst[a], g), _area(inst[b], g), _area(inst[m], g)
-            if not aa or not ab or am is None:
+    for row in _master_rows(style):
+        extras = {key: value for key, value in row[0].items() if key != tag}
+        weights = [loc[tag] for loc in row]
+        pairs = list(zip(weights, weights[1:], strict=False))
+        points = sorted(set(weights) | {(a + b) / 2 for a, b in pairs})
+        inst = {
+            w: instantiateVariableFont(
+                copy.deepcopy(vf), {tag: w, **extras}, inplace=False
+            ).getGlyphSet()
+            for w in points
+        }
+        for g in vf.getGlyphOrder():
+            if g == ".notdef" or g in bad:
                 continue
-            mean = (aa + ab) / 2
-            if mean > 800 and abs(am / mean - 1.0) > tol:
-                bad.append(g)
-                break
+            for a, b in pairs:
+                mid = (a + b) / 2
+                aa, ab, am = _area(inst[a], g), _area(inst[b], g), _area(inst[mid], g)
+                if not aa or not ab or am is None:
+                    continue
+                mean = (aa + ab) / 2
+                if mean > 800 and abs(am / mean - 1.0) > tol:
+                    bad.append(g)
+                    break
     return bad
 
 
-def check_fidelity(config: ProjectConfig, style_key: str):
+def check_fidelity(
+    config: ProjectConfig,
+    style_key: str,
+    extra_skip: list[str] | tuple[str, ...] = (),
+):
     style = config.styles[style_key]
     tag = _axis_tag(style)
     donor_by_id = {d.id: d for d in style.donors}
@@ -225,16 +247,25 @@ def check_fidelity(config: ProjectConfig, style_key: str):
     # the closed-bar donor — skip those glyphs rather than false-fail fidelity.
     # Frozen glyphs pin to the default master, so non-default weights diverge.
     skip_glyphs = set(config.glyphs.freeze)
+    skip_glyphs.update(extra_skip)
     for name, strat in config.glyphs.strategies.items():
         if strat.strategy in {"open_bar", "freeze"}:
             skip_glyphs.add(name)
     vf = TTFont(str(style.output))
+    master_locs = [dict(master.location) for master in style.masters]
+    instances = [
+        instantiateVariableFont(copy.deepcopy(vf), loc, inplace=False).getGlyphSet()
+        for loc in master_locs
+    ]
+    for glyph_name in vf.getGlyphOrder():
+        areas = [a for a in (_area(gs, glyph_name) for gs in instances) if a]
+        if len(areas) >= 2 and max(areas) <= min(areas) * 1.02:
+            skip_glyphs.add(glyph_name)
     fails = []
-    for master in style.masters:
+    for master, gi in zip(style.masters, instances, strict=True):
         pos = master.location[tag]
         donor = TTFont(str(donor_by_id[master.donor_id].path))
         gd = donor.getGlyphSet()
-        gi = instantiateVariableFont(copy.deepcopy(vf), {tag: pos}, inplace=False).getGlyphSet()
         for g in vf.getGlyphOrder():
             if g == ".notdef" or g not in gd or g in skip_glyphs:
                 continue

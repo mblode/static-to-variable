@@ -39,6 +39,7 @@ def fix_designspace_axis(
     weight_names: dict[int, str],
     family: str,
     is_italic: bool,
+    write_instances: bool = True,
 ) -> None:
     """Correct the variable axis, pin the default, and emit clean named instances
     + STAT axis labels. glyphsLib emits a broken axis (min=max=default, bogus avar
@@ -76,7 +77,18 @@ def fix_designspace_axis(
         ]
         print(f"  Fixed {axis.tag}: min={axis.minimum} default={axis.default} max={axis.maximum}")
 
-    # Named instances at every named stop in range, with a plain weight location.
+    if write_instances:
+        _write_weight_instances(
+            ds,
+            axis_name=axis_name,
+            axis_tag=axis_tag,
+            weight_names=weight_names,
+            family=family,
+            is_italic=is_italic,
+        )
+
+
+def _write_weight_instances(ds, *, axis_name, axis_tag, weight_names, family, is_italic) -> None:
     def _loc(src):
         return src.location.get(axis_name, src.location.get(axis_tag))
 
@@ -147,6 +159,7 @@ def build_designspace(
     default_weight: float,
     weight_names: dict[int, str],
     master_ufo_dir: Path,
+    write_instances: bool = True,
 ) -> Path:
     """Convert one ``.glyphs`` source to UFOs + a corrected designspace, written
     under ``master_ufo_dir``. Returns the designspace path."""
@@ -165,6 +178,7 @@ def build_designspace(
         weight_names=weight_names,
         family=family,
         is_italic=is_italic,
+        write_instances=write_instances,
     )
 
     master_ufo_dir.mkdir(parents=True, exist_ok=True)
@@ -202,21 +216,81 @@ def _ds_naming(config: ProjectConfig, style_key: str) -> tuple[str, str]:
 def export_designspace(config: ProjectConfig, style_key: str) -> Path:
     """Export one style's designspace + UFOs, driven entirely by the config."""
     style = config.styles[style_key]
-    axis = config.axes[0]
-    weight_names = {int(pos): name for pos, name in axis.named_instances.items()}
     ds_name, ufo_prefix = _ds_naming(config, style_key)
-    return build_designspace(
+    primary = config.axes[0]
+    weight_names = {int(pos): name for pos, name in primary.named_instances.items()}
+    extra_axes = [
+        {
+            "tag": axis.tag,
+            "name": axis.name,
+            "default": axis.default,
+            "named": {int(pos): name for pos, name in axis.named_instances.items()},
+        }
+        for axis in config.axes[1:]
+    ]
+    path = build_designspace(
         style.source,
         ds_name,
         ufo_prefix,
         family=config.family.name,
         is_italic=style.italic,
-        axis_tag=axis.tag,
-        axis_name=axis.name,
-        default_weight=axis.default,
+        axis_tag=primary.tag,
+        axis_name=primary.name,
+        default_weight=primary.default,
         weight_names=weight_names,
         master_ufo_dir=config.repo_root / "master_ufo",
+        write_instances=not extra_axes,
     )
+    if extra_axes:
+        _expand_opsz_instances(
+            path,
+            family=config.family.name,
+            is_italic=style.italic,
+            weight_name=primary.name,
+            weight_names=weight_names,
+            extra=extra_axes[0],
+        )
+    return path
+
+
+def _expand_opsz_instances(
+    ds_path: Path,
+    *,
+    family,
+    is_italic,
+    weight_name,
+    weight_names,
+    extra,
+) -> None:
+    """Named instances at every wght × opsz stop."""
+    from fontTools.designspaceLib import DesignSpaceDocument
+
+    ds = DesignSpaceDocument.fromfile(str(ds_path))
+    fix_designspace_axis(
+        ds,
+        axis_tag=extra["tag"],
+        axis_name=extra["name"],
+        default_weight=extra["default"],
+        weight_names=extra["named"],
+        family=family,
+        is_italic=is_italic,
+        write_instances=False,
+    )
+    ds.instances = []
+    for w_pos, w_name in sorted(weight_names.items()):
+        for o_pos, o_name in sorted(extra["named"].items()):
+            style = f"{w_name} {o_name}"
+            if is_italic:
+                style = f"{style} Italic"
+            inst = InstanceDescriptor()
+            inst.familyName = family
+            inst.styleName = style
+            inst.name = f"{family} {style}"
+            inst.location = {weight_name: w_pos, extra["name"]: o_pos}
+            inst.lib = {"public.fontInfo": {}}
+            ds.addInstance(inst)
+    ds.write(str(ds_path))
+    print(f"  Wrote {len(ds.instances)} named instances (wght × {extra['tag']})")
 
 
 def main(argv: list[str] | None = None) -> int:

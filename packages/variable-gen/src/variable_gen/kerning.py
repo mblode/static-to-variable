@@ -267,10 +267,18 @@ def vary_kern(
     # hair off the position a renderer actually resolves to, and every delta
     # there comes back scaled by 0.9999-ish — which rounds half the kern values
     # off by one unit at that weight.
-    locations = [
-        {axis_tag: floatToFixedToFloat(normalizeValue(position, triple), 14)}
-        for position, _ in donors
-    ]
+    axis_tags = [axis.axisTag for axis in varfont["fvar"].axes] if "fvar" in varfont else [axis_tag]
+    locations = []
+    for position, _ in donors:
+        loc = {
+            tag: (
+                floatToFixedToFloat(normalizeValue(position, triple), 14)
+                if tag == axis_tag
+                else 0.0
+            )
+            for tag in axis_tags
+        }
+        locations.append(loc)
     default_index = next(
         (index for index, loc in enumerate(locations) if abs(loc[axis_tag]) < 1e-9), None
     )
@@ -281,8 +289,8 @@ def vary_kern(
     if not subtables:
         return KernReport(note="font has no kern pair positioning")
 
-    model = VariationModel(locations, axisOrder=[axis_tag])
-    store_builder = OnlineVarStoreBuilder([axis_tag])
+    model = VariationModel(locations, axisOrder=axis_tags)
+    store_builder = OnlineVarStoreBuilder(axis_tags)
     store_builder.setModel(model)
     kern_maps = [kern for _, kern in donors]
     glyph_order = varfont.getGlyphOrder()
