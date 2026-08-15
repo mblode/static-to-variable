@@ -15,6 +15,7 @@ The package can:
 - normalize donor-inherited height defects (`normalize`)
 - export UFO/designspace checkpoints with corrected axes (`designspace`)
 - build variable TTFs with a freeze loop + per-weight fidelity check (`build`)
+- preserve explicitly marked, independently authored optical rows while making incomplete rows and unsafe interpolation hard build failures (`build`)
 - finalize metadata and emit release TTF + WOFF2 (`release`)
 - split a variable font back into static weights (`split`)
 - aggregate the promotion gates into a status report (`pipeline-status`)
@@ -31,6 +32,16 @@ The usual path is the top-level CLI (`static-to-variable build`), which chains `
 ```
 
 Run only one style by passing its config key (e.g. `--style roman`). Outputs land at the `output` paths declared in the config, and `release` stages TTF + WOFF2 under the config's `releaseDir`.
+
+### Independently authored optical rows
+
+The donor-derived `.glyphs` source remains disposable. A drawing pipeline that applies reviewed manual edits after `rebuild` can mark each genuinely authored master layer with this Glyphs user-data entry:
+
+```python
+layer.userData["com.mblode.stv.opticalAuthorship"] = f"manual:{drawing_sha256}"
+```
+
+The SHA-256 identifies the durable drawing record. Markers are per glyph and per master: the engine never infers authorship from coordinate differences. If one layer is marked at an optical size in a `wght` build, every configured weight master at that optical size must be marked. Missing Thin, Regular, or ExtraBlack drawings fail before compilation with the glyph and exact locations. Complete rows compile from their source geometry. If fontmake reports incompatibility or the existing midpoint-collapse gate fails, the build stops with a named error rather than replacing any authored layer with donor geometry. Donor fidelity checks remain unchanged, and each compiled authored master must retain its source advance to one unit and its rendered ink area within 2% after cubic-to-quadratic conversion.
 
 `rebuild` writes a reconstruction report (read by the `repair_build` promotion gate) at `packages/variable-gen/reports/reconstruction-report.json`. `build` writes a layout report (read by the `layout` promotion gate) at `packages/variable-gen/reports/layout-report.json`.
 
