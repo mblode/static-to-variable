@@ -8,8 +8,14 @@ from types import SimpleNamespace
 PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(PACKAGE_SRC))
 
+from variable_gen.common import PipelineError  # noqa: E402
 from variable_gen.config import Donor, Master, Style  # noqa: E402
-from variable_gen.rebuild import _master_axis_values, _plan_groups, _style_plan  # noqa: E402
+from variable_gen.rebuild import (  # noqa: E402
+    _check_row_signatures,
+    _master_axis_values,
+    _plan_groups,
+    _style_plan,
+)
 
 
 def _style() -> Style:
@@ -61,10 +67,17 @@ class RebuildPlanTests(unittest.TestCase):
             axes=(SimpleNamespace(tag="wght", name="Weight"),),
         )
         plan = _style_plan(config, style)
-        self.assertEqual([item[2] for item in plan], [100, 400, 950])
+        self.assertEqual(
+            [item.location.as_dict() for item in plan],
+            [
+                {"wght": 100.0},
+                {"wght": 400.0},
+                {"wght": 950.0},
+            ],
+        )
         self.assertEqual(len(_plan_groups(plan)), 1)
 
-    def test_opsz_rows_shift_by_10000(self):
+    def test_opsz_rows_keep_structured_locations(self):
         style = _style()
         config = SimpleNamespace(
             axes=(
@@ -74,20 +87,61 @@ class RebuildPlanTests(unittest.TestCase):
         )
         plan = _style_plan(config, style)
         self.assertEqual(
-            [item[2] for item in plan],
-            [100, 400, 950, 10100, 10400, 10950],
+            [item.location.as_dict() for item in plan],
+            [
+                {"wght": 100.0, "opsz": 14.0},
+                {"wght": 400.0, "opsz": 14.0},
+                {"wght": 950.0, "opsz": 14.0},
+                {"wght": 100.0, "opsz": 28.0},
+                {"wght": 400.0, "opsz": 28.0},
+                {"wght": 950.0, "opsz": 28.0},
+            ],
         )
         groups = _plan_groups(plan)
         self.assertEqual(len(groups), 2)
-        self.assertEqual([item[0] for item in groups[0]], ["Text 100", "Text 400", "Text 950"])
         self.assertEqual(
-            [item[0] for item in groups[1]],
+            [item.name for item in groups[0].masters],
+            ["Text 100", "Text 400", "Text 950"],
+        )
+        self.assertEqual(
+            [item.name for item in groups[1].masters],
             ["Display 100", "Display 400", "Display 950"],
         )
         self.assertEqual(
             _master_axis_values(config, style, "Display 400"),
             [400, 28],
         )
+
+    def test_incompatible_rows_fail_with_the_glyph_and_locations(self):
+        style = _style()
+        config = SimpleNamespace(
+            axes=(
+                SimpleNamespace(tag="wght", name="Weight"),
+                SimpleNamespace(tag="opsz", name="Optical size"),
+            ),
+        )
+        plan = _style_plan(config, style)
+        rows = _plan_groups(plan)
+        outlines = {}
+        for master in rows[0].masters:
+            outlines[master.location] = [[("moveTo", [(0, 0)]), ("closePath", [])]]
+        for master in rows[1].masters:
+            outlines[master.location] = [
+                [
+                    ("moveTo", [(0, 0)]),
+                    ("lineTo", [(1, 1)]),
+                    ("closePath", []),
+                ]
+            ]
+
+        with self.assertRaisesRegex(PipelineError, r"zero: .*opsz=14.*opsz=28"):
+            _check_row_signatures(
+                "zero",
+                outlines,
+                rows,
+                "wght",
+                plan[1].location,
+            )
 
 
 if __name__ == "__main__":
