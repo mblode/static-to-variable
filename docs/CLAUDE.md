@@ -1,37 +1,22 @@
-> **First-time setup**: Customize this file for your project. Prompt the user to update terminology, style preferences, and content boundaries before drafting large amounts of docs.
+# Product documentation
 
-# Documentation project instructions
+The published docs are MDX pages configured by `docs/docs.json`. Engineering guidance lives under `docs/engineering` and is not part of the product-doc navigation.
 
-## About this project
+## Checks
 
-- This is a documentation site built on [Blode.md](https://blode.md)
-- Pages are MDX files with YAML frontmatter
-- Configuration lives in `docs.json`
-- Run `blodemd dev` to preview locally
-- Run `blodemd validate` before publishing
-- Run `blodemd push` to deploy
+- Run `npm run verify` from the repository root for code examples and repository integrity.
+- The BlodeMD CLI is not installed by this repository. Do not claim `blodemd dev`, `validate`, or `push` passed unless the external CLI is available and the command was actually run.
 
-## Terminology
+## Conventions
 
-{/* Add product-specific terms and preferred usage _/} {/_ Example: Use "workspace" not "project", "member" not "user" */}
-
-## Style preferences
-
-{/* Add any project-specific style rules below */}
-
-- Use active voice and second person ("you")
-- Keep sentences concise and task-oriented
-- Use sentence case for headings
-- Bold UI labels: Click **Settings**
-- Use code formatting for file names, commands, paths, JSON fields, and code references
-
-## Content boundaries
-
-{/* Define what should and shouldn't be documented _/} {/_ Example: Don't document internal admin features */}
-
-## Workflow reminders
-
-- Content lives in MDX files next to `docs.json`.
+- Use active voice, second person, concise sentences, and sentence-case headings.
+- Bold interface labels; wrap commands, paths, fields, and code identifiers in backticks.
 - Update `docs.json` when navigation or branding changes.
-- Prefer concise, task-oriented documentation.
-- Run `blodemd validate` before publishing.
+- Keep implementation and contributor detail in `docs/engineering` or `CONTRIBUTING.md`, then link to it rather than duplicating it in product pages.
+- Do not publish licensed donor paths or private Glide pipeline details.
+
+## References
+
+- Engineering index: @engineering/README.md
+- Public CLI behavior: @../packages/cli/README.md
+- Public project overview: @../README.md
