@@ -187,6 +187,10 @@ def build_designspace(
     axis_minimum: float | None = None,
     axis_maximum: float | None = None,
     axis_mapping: tuple[tuple[float, float], ...] = (),
+    quadratic_reference_path: Path | None = None,
+    quadratic_reference_location: dict[str, float] | None = None,
+    quadratic_reference_max_error: float = 1.0,
+    default_master_name: str | None = None,
 ) -> Path:
     """Convert one ``.glyphs`` source to UFOs + a corrected designspace, written
     under ``master_ufo_dir``. Returns the designspace path."""
@@ -210,6 +214,33 @@ def build_designspace(
         maximum=axis_maximum,
         mapping=axis_mapping,
     )
+
+    if quadratic_reference_path is not None:
+        from variable_gen.quadratic_reference import preserve_quadratic_reference
+
+        default_indices = [
+            index
+            for index, source in enumerate(ds.sources)
+            if source.styleName == default_master_name
+        ]
+        if len(default_indices) != 1:
+            raise ValueError(
+                "quadratic reference requires exactly one source named "
+                f"{default_master_name!r}; found {len(default_indices)}"
+            )
+        report = preserve_quadratic_reference(
+            [source.font for source in ds.sources],
+            default_index=default_indices[0],
+            reference_path=quadratic_reference_path,
+            reference_location=quadratic_reference_location or {},
+            max_error=quadratic_reference_max_error,
+        )
+        print(
+            "  Preserved quadratic reference: "
+            f"{report.glyphs} authored glyph(s), "
+            f"{report.exact_default_glyphs} already exact, "
+            f"{report.expanded_operations} compatibility prefix(es)"
+        )
 
     master_ufo_dir.mkdir(parents=True, exist_ok=True)
     dropped = 0
@@ -249,6 +280,8 @@ def export_designspace(config: ProjectConfig, style_key: str) -> Path:
     ds_name, ufo_prefix = _ds_naming(config, style_key)
     primary = config.axes[0]
     weight_names = dict(primary.named_instances)
+    default_master = next(master for master in style.masters if master.default)
+    quadratic_reference = style.quadratic_reference
     path = build_designspace(
         style.source,
         ds_name,
@@ -264,6 +297,16 @@ def export_designspace(config: ProjectConfig, style_key: str) -> Path:
         axis_minimum=primary.minimum,
         axis_maximum=primary.maximum,
         axis_mapping=primary.mapping,
+        quadratic_reference_path=(
+            quadratic_reference.path if quadratic_reference is not None else None
+        ),
+        quadratic_reference_location=(
+            quadratic_reference.location if quadratic_reference is not None else None
+        ),
+        quadratic_reference_max_error=(
+            quadratic_reference.max_error if quadratic_reference is not None else 1.0
+        ),
+        default_master_name=default_master.name,
     )
     if len(config.axes) > 1:
         _configure_multi_axis_designspace(
