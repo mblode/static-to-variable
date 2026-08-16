@@ -35,7 +35,7 @@ from glyphsLib.classes import GSAxis, GSFontMaster, GSLayer
 
 from variable_gen import reconstruct_compatible as rc
 from variable_gen.common import PipelineError
-from variable_gen.config import ProjectConfig, Style
+from variable_gen.config import GlyphStrategy, ProjectConfig, Style
 from variable_gen.outlines import Contour, donor_outline, draw_into
 from variable_gen.reconstruct_compatible import (
     _interp_ok,
@@ -43,6 +43,15 @@ from variable_gen.reconstruct_compatible import (
     open_bar,
     reconstruct,
     union_overlaps,
+)
+from variable_gen.reconstruction_cache import (
+    ReconstructionCacheContext,
+    ReconstructionCacheStats,
+    cache_dir_from_environment,
+    load_reconstruction,
+    reconstruction_cache_key,
+    reconstruction_implementation_digest,
+    store_reconstruction,
 )
 
 
@@ -264,6 +273,10 @@ def reconstruct_plan(
     primary_tag: str,
     reference_location: AxisLocation,
     workers: int,
+    *,
+    strategies: dict[str, GlyphStrategy] | None = None,
+    cache_dir: Path | None = None,
+    cache_stats: ReconstructionCacheStats | None = None,
 ) -> dict[str, tuple]:
     """Reconstruct each optical-size row independently, then merge.
 
@@ -279,7 +292,20 @@ def reconstruct_plan(
             name: {master.location[primary_tag]: outs[master.name][0] for master in row.masters}
             for name, outs in donor_outlines.items()
         }
-        part = reconstruct_all(jobs, reference_location[primary_tag], workers)
+        cache_context = ReconstructionCacheContext(
+            primary_tag=primary_tag,
+            axis_locations=tuple(master.location.values for master in row.masters),
+            reference_location=reference_location.values,
+        )
+        part = reconstruct_all(
+            jobs,
+            reference_location[primary_tag],
+            workers,
+            cache_dir=cache_dir,
+            cache_context=cache_context,
+            strategies=strategies,
+            cache_stats=cache_stats,
+        )
         for name, (rec, info) in part.items():
             merged_info.setdefault(name, []).append(info)
             if rec is None:
@@ -393,7 +419,16 @@ def reconstruct_workers(job_count: int) -> int:
     return max(1, min(os.cpu_count() or 1, job_count))
 
 
-def reconstruct_all(jobs: dict[str, dict], reference_pos, workers: int) -> dict[str, tuple]:
+def reconstruct_all(
+    jobs: dict[str, dict],
+    reference_pos,
+    workers: int,
+    *,
+    cache_dir: Path | None = None,
+    cache_context: ReconstructionCacheContext | None = None,
+    strategies: dict[str, GlyphStrategy] | None = None,
+    cache_stats: ReconstructionCacheStats | None = None,
+) -> dict[str, tuple]:
     """``reconstruct`` every glyph's donor outlines, across processes.
 
     Reconstruction dominates the whole pipeline (measured in production: 35.6s of
@@ -404,9 +439,71 @@ def reconstruct_all(jobs: dict[str, dict], reference_pos, workers: int) -> dict[
     Results are keyed by glyph name, so the caller applies them in the source's
     own order and the output is identical to the serial path.
     """
+    stats = cache_stats if cache_stats is not None else ReconstructionCacheStats()
+    results: dict[str, tuple] = {}
+    misses: dict[str, dict] = {}
+    cache_keys: dict[str, str] = {}
+    implementation = reconstruction_implementation_digest() if cache_dir is not None else None
+
+    for name, outlines in jobs.items():
+        strategy = strategies.get(name) if strategies is not None else None
+        strategy_payload = (
+            None
+            if strategies is None
+            else {
+                "strategy": strategy.strategy if strategy is not None else None,
+                "params": strategy.params if strategy is not None else {},
+            }
+        )
+        key = (
+            None
+            if cache_dir is None
+            else reconstruction_cache_key(
+                glyph_name=name,
+                outlines_by_pos=outlines,
+                reference_pos=reference_pos,
+                context=cache_context,
+                strategy=strategy_payload,
+                implementation_digest=implementation,
+            )
+        )
+        if key is None:
+            stats.bypassed += 1
+            misses[name] = outlines
+            continue
+        assert cache_dir is not None
+        cached = load_reconstruction(cache_dir, key)
+        if cached is None or (cached[0] is not None and set(cached[0]) != set(outlines)):
+            stats.misses += 1
+            misses[name] = outlines
+            cache_keys[name] = key
+            continue
+        stats.hits += 1
+        results[name] = cached
+
+    computed = _compute_reconstruction_jobs(misses, reference_pos, workers)
+    for name, result in computed.items():
+        results[name] = result
+        key = cache_keys.get(name)
+        if cache_dir is None or key is None:
+            continue
+        try:
+            store_reconstruction(cache_dir, key, result)
+            stats.writes += 1
+        except (OSError, TypeError, ValueError):
+            stats.errors += 1
+
+    return {name: results[name] for name in jobs}
+
+
+def _compute_reconstruction_jobs(
+    jobs: dict[str, dict], reference_pos, workers: int
+) -> dict[str, tuple]:
+    if not jobs:
+        return {}
     if workers <= 1:
         return {name: reconstruct(o, reference_pos=reference_pos) for name, o in jobs.items()}
-    with ProcessPoolExecutor(max_workers=workers) as pool:
+    with ProcessPoolExecutor(max_workers=min(workers, len(jobs))) as pool:
         futures = {
             name: pool.submit(reconstruct, outlines, reference_pos)
             for name, outlines in jobs.items()
@@ -434,8 +531,6 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
 
     # per-glyph strategy table (config form of OPEN_BAR_GLYPHS + friends).
     # glyphs.freeze pins names to the default-master donor (implicit freeze).
-    from variable_gen.config import GlyphStrategy
-
     strategies = dict(config.glyphs.strategies)
     for freeze_name in config.glyphs.freeze:
         strategies.setdefault(freeze_name, GlyphStrategy(strategy="freeze", params={}))
@@ -511,13 +606,24 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
         f"[{style_key}] reconstructing {len(donor_outlines)} glyphs on {workers} core(s)"
         f" ({len(groups)} interpolating row(s))"
     )
+    cache_dir = cache_dir_from_environment()
+    cache_stats = ReconstructionCacheStats()
     reconstructed = reconstruct_plan(
         donor_outlines,
         plan,
         primary_tag,
         reference_location,
         workers,
+        strategies=strategies,
+        cache_dir=cache_dir,
+        cache_stats=cache_stats,
     )
+    if cache_dir is not None:
+        print(
+            f"[{style_key}] reconstruction cache: {cache_stats.hits} hit(s), "
+            f"{cache_stats.misses} miss(es), {cache_stats.writes} write(s), "
+            f"{cache_stats.bypassed} bypassed, {cache_stats.errors} error(s)"
+        )
 
     stats = RebuildStats()
     for glyph in font.glyphs:
