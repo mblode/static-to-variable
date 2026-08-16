@@ -47,3 +47,5 @@ Record all of the following so results can be compared:
 - output hash and serial/parallel equivalence result
 
 `STV_JOBS=1` keeps debugging tracebacks readable. It is not the default performance baseline.
+
+Set `STV_RECONSTRUCTION_CACHE` to a new temporary directory for a cold/warm cache benchmark. Set it to `off` to disable reuse. The default is the platform's shared user cache (`~/Library/Caches` on macOS, `%LOCALAPPDATA%` on Windows, or `$XDG_CACHE_HOME`/`~/.cache` elsewhere). Cache files contain derived outline coordinates: keep them local, never commit or publish them, and delete the directory whenever a cold rebuild is required.

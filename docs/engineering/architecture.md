@@ -48,6 +48,6 @@ Callers should cross these seams rather than duplicate their internal steps. The
 
 ## Performance model
 
-Per-glyph reconstruction dominates real builds; unit tests and TypeScript checks are comparatively cheap. The current engine recomputes every donor-backed glyph on every `rebuild`, while each glyph's reconstruction is already a pure function. The highest-leverage future optimisation is content-addressed reuse at that seam, keyed by complete donor outlines, axis locations, reference location, strategy, and reconstruction implementation version. A stage-level receipt can then skip UFO/font compilation only when all declared inputs and expected outputs match.
+Per-glyph reconstruction dominates real builds; unit tests and TypeScript checks are comparatively cheap. `rebuild` therefore caches each pure reconstruction result by complete donor outlines, axis locations, reference location, glyph strategy, Python and geometry-dependency versions, and reconstruction source hashes. Unknown context, unreadable implementation inputs, malformed coordinates, or corrupt entries are cache misses. JSON entries are written atomically and never executed.
 
-Until those caches exist, use the narrow verification tier during edits, reserve fixture rebuilds for reconstruction changes, and isolate worktree environments so parallel agents do not invalidate one another's editable installs.
+The next performance seam is a stage-level receipt that can skip UFO/font compilation only when all declared inputs and expected outputs match. Until then, use the narrow verification tier during edits, reserve fixture rebuilds for construction changes, and isolate worktree environments so parallel agents do not invalidate one another's editable installs.

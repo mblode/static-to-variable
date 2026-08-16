@@ -8,6 +8,7 @@ Implementation modules for `variable-gen`, the config-driven build engine the CL
 - `variable_gen.bootstrap` — synthesize a minimal `.glyphs` source from a style's default donor.
 - `variable_gen.rebuild` — rebuild each style's masters from its donors onto a shared, interpolation-compatible structure.
 - `variable_gen.reconstruct_compatible` — the per-glyph outline reconstruction engine.
+- `variable_gen.reconstruction_cache` — fail-closed content-addressed storage for pure reconstruction results.
 - `variable_gen.normalize` — normalize donor-inherited glyph height defects.
 - `variable_gen.xheight` — font-agnostic, geometry-derived x-height transformation and cubic refitting.
 - `variable_gen.designspace` — export UFOs and a corrected `.designspace`.

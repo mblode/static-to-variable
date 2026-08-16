@@ -42,6 +42,7 @@ CI runs `verify:node` and `verify:python` in parallel, then keeps the packaged C
 - A config's `root` controls donor, source, output, UFO, release, and report paths. Keep commands and promotion reports on the same config root; a report from another fixture or worktree is not evidence.
 - `npm run test` covers JavaScript/TypeScript only. Use `npm run verify` for a commit gate.
 - `npm run pipeline -- run all` drives the committed minimal fixture. For another family, pass its config directly to `variable_gen.cli` or the public `static-to-variable build --config ...` command.
+- `rebuild` uses a shared content-addressed glyph cache. Set `STV_RECONSTRUCTION_CACHE=off` to prove a cold path, or set it to an isolated directory for benchmarks; never commit cache contents.
 - `STV_JOBS=1` is a debugging mode, not a speed setting. The default uses available cores; record any override with benchmark evidence.
 
 ## Generated and licensed files
