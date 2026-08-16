@@ -80,6 +80,16 @@ class QuadraticReference:
 
 
 @dataclass(frozen=True)
+class QuadraticTopology:
+    """Source-authored contour topology required before cu2qu conversion."""
+
+    glyphs: dict[str, tuple[tuple[tuple[str, int], ...], ...]] = field(
+        default_factory=dict
+    )
+    master_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Style:
     key: str
     italic: bool
@@ -92,6 +102,7 @@ class Style:
     base_source: Path | None = None
     config_base_source: str | None = None
     quadratic_reference: QuadraticReference | None = None
+    quadratic_topology: QuadraticTopology | None = None
 
 
 @dataclass(frozen=True)
@@ -364,6 +375,9 @@ def _parse_style(
     quadratic_reference = _parse_quadratic_reference(
         raw.get("quadraticReference"), repo_root, config_path
     )
+    quadratic_topology = _parse_quadratic_topology(
+        raw.get("quadraticTopology"), tuple(master.name for master in masters), config_path
+    )
 
     return Style(
         key=key,
@@ -379,6 +393,7 @@ def _parse_style(
         ),
         config_base_source=base_source_value,
         quadratic_reference=quadratic_reference,
+        quadratic_topology=quadratic_topology,
     )
 
 
@@ -407,6 +422,67 @@ def _parse_quadratic_reference(
         location=location,
         max_error=max_error,
     )
+
+
+def _parse_quadratic_topology(
+    raw: Any, configured_master_names: tuple[str, ...], config_path: Path
+) -> QuadraticTopology | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{config_path}: quadraticTopology must be an object")
+    masters_raw = raw.get("masters")
+    if not isinstance(masters_raw, list) or not masters_raw or not all(
+        isinstance(name, str) and name for name in masters_raw
+    ):
+        raise ConfigError(
+            f"{config_path}: quadraticTopology.masters must be a non-empty string list"
+        )
+    master_names = tuple(masters_raw)
+    if master_names != configured_master_names:
+        raise ConfigError(
+            f"{config_path}: quadraticTopology.masters must exactly match "
+            "the configured style masters"
+        )
+    glyphs_raw = raw.get("glyphs")
+    if not isinstance(glyphs_raw, dict) or not glyphs_raw:
+        raise ConfigError(f"{config_path}: quadraticTopology.glyphs must be a non-empty object")
+    glyphs: dict[str, tuple[tuple[tuple[str, int], ...], ...]] = {}
+    for glyph_name, contours_raw in sorted(glyphs_raw.items()):
+        if not isinstance(glyph_name, str) or not glyph_name:
+            raise ConfigError(f"{config_path}: quadraticTopology glyph names must be strings")
+        if not isinstance(contours_raw, list) or not contours_raw:
+            raise ConfigError(f"{config_path}: quadraticTopology.{glyph_name} must be contours")
+        contours = []
+        for contour_index, operations_raw in enumerate(contours_raw):
+            if not isinstance(operations_raw, list) or not operations_raw:
+                raise ConfigError(
+                    f"{config_path}: quadraticTopology.{glyph_name}[{contour_index}] "
+                    "must be operations"
+                )
+            operations = []
+            for operation_index, operation_raw in enumerate(operations_raw):
+                if (
+                    not isinstance(operation_raw, list)
+                    or len(operation_raw) != 2
+                    or not isinstance(operation_raw[0], str)
+                    or not isinstance(operation_raw[1], int)
+                    or isinstance(operation_raw[1], bool)
+                    or operation_raw[1] < 0
+                ):
+                    raise ConfigError(
+                        f"{config_path}: quadraticTopology.{glyph_name}[{contour_index}]"
+                        f"[{operation_index}] must be [operation, pointCount]"
+                    )
+                operations.append((operation_raw[0], operation_raw[1]))
+            if operations[0] != ("moveTo", 1) or operations[-1] != ("closePath", 0):
+                raise ConfigError(
+                    f"{config_path}: quadraticTopology.{glyph_name}[{contour_index}] must "
+                    "start with moveTo and end with closePath"
+                )
+            contours.append(tuple(operations))
+        glyphs[glyph_name] = tuple(contours)
+    return QuadraticTopology(glyphs=glyphs, master_names=master_names)
 
 
 def _validate_master_locations(

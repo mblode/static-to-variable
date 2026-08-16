@@ -190,6 +190,8 @@ def build_designspace(
     quadratic_reference_path: Path | None = None,
     quadratic_reference_location: dict[str, float] | None = None,
     quadratic_reference_max_error: float = 1.0,
+    quadratic_topology: dict[str, tuple[tuple[tuple[str, int], ...], ...]] | None = None,
+    quadratic_topology_master_names: tuple[str, ...] = (),
     default_master_name: str | None = None,
 ) -> Path:
     """Convert one ``.glyphs`` source to UFOs + a corrected designspace, written
@@ -234,6 +236,9 @@ def build_designspace(
             reference_path=quadratic_reference_path,
             reference_location=quadratic_reference_location or {},
             max_error=quadratic_reference_max_error,
+            topology_contract=quadratic_topology,
+            topology_contract_master_names=quadratic_topology_master_names,
+            source_master_names=tuple(source.name for source in ds.sources),
         )
         print(
             "  Preserved quadratic reference: "
@@ -282,6 +287,7 @@ def export_designspace(config: ProjectConfig, style_key: str) -> Path:
     weight_names = dict(primary.named_instances)
     default_master = next(master for master in style.masters if master.default)
     quadratic_reference = style.quadratic_reference
+    quadratic_topology = style.quadratic_topology
     path = build_designspace(
         style.source,
         ds_name,
@@ -305,6 +311,10 @@ def export_designspace(config: ProjectConfig, style_key: str) -> Path:
         ),
         quadratic_reference_max_error=(
             quadratic_reference.max_error if quadratic_reference is not None else 1.0
+        ),
+        quadratic_topology=(quadratic_topology.glyphs if quadratic_topology is not None else None),
+        quadratic_topology_master_names=(
+            quadratic_topology.master_names if quadratic_topology is not None else ()
         ),
         default_master_name=default_master.name,
     )
