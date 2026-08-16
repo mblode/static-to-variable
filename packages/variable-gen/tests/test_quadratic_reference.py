@@ -20,6 +20,7 @@ from variable_gen.quadratic_reference import (
     _same_filled_path,
     preserve_quadratic_reference,
 )
+import variable_gen.quadratic_reference as quadratic_reference
 
 PROVENANCE = "manual:" + "a" * 64
 
@@ -106,6 +107,19 @@ def _source_set() -> list[ufoLib2.Font]:
     ]
 
 
+def _exact_reference_source(*, marked: bool) -> ufoLib2.Font:
+    font = _source_font(height=100, width=500, marked=marked)
+    glyph = font["curve"]
+    glyph.clearContours()
+    pen = glyph.getPen()
+    pen.moveTo((0, 0))
+    # Degree elevation of the protected quadratic from (100, 0), via
+    # (50, 150), to (0, 0), expressed in the source's opposite direction.
+    pen.curveTo(((100 / 3), 99.5), ((200 / 3), 99.5), (100, 0))
+    pen.closePath()
+    return font
+
+
 def _signature(glyph) -> tuple[tuple[str, int], ...]:
     recording = _recording(glyph)
     return tuple((operation, len(points)) for operation, points in recording.value)
@@ -188,6 +202,50 @@ def test_reference_geometry_survives_compatible_closed_variable_build(tmp_path: 
     assert ui["hmtx"].metrics["curve"][0] == 500
     assert display["hmtx"].metrics["curve"][0] == 500
     assert text["hmtx"].metrics["curve"][0] == 520
+
+
+def test_reference_count_contracts_a_conservative_preliminary_conversion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = [
+        _exact_reference_source(marked=True),
+        _exact_reference_source(marked=False),
+        _exact_reference_source(marked=False),
+    ]
+
+    def conservative_conversion(fonts, **_kwargs) -> None:
+        for font in fonts:
+            glyph = font["curve"]
+            glyph.clearContours()
+            pen = glyph.getPen()
+            pen.moveTo((0, 0))
+            # The same quadratic split at t=.5: deliberately compatible and
+            # geometrically exact, but more segmented than the authority.
+            pen.lineTo((100, 0))
+            pen.qCurveTo((75, 74.625), (25, 74.625), (0, 0))
+            pen.closePath()
+
+    monkeypatch.setattr(quadratic_reference, "fonts_to_quadratic", conservative_conversion)
+    report = preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        max_error=1,
+    )
+
+    assert report.expanded_operations == 0
+    assert report.maximum_segments == 1
+    assert {_signature(font["curve"]) for font in fonts} == {
+        (
+            ("moveTo", 1),
+            ("lineTo", 1),
+            ("qCurveTo", 2),
+            ("closePath", 0),
+        )
+    }
 
 
 def test_authored_cubic_fit_stays_within_one_unit() -> None:
