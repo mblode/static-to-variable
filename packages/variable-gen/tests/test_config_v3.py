@@ -117,3 +117,34 @@ def test_rejects_multiple_default_masters() -> None:
     path = _write_temp(data)
     with pytest.raises(ConfigError, match="exactly one default"):
         load_config(path)
+
+
+def test_loads_quadratic_reference_contract() -> None:
+    data = _load_raw()
+    data["styles"]["roman"]["quadraticReference"] = {
+        "path": "references/default.ttf",
+        "location": {"opsz": 16, "wght": 400},
+        "maxError": 0.75,
+    }
+    path = _write_temp(data)
+
+    reference = load_config(path).styles["roman"].quadratic_reference
+
+    assert reference is not None
+    assert reference.config_path == "references/default.ttf"
+    assert reference.path == (path.parent / "references/default.ttf").resolve()
+    assert reference.location == {"opsz": 16.0, "wght": 400.0}
+    assert reference.max_error == 0.75
+
+
+@pytest.mark.parametrize("max_error", [0, -1, True, "one"])
+def test_rejects_invalid_quadratic_reference_error(max_error: object) -> None:
+    data = _load_raw()
+    data["styles"]["roman"]["quadraticReference"] = {
+        "path": "references/default.ttf",
+        "maxError": max_error,
+    }
+    path = _write_temp(data)
+
+    with pytest.raises(ConfigError, match="quadraticReference.maxError"):
+        load_config(path)
