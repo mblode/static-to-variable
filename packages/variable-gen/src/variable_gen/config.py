@@ -70,6 +70,16 @@ class Master:
 
 
 @dataclass(frozen=True)
+class QuadraticReference:
+    """TrueType default-master geometry that compilation must preserve exactly."""
+
+    path: Path
+    config_path: str
+    location: dict[str, float] = field(default_factory=dict)
+    max_error: float = 1.0
+
+
+@dataclass(frozen=True)
 class Style:
     key: str
     italic: bool
@@ -81,6 +91,7 @@ class Style:
     config_output: str
     base_source: Path | None = None
     config_base_source: str | None = None
+    quadratic_reference: QuadraticReference | None = None
 
 
 @dataclass(frozen=True)
@@ -350,6 +361,9 @@ def _parse_style(
     source_value = _required_str(raw, "source", config_path)
     output_value = _required_str(raw, "output", config_path)
     base_source_value = _optional_str(raw, "baseSource", config_path)
+    quadratic_reference = _parse_quadratic_reference(
+        raw.get("quadraticReference"), repo_root, config_path
+    )
 
     return Style(
         key=key,
@@ -364,6 +378,34 @@ def _parse_style(
             _resolve_repo_path(repo_root, base_source_value) if base_source_value else None
         ),
         config_base_source=base_source_value,
+        quadratic_reference=quadratic_reference,
+    )
+
+
+def _parse_quadratic_reference(
+    raw: Any, repo_root: Path, config_path: Path
+) -> QuadraticReference | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{config_path}: quadraticReference must be an object")
+    path_value = _required_str(raw, "path", config_path)
+    location_raw = raw.get("location", {})
+    if not isinstance(location_raw, dict):
+        raise ConfigError(f"{config_path}: quadraticReference.location must be an object")
+    location: dict[str, float] = {}
+    for tag, value in sorted(location_raw.items()):
+        if not isinstance(tag, str) or not tag:
+            raise ConfigError(f"{config_path}: quadraticReference.location tags must be strings")
+        location[tag] = _coerce_number(value, f"quadraticReference.location.{tag}", config_path)
+    max_error = _coerce_number(raw.get("maxError", 1.0), "quadraticReference.maxError", config_path)
+    if max_error <= 0:
+        raise ConfigError(f"{config_path}: quadraticReference.maxError must be positive")
+    return QuadraticReference(
+        path=_resolve_repo_path(repo_root, path_value),
+        config_path=path_value,
+        location=location,
+        max_error=max_error,
     )
 
 
