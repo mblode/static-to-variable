@@ -83,9 +83,7 @@ class QuadraticReference:
 class QuadraticTopology:
     """Source-authored contour topology required before cu2qu conversion."""
 
-    glyphs: dict[str, tuple[tuple[tuple[str, int], ...], ...]] = field(
-        default_factory=dict
-    )
+    glyphs: dict[str, tuple[tuple[tuple[str, int], ...], ...]] = field(default_factory=dict)
     master_names: tuple[str, ...] = ()
 
 
@@ -378,6 +376,8 @@ def _parse_style(
     quadratic_topology = _parse_quadratic_topology(
         raw.get("quadraticTopology"), tuple(master.name for master in masters), config_path
     )
+    if quadratic_topology is not None and quadratic_reference is None:
+        raise ConfigError(f"{config_path}: quadraticTopology requires quadraticReference")
 
     return Style(
         key=key,
@@ -432,8 +432,10 @@ def _parse_quadratic_topology(
     if not isinstance(raw, dict):
         raise ConfigError(f"{config_path}: quadraticTopology must be an object")
     masters_raw = raw.get("masters")
-    if not isinstance(masters_raw, list) or not masters_raw or not all(
-        isinstance(name, str) and name for name in masters_raw
+    if (
+        not isinstance(masters_raw, list)
+        or not masters_raw
+        or not all(isinstance(name, str) and name for name in masters_raw)
     ):
         raise ConfigError(
             f"{config_path}: quadraticTopology.masters must be a non-empty string list"

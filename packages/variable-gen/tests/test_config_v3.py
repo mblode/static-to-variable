@@ -139,6 +139,9 @@ def test_loads_quadratic_reference_contract() -> None:
 
 def test_loads_quadratic_topology_contract() -> None:
     data = _load_raw()
+    data["styles"]["roman"]["quadraticReference"] = {
+        "path": "references/default.ttf",
+    }
     data["styles"]["roman"]["quadraticTopology"] = {
         "masters": [master["name"] for master in data["styles"]["roman"]["masters"]],
         "glyphs": {"O": [[["moveTo", 1], ["curveTo", 3], ["closePath", 0]]]},
@@ -150,6 +153,17 @@ def test_loads_quadratic_topology_contract() -> None:
     assert topology.master_names == tuple(
         master["name"] for master in data["styles"]["roman"]["masters"]
     )
+
+
+def test_rejects_quadratic_topology_without_reference() -> None:
+    data = _load_raw()
+    data["styles"]["roman"]["quadraticTopology"] = {
+        "masters": [master["name"] for master in data["styles"]["roman"]["masters"]],
+        "glyphs": {"O": [[["moveTo", 1], ["curveTo", 3], ["closePath", 0]]]},
+    }
+
+    with pytest.raises(ConfigError, match="quadraticTopology requires quadraticReference"):
+        load_config(_write_temp(data))
 
 
 @pytest.mark.parametrize("max_error", [0, -1, True, "one"])
