@@ -28,9 +28,9 @@ jobs:
         # pending changeset by design, so requiring one there always fails.
         if: github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main'
         run: npx changeset status --since origin/main
-      - run: npm run check
-      - run: npm run typecheck
-      - run: npm run test
+      # This is the Node half of the local `npm run verify` tier. It stays in a
+      # separate job so Node and Python verification run in parallel.
+      - run: npm run verify:node
       # Build the published package. The web app is covered by typecheck above,
       # not a prod build here.
       - run: npx turbo build --filter=static-to-variable
@@ -43,17 +43,9 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync
-      # Lint everything; format-check the durable library and tests. The audit
-      # script is style-relaxed via ruff per-file-ignores but still
-      # pyflakes-checked.
-      - name: Lint (ruff)
-        run: |
-          uvx ruff@0.14 check packages/variable-gen
-          uvx ruff@0.14 format --check packages/variable-gen/src packages/variable-gen/tests
-      - name: Typecheck (mypy)
-        run: uv run mypy
-      - name: Test (pytest)
-        run: uv run pytest
+      # This is the Python half of the local `npm run verify` tier. `uv.lock`
+      # pins the same ruff, mypy, and pytest versions locally and in CI.
+      - run: npm run verify:python
 
   # Prove the published CLI works end to end: build a real variable font from
   # the committed minimal example (32K Inter subset donors — seconds, not
