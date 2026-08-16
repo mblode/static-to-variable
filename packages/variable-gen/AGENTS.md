@@ -26,7 +26,7 @@ uv run python -m variable_gen.cli build --config examples/minimal/stv.config.jso
 ## Gotchas
 
 - `rebuild` is destructive to generated `.glyphs` sources. Tests should use temporary projects; production drawings must live in durable donors or an explicitly authored optical stage.
-- Rebuilds have no persistent glyph-result cache today: every invocation reconstructs every donor-backed glyph. Use a narrow unit test during edits and run the real fixture only when the reconstruction seam changes.
+- Rebuilds cache pure per-glyph reconstruction results in a shared local directory. The key must remain fail-closed over donor coordinates, complete axis locations, reference location, glyph strategy, Python/dependency versions, and reconstruction source hashes.
 - The reconstruction worker payload is pure and deterministic. Preserve input ordering and output equivalence when changing parallelism; compare serial and parallel results in `test_rebuild_plan.py`.
 - Multi-axis reconstruction runs weight interpolation independently inside each optical row. Never flatten `wght × opsz` coordinates into a fake one-dimensional scalar.
 - Fidelity is measured from rendered union area, not raw contour area. Overlapping same-winding contours make raw area comparisons lie.
@@ -36,7 +36,8 @@ uv run python -m variable_gen.cli build --config examples/minimal/stv.config.jso
 ## Performance work
 
 - Benchmark with the committed minimal fixture and report the cold command, worker count, glyph count, and wall time.
-- Optimise at the existing pure `reconstruct` seam before splitting the algorithm. Content-addressed per-glyph reuse is safe only when its key covers donor outlines, locations, reference position, reconstruction constants/code version, and configured strategy.
+- `STV_RECONSTRUCTION_CACHE=off` disables reuse; a path value isolates a benchmark. Corrupt or incomplete entries must be misses, cache writes must stay atomic, and cold/warm generated source hashes must match.
+- After cache hits are exhausted, profile at the existing pure `reconstruct` seam before splitting the algorithm.
 - Keep worktree environments isolated. Sharing a symlinked editable `.venv` causes `uv` to switch the installed source path between concurrent checkouts.
 
 ## References
