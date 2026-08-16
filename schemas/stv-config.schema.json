@@ -130,6 +130,9 @@
       "type": "object",
       "required": ["italic", "donors", "source", "masters", "output"],
       "additionalProperties": false,
+      "dependentRequired": {
+        "quadraticTopology": ["quadraticReference"]
+      },
       "properties": {
         "italic": { "type": "boolean" },
         "donors": {
