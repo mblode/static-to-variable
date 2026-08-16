@@ -49,6 +49,18 @@ layer.userData["com.mblode.stv.opticalAuthorship"] = f"manual:{drawing_sha256}"
 
 The SHA-256 identifies the durable drawing record. Markers are per glyph and per master: the engine never infers authorship from coordinate differences. If one layer is marked at an optical size in a `wght` build, every configured weight master at that optical size must be marked. Missing Thin, Regular, or ExtraBlack drawings fail before compilation with the glyph and exact locations. Complete rows compile from their source geometry. If fontmake reports incompatibility or the existing midpoint-collapse gate fails, the build stops with a named error rather than replacing any authored layer with donor geometry. Donor fidelity checks remain unchanged, and each compiled authored master must retain its source advance to one unit and its rendered ink area within 2% after cubic-to-quadratic conversion.
 
+When adding those drawings changes cu2qu's segmentation of an already-shipped TrueType default, a style can name that font as the quadratic authority:
+
+```json
+"quadraticReference": {
+  "path": "release/previous-variable.ttf",
+  "location": { "wght": 400, "opsz": 16 },
+  "maxError": 1
+}
+```
+
+During designspace export, the engine converts all masters together and reconciles only provenance-marked glyphs. The reference's filled outline and advance are retained exactly at the default location; zero-length quadratic prefixes provide compatible point structure when an authored master needs more segments. Every non-reference cubic stays within `maxError` font units. Mismatched units per em, missing glyphs, open or incompatible contours, and unrepresentable curves fail before varLib rather than weakening the reference.
+
 `rebuild` writes a reconstruction report (read by the `repair_build` promotion gate) at `packages/variable-gen/reports/reconstruction-report.json`. `build` writes a layout report (read by the `layout` promotion gate) at `packages/variable-gen/reports/layout-report.json`.
 
 ## OpenType layout, kerning, and hinting
