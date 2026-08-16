@@ -66,7 +66,11 @@ def reconstruction_implementation_digest() -> str | None:
     from variable_gen import audit_support, outlines, reconstruct_compatible
 
     digest = hashlib.sha256(f"schema={CACHE_SCHEMA}\n".encode())
-    digest.update(f"python={sys.implementation.name}-{sys.version_info[:2]}\n".encode())
+    # A shared user cache survives interpreter upgrades. Include the complete
+    # runtime build, not only major/minor: micro releases and differently built
+    # interpreters can change the floating-point geometry this cache stores.
+    runtime = " ".join(sys.version.split())
+    digest.update(f"python={sys.implementation.name}-{runtime}\n".encode())
     for package in ("fonttools", "skia-pathops"):
         try:
             package_version = version(package)
