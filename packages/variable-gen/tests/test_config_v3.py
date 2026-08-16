@@ -137,6 +137,21 @@ def test_loads_quadratic_reference_contract() -> None:
     assert reference.max_error == 0.75
 
 
+def test_loads_quadratic_topology_contract() -> None:
+    data = _load_raw()
+    data["styles"]["roman"]["quadraticTopology"] = {
+        "masters": [master["name"] for master in data["styles"]["roman"]["masters"]],
+        "glyphs": {"O": [[["moveTo", 1], ["curveTo", 3], ["closePath", 0]]]},
+    }
+    topology = load_config(_write_temp(data)).styles["roman"].quadratic_topology
+
+    assert topology is not None
+    assert topology.glyphs == {"O": ((("moveTo", 1), ("curveTo", 3), ("closePath", 0)),)}
+    assert topology.master_names == tuple(
+        master["name"] for master in data["styles"]["roman"]["masters"]
+    )
+
+
 @pytest.mark.parametrize("max_error", [0, -1, True, "one"])
 def test_rejects_invalid_quadratic_reference_error(max_error: object) -> None:
     data = _load_raw()

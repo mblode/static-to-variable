@@ -321,6 +321,55 @@ def _pad_reference_operation(
     ]
 
 
+def _topology(recording: RecordingPen, glyph_name: str) -> tuple[tuple[tuple[str, int], ...], ...]:
+    """Return a coordinate-free, contour-stable source topology signature."""
+
+    return tuple(
+        tuple((operation, len(points)) for operation, points in contour)
+        for contour in _contours(recording, glyph_name)
+    )
+
+
+def _validate_topology_contract(
+    fonts, contract, *, expected_master_names: tuple[str, ...], source_master_names: tuple[str, ...]
+) -> None:
+    """Fail before cu2qu if an explicitly authored source topology drifted.
+
+    This intentionally validates only operation kinds and arities. It never
+    copies coordinates, rewrites start points, or changes provenance scope.
+    Every configured source must carry the glyph's existing authorship marker;
+    normal reconciliation remains the union of all provenance-marked glyphs.
+    """
+
+    if not contract:
+        return
+    if not expected_master_names:
+        raise PipelineError("topology contract requires expected master names")
+    if source_master_names != expected_master_names:
+        raise PipelineError(
+            "topology contract master inputs differ from the configured authored master set"
+        )
+    if len(source_master_names) != len(fonts):
+        raise PipelineError("topology contract source master names do not bind every input")
+    for name, expected in sorted(contract.items()):
+        for index, font in enumerate(fonts):
+            if name not in font:
+                raise PipelineError(
+                    f"{name}: topology contract glyph is missing from master {index}"
+                )
+            glyph = font[name]
+            if not glyph.lib.get(OPTICAL_AUTHORSHIP_KEY):
+                raise PipelineError(
+                    f"{name}: topology contract requires authored provenance in master {index}"
+                )
+            actual = _topology(_recording(glyph), name)
+            if actual != expected:
+                raise PipelineError(
+                    f"{name}: topology contract mismatch in master {index}; "
+                    "source contours must be explicitly reauthored"
+                )
+
+
 def _reconcile_glyph(
     name: str,
     fonts,
@@ -452,6 +501,9 @@ def preserve_quadratic_reference(
     reference_path: Path,
     reference_location: dict[str, float],
     max_error: float = 1.0,
+    topology_contract: dict[str, tuple[tuple[tuple[str, int], ...], ...]] | None = None,
+    topology_contract_master_names: tuple[str, ...] = (),
+    source_master_names: tuple[str, ...] = (),
 ) -> QuadraticReferenceReport:
     """Convert ``fonts`` in place while preserving a protected TT default.
 
@@ -465,6 +517,12 @@ def preserve_quadratic_reference(
         raise ValueError("default_index is outside the source font list")
     if max_error <= 0:
         raise ValueError("max_error must be positive")
+    _validate_topology_contract(
+        fonts,
+        topology_contract,
+        expected_master_names=topology_contract_master_names,
+        source_master_names=source_master_names,
+    )
     reference = _reference_font(reference_path, reference_location)
     reference_upem = reference["head"].unitsPerEm
     source_upems = {font.info.unitsPerEm for font in fonts if font.info.unitsPerEm is not None}

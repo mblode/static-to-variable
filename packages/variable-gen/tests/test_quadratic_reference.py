@@ -214,6 +214,90 @@ def test_authored_cubic_fit_stays_within_one_unit() -> None:
     assert 0 < maximum_error <= 1
 
 
+def test_topology_contract_binds_every_authored_master_before_cu2qu(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = [
+        _source_font(height=220, width=520, marked=True),
+        _source_font(height=200, width=500, marked=True),
+        _source_font(height=180, width=480, marked=True),
+    ]
+    contract = {
+        "curve": ((("moveTo", 1), ("curveTo", 3), ("closePath", 0)),),
+    }
+
+    report = preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        max_error=1,
+        topology_contract=contract,
+        topology_contract_master_names=("text", "ui", "display"),
+        source_master_names=("text", "ui", "display"),
+    )
+
+    assert report.glyphs == 1
+
+
+def test_topology_contract_fails_closed_for_unmarked_or_drifted_master(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = [
+        _source_font(height=220, width=520, marked=True),
+        _source_font(height=200, width=500, marked=False),
+        _source_font(height=180, width=480, marked=True),
+    ]
+    contract = {
+        "curve": ((("moveTo", 1), ("curveTo", 3), ("closePath", 0)),),
+    }
+
+    with pytest.raises(PipelineError, match="requires authored provenance in master 1"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+            topology_contract=contract,
+            topology_contract_master_names=("text", "ui", "display"),
+            source_master_names=("text", "ui", "display"),
+        )
+
+    fonts[1] = _source_font(height=200, width=500, marked=True)
+    pen = fonts[1]["curve"].getPen()
+    fonts[1]["curve"].clearContours()
+    pen.moveTo((0, 0))
+    pen.lineTo((100, 0))
+    pen.closePath()
+    with pytest.raises(PipelineError, match="topology contract mismatch in master 1"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+            topology_contract=contract,
+            topology_contract_master_names=("text", "ui", "display"),
+            source_master_names=("text", "ui", "display"),
+        )
+
+
+def test_topology_contract_rejects_a_partial_or_reordered_master_set(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = [_source_font(height=220, width=520, marked=True)]
+    with pytest.raises(PipelineError, match="master inputs differ"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=0,
+            reference_path=reference_path,
+            reference_location={},
+            topology_contract={
+                "curve": ((("moveTo", 1), ("curveTo", 3), ("closePath", 0)),),
+            },
+            topology_contract_master_names=("text", "ui", "display"),
+            source_master_names=("text",),
+        )
+
 def test_reference_reconciliation_is_provenance_scoped_and_deterministic(
     tmp_path: Path,
 ) -> None:
