@@ -33,6 +33,12 @@ The usual path is the top-level CLI (`static-to-variable build`), which chains `
 
 Run only one style by passing its config key (e.g. `--style roman`). Outputs land at the `output` paths declared in the config, and `release` stages TTF + WOFF2 under the config's `releaseDir`.
 
+### Reconstruction cache
+
+`rebuild` stores pure per-glyph results in the platform's local user cache and reports hit, miss, write, bypass, and error counts. Entries are content-addressed by donor geometry, complete axis and reference locations, glyph strategy, Python and geometry-dependency versions, and reconstruction source hashes. Missing context or a malformed entry always recomputes the glyph.
+
+Set `STV_RECONSTRUCTION_CACHE=off` for an uncached run, or set it to a directory to isolate a benchmark. Cache files contain derived outline coordinates; keep them local and uncommitted.
+
 ### Independently authored optical rows
 
 The donor-derived `.glyphs` source remains disposable. A drawing pipeline that applies reviewed manual edits after `rebuild` can mark each genuinely authored master layer with this Glyphs user-data entry:
