@@ -447,9 +447,6 @@ def _reconcile_glyph(
                 continue
 
             reference_count = _quadratic_count(reference_operation[1], name)
-            existing_counts = [
-                _quadratic_count(ops[operation_index][1], name) for ops in quadratic_ops
-            ]
             curves = []
             for font_index, ops in enumerate(source_ops):
                 control_points = ops[operation_index][1]
@@ -462,7 +459,14 @@ def _reconcile_glyph(
                 curves.append((current_points[font_index], *cubic_points))
             segment_count, splines = _fit_all(
                 curves,
-                max(reference_count, *existing_counts),
+                # The protected reference is the topology authority. Start at
+                # its segment count and expand only when the authored cubics
+                # cannot satisfy the configured geometric error bound. The
+                # preliminary independent cu2qu result is deliberately not a
+                # lower bound: it may choose a more conservative segmentation
+                # even when the complete compatible source set fits the
+                # protected program exactly.
+                reference_count,
                 max_error,
                 name,
             )
