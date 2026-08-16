@@ -1,26 +1,10 @@
-# Documentation starter
+# static-to-variable documentation
 
-This directory was scaffolded with `blodemd new --template starter`.
+Product documentation is written in MDX and configured by `docs.json`.
 
-## What is included
+- `index.mdx` introduces the product.
+- `quickstart.mdx` covers the first successful build.
+- `cli-reference.mdx` documents public commands.
+- `engineering/README.md` indexes contributor and agent-facing architecture and verification guidance; it is not part of the product navigation.
 
-- `docs.json` with branding, contextual actions, and starter navigation
-- `index.mdx`, `quickstart.mdx`, and `development.mdx`
-- Placeholder brand assets in `/logo` and `/images`
-- Repo helper files: `.gitignore`, `README.md`, `AGENTS.md`, and `CLAUDE.md`
-
-## Commands
-
-```bash
-blodemd dev
-blodemd validate
-blodemd push
-```
-
-## Customize
-
-- Confirm `slug` in `docs.json` and set the display `name` and description.
-- Replace the assets in `/logo` and `/images`.
-- Rewrite `CLAUDE.md` with project-specific terminology and writing rules.
-- Rewrite the starter pages to match your product.
-- Add a `LICENSE` file deliberately if this repo will be public.
+BlodeMD owns local preview, validation, and publishing. Its CLI is external to this repository, so install or authenticate it separately before running `blodemd dev`, `blodemd validate`, or `blodemd push`.

@@ -1,49 +1,56 @@
-# static-to-variable — agent instructions
+# static-to-variable
 
-Static-glyphs → variable-font pipeline. Node + Python monorepo using npm workspaces and Turbo.
+Static font to variable font pipeline. npm workspaces coordinate a TypeScript CLI, a Python font engine, and the Next.js showcase.
 
-## Workspace map
-
-Each workspace has its own `AGENTS.md` with route maps, gotchas, and conventions:
-
-@packages/cli/AGENTS.md
-
-(`packages/variable-gen` is Python-only; see its `README.md` for entry points. `apps/web` is the marketing site and font showcase; it builds nothing, the CLI is the only way to run the pipeline.)
-
-## Commands
+## Setup
 
 ```bash
-npm run setup:python     # uv sync — provisions .venv with the Python package + dev tools
-npm run dev              # the web app (apps/web) in dev
-npm run build            # turbo build (cli via tsdown, web via next)
-npm run typecheck        # turbo typecheck (cli + web)
-npm run check            # oxlint + oxfmt (ultracite)
-npm run test             # turbo test (vitest)
-npm run pipeline -- list # pipeline stages
-npm run pipeline -- run all  # run the full pipeline
-npm run pipeline:status  # promotion-gate report
-uv run pytest            # Python tests (variable-gen)
-uv run mypy              # typecheck the variable_gen package
-npm run changeset        # add a changeset before opening a release PR
+npm ci
+uv sync
 ```
 
-## Rules
+- Give every git worktree its own `.venv`; never symlink `.venv` between worktrees. A shared editable install points at whichever checkout `uv` synced last and makes parallel agents run the wrong engine.
+- `uv` shares its download cache automatically, so isolated environments do not redownload the Python toolchain.
 
-- **Run Python through the uv-managed env** (`uv run python …`, or the provisioned `.venv/bin/python`) — `fontTools`, `glyphsLib`, and `fontmake` are installed there, not on the global PATH. `uv sync` recreates it from `uv.lock`.
-- The CLI delegates to the `@static-to-variable/variable-gen` workspace. Do not reimplement build or repair logic inside `packages/cli`.
-- Only the `static-to-variable` CLI package is published (npm, via changesets + OIDC). The web app and Python engine workspace stay private.
-- **`rebuild` re-derives every outline from the donors.** It reads the `.glyphs` source only for its glyph roster and a template master (`rebuild.py` `rebuild_style`), then overwrites each layer from the donor fonts. Editing outlines in a `.glyphs` source and then running the pipeline silently discards the edit — change the donors instead. `ensure_source` will synthesise a source from the default donor when none exists, so a new family needs no hand-authored `.glyphs` at all.
-
-## Glide lives in a separate private repo
-
-The Glide and Circular build is not in this repo. It is [mblode/static-to-variable-glide](https://github.com/mblode/static-to-variable-glide), checked out as a sibling at `../static-to-variable-glide` so no licensed foundry material (Circular XX) lands in the public repo. It holds the donors, both `stv.config.json` files, the `.glyphs` sources and the x-height transform, with every path relative to itself:
+## Verification tiers
 
 ```bash
-.venv/bin/python -m variable_gen.cli build --config ../static-to-variable-glide/configs/glide.json --style all
+npm run check:node       # formatting and lint, about 1s
+npm run verify:node      # check + TypeScript typecheck + Vitest
+npm run verify:python    # ruff + mypy + Pytest
+npm run verify           # commit gate: both runtime suites
+npm run verify:full      # push/CI gate: verify + production build + minimal font build
+
+# Narrow edit loops
+npm --workspace static-to-variable run test -- src/config.test.ts
+uv run pytest -q packages/variable-gen/tests/test_rebuild_plan.py
 ```
 
-The exception is `apps/web/app/fonts` and `apps/web/lib/og-assets`: those Glide woff2/ttf are committed build artifacts the marketing site needs, same as the showcase fonts.
+CI runs `verify:node` and `verify:python` in parallel, then keeps the packaged CLI/font-build assertions in the separate `e2e` job.
 
-## Do not commit
+## Workspace contracts
 
-Donor fonts, generated `.glyphs` sources, generated TTFs, report directories, `.venv`, `node_modules`, or SVG caches. The `.gitignore` is the source of truth. Two deliberate exceptions, both committed build artifacts: the showcase fonts in `apps/web/public/fonts` (rebuilt with `scripts/rebuild-showcase-fonts.py`) and the Glide webfonts in `apps/web/app/fonts`.
+- `packages/cli` is the published `static-to-variable` npm package. It orchestrates the engine; build and repair logic belongs in `packages/variable-gen`.
+- `packages/variable-gen` is the private Python engine. Run it through `uv run`, not global Python.
+- `apps/web` is the marketing site and showcase. Follow @apps/web/AGENTS.md when editing it.
+- Glide's licensed donors and project config live in the sibling private `../static-to-variable-glide` repository. Never copy donor fonts or generated sources here.
+
+## Font-pipeline gotchas
+
+- `rebuild` regenerates every master layer from donor fonts and overwrites the `.glyphs` source. Put durable outline changes in donors or the private drawing stage, not the generated source.
+- `build` only triggers `rebuild` when the source is missing. After donor or reconstruction changes, run `rebuild` explicitly before `build` or you will compile a stale source.
+- A config's `root` controls donor, source, output, UFO, release, and report paths. Keep commands and promotion reports on the same config root; a report from another fixture or worktree is not evidence.
+- `npm run test` covers JavaScript/TypeScript only. Use `npm run verify` for a commit gate.
+- `npm run pipeline -- run all` drives the committed minimal fixture. For another family, pass its config directly to `variable_gen.cli` or the public `static-to-variable build --config ...` command.
+- `STV_JOBS=1` is a debugging mode, not a speed setting. The default uses available cores; record any override with benchmark evidence.
+
+## Generated and licensed files
+
+Do not commit donor fonts, `.glyphs` sources, `master_ufo`, reports, release output, caches, `.venv`, or `node_modules`; `.gitignore` is authoritative. The committed showcase/web font assets documented there are deliberate exceptions.
+
+## References
+
+- Engineering index: @docs/engineering/README.md
+- Python engine details: @packages/variable-gen/AGENTS.md
+- CLI details: @packages/cli/AGENTS.md
+- Human contribution flow: @CONTRIBUTING.md
