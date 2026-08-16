@@ -298,6 +298,7 @@ def test_topology_contract_rejects_a_partial_or_reordered_master_set(tmp_path: P
             source_master_names=("text",),
         )
 
+
 def test_reference_reconciliation_is_provenance_scoped_and_deterministic(
     tmp_path: Path,
 ) -> None:
