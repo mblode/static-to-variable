@@ -238,7 +238,10 @@ def build_designspace(
             max_error=quadratic_reference_max_error,
             topology_contract=quadratic_topology,
             topology_contract_master_names=quadratic_topology_master_names,
-            source_master_names=tuple(source.name for source in ds.sources),
+            # Configured master names are Glyphs style names (for example
+            # ``Text Regular``); designspace source names include the family
+            # prefix (for example ``Glide Text Regular``).
+            source_master_names=tuple(source.styleName for source in ds.sources),
         )
         print(
             "  Preserved quadratic reference: "
