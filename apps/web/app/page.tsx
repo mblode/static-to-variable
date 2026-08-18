@@ -14,6 +14,7 @@ import {
   githubUrl,
   npmUrl,
   productName,
+  quickstartUrl,
   siteUrl,
 } from "@/lib/config";
 import { FONTS } from "@/lib/fonts";
@@ -156,26 +157,11 @@ export default function Home() {
         type="application/ld+json"
       />
 
-      <div className="mb-10 flex items-center justify-between gap-4 sm:mb-12">
+      <div className="mb-10 sm:mb-12">
         <ZoneBreadcrumb product={productName} />
-        <Button
-          aria-label="View on GitHub"
-          asChild
-          className="-mr-2 text-muted-foreground"
-          size="icon-sm"
-          variant="ghost"
-        >
-          <a href={githubUrl}>
-            <GithubIcon />
-            <span
-              aria-hidden="true"
-              className="-translate-1/2 pointer-fine:hidden absolute top-1/2 left-1/2 size-[max(100%,3rem)]"
-            />
-          </a>
-        </Button>
       </div>
 
-      {/* Hero: promise, lede, proof */}
+      {/* Hero: promise, lede, the page's one action */}
       <header className="pb-12 sm:pb-16">
         <h1 className="max-w-[19ch] text-balance font-semibold text-5xl leading-[1.05] tracking-tight sm:text-6xl sm:tracking-[-0.03em]">
           Turn static fonts into one variable font.
@@ -184,6 +170,20 @@ export default function Home() {
           Point it at a folder of thin, regular, and bold. Get one file with
           every weight in between. Nothing leaves your machine.
         </p>
+        <div className="mt-8 flex flex-wrap gap-3">
+          <Button asChild size="lg">
+            <a href={quickstartUrl}>
+              Get started
+              <ArrowUpRightIcon />
+            </a>
+          </Button>
+          <Button asChild size="lg" variant="secondary">
+            <a href={githubUrl}>
+              <GithubIcon />
+              View on GitHub
+            </a>
+          </Button>
+        </div>
       </header>
 
       <section
@@ -283,19 +283,21 @@ export default function Home() {
         <div className="mt-10">
           <CopyInstall code={INSTALL} />
         </div>
-        <div className="mt-8 flex flex-wrap gap-3">
+        <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-4">
           <Button asChild size="lg">
-            <a href={docsUrl}>
-              Read the docs
+            <a href={quickstartUrl}>
+              Get started
               <ArrowUpRightIcon />
             </a>
           </Button>
-          <Button asChild size="lg" variant="secondary">
-            <a href={githubUrl}>
-              View on GitHub
-              <ArrowUpRightIcon />
+          <div className="flex items-center gap-5 text-muted-foreground text-sm">
+            <a className="hover:text-foreground" href={githubUrl}>
+              GitHub
             </a>
-          </Button>
+            <a className="hover:text-foreground" href={npmUrl}>
+              npm
+            </a>
+          </div>
         </div>
       </Section>
 
