@@ -42,3 +42,9 @@ export const twitterCreator = "@mattblode";
 export const githubUrl = "https://github.com/mblode/static-to-variable";
 export const npmUrl = "https://www.npmjs.com/package/static-to-variable";
 export const docsUrl = "https://static-to-variable.blode.md";
+
+/**
+ * The homepage's one repeated CTA. `docsUrl` stays the docs home for wayfinding
+ * links (the footer); this is where "Get started" actually sends people.
+ */
+export const quickstartUrl = `${docsUrl}/quickstart`;
