@@ -2710,6 +2710,95 @@ def _interpolate_contours(contours_a, contours_b, t):
     return out
 
 
+def _node_tangents(contour):
+    """(incoming, outgoing) unit tangents at each on-curve node of a contour.
+
+    Taken from the adjacent handles rather than the neighbouring nodes, because
+    a smooth circle node has neighbours at ninety degrees and no kink at all.
+    """
+    taken = _contour_nodes(contour)
+    if taken is None:
+        return None
+    start, segments = taken
+    nodes = [start] + [segment[1][-1] for segment in segments[:-1]]
+    count = len(nodes)
+    out_tan = [None] * count
+    in_tan = [None] * count
+    for index, (op, pts) in enumerate(segments[:count]):
+        a = nodes[index]
+        b = pts[-1]
+        if op == "curveTo" and len(pts) == 3:
+            c1, c2 = pts[0], pts[1]
+            out_tan[index] = _cubic_out_tan(a, c1, c2, b)
+            in_tan[(index + 1) % count] = _cubic_in_tan(a, c1, c2, b)
+        else:
+            direction = _unit(a, b)
+            out_tan[index] = direction
+            in_tan[(index + 1) % count] = direction
+    return in_tan, out_tan
+
+
+def _joint_break(in_tan, out_tan, index):
+    """Tangent discontinuity at one node, in degrees."""
+    before, after = in_tan[index], out_tan[index]
+    if not before or not after:
+        return 0.0
+    dot = max(-1.0, min(1.0, before[0] * after[0] + before[1] * after[1]))
+    return math.degrees(math.acos(dot))
+
+
+#: How much sharper a join may get at the midpoint than at either master before
+#: the reconstruction is rejected, in degrees.
+#:
+#: `_interp_ok` measures midpoint AREA and PERIMETER, which catches a collapse or
+#: a fold and cannot see this: a single node turning twenty degrees moves neither
+#: number. But it is exactly what a reader sees, and it is what a human review
+#: found at wght 587 -- `p` going from 8.7 degrees at the masters to 25.0 between
+#: them, `t` 22.8 to 43.4 -- on glyphs that are individually correct at every
+#: master. Keeping the donor's own drawing is worth doing only where the donor's
+#: masters also correspond; where they do not, the resampler's normalisation
+#: interpolates better than fidelity does.
+#: NOT WIRED IN. `_interp_smooth` below is written and measured but not part of
+#: the fast-path gate, because it is a trade the maintainer has to make rather
+#: than a fix. At every limit from 15 to 35 degrees it rejects the `three` family
+#: along with the glyphs it is meant to reject, and that family is the single
+#: biggest at-master win this work produced (169x the donor's curvature down to
+#: 1.55). Measured at 20 degrees over 480 roman glyphs: compatible fast path
+#: 359 -> 296, excess p90 1.55 -> 2.17, excess p99 6.07 -> 170.75, in exchange
+#: for the five between-master kinks a human flagged at wght 587.
+#:
+#: Keeping the donor's own drawing makes the masters excellent and can make the
+#: weights between them worse. Both halves are real; which one matters more is a
+#: judgement about the face, not about the code.
+INTERP_KINK_DEGREES = 20.0
+
+
+def _interp_smooth(out, limit=INTERP_KINK_DEGREES):
+    """False when interpolating two masters kinks a join that is smooth in both."""
+    positions = sorted(out)
+    for first, second in zip(positions, positions[1:], strict=False):
+        left, right = out[first], out[second]
+        if len(left) != len(right):
+            return True
+        mid = _interpolate_contours(left, right, 0.5)
+        if len(mid) != len(left):
+            return True
+        for index in range(len(left)):
+            a = _node_tangents(left[index])
+            b = _node_tangents(right[index])
+            m = _node_tangents(mid[index])
+            if a is None or b is None or m is None:
+                continue
+            if not (len(a[0]) == len(b[0]) == len(m[0])):
+                continue
+            for node in range(len(m[0])):
+                here = _joint_break(m[0], m[1], node)
+                ends = max(_joint_break(a[0], a[1], node), _joint_break(b[0], b[1], node))
+                if here > ends + limit:
+                    return False
+    return True
+
+
 def _interp_ok(out, tol=0.18, perim_tol=0.83):
     """A point-compatible reconstruction can still interpolate badly if point
     correspondence across masters is wrong (e.g. k's diagonal): the masters look
