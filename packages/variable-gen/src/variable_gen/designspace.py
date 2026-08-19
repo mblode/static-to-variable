@@ -193,6 +193,7 @@ def build_designspace(
     quadratic_topology: dict[str, tuple[tuple[tuple[str, int], ...], ...]] | None = None,
     quadratic_topology_master_names: tuple[str, ...] = (),
     default_master_name: str | None = None,
+    insert_extrema_nodes: bool = False,
 ) -> Path:
     """Convert one ``.glyphs`` source to UFOs + a corrected designspace, written
     under ``master_ufo_dir``. Returns the designspace path."""
@@ -249,6 +250,18 @@ def build_designspace(
             f"{report.exact_default_glyphs} already exact, "
             f"{report.expanded_operations} compatibility prefix(es)"
         )
+
+    if insert_extrema_nodes:
+        # Here and nowhere else: every master is live at once, still cubic and
+        # still float. Splitting is exact, so this changes no shape -- it only
+        # puts a node where each curve turns, which is the one place cu2qu has
+        # nothing to anchor to. Downstream it would have to round its new nodes
+        # to the em grid; upstream in the .glyphs source it would be undone by
+        # the next rebuild, which regenerates the source from the donors.
+        from variable_gen.extrema import insert_extrema
+
+        stats = insert_extrema([source.font for source in ds.sources])
+        print(f"  Inserted extrema: {stats}")
 
     master_ufo_dir.mkdir(parents=True, exist_ok=True)
     dropped = 0
@@ -320,6 +333,7 @@ def export_designspace(config: ProjectConfig, style_key: str) -> Path:
             quadratic_topology.master_names if quadratic_topology is not None else ()
         ),
         default_master_name=default_master.name,
+        insert_extrema_nodes=style.insert_extrema,
     )
     if len(config.axes) > 1:
         _configure_multi_axis_designspace(

@@ -514,6 +514,9 @@ def _compute_reconstruction_jobs(
 def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
     """Rebuild one style's ``.glyphs`` source in place, returning reconstruction
     stats. Mirrors ``rebuild_8master.rebuild_family`` exactly, config-driven."""
+    # Coordinate grid for emitted outlines. Reconstruction resamples by arc length,
+    # so without this the source lands almost entirely off the integer grid.
+    outline_grid = config.raw.get("outlineGrid") or None
     style = config.styles[style_key]
     # A from-scratch project ships no .glyphs source; synthesize a minimal one
     # (glyph set + one template master) from the default-master donor so the
@@ -666,7 +669,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
                     layer.layerId = layer.associatedMasterId = ids[master.name]
                     glyph.layers.append(layer)
                     contours, width = frozen_rows[master.location]
-                    draw_into(layer, contours)
+                    draw_into(layer, contours, grid=outline_grid)
                     layer.width = width
                 stats.frozen += 1
                 stats.glyphs[glyph.name] = "frozen"
@@ -702,7 +705,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
                         layer = GSLayer()
                         layer.layerId = layer.associatedMasterId = ids[master.name]
                         glyph.layers.append(layer)
-                        draw_into(layer, bf[master.location])
+                        draw_into(layer, bf[master.location], grid=outline_grid)
                         layer.width = outlines[master.name][1]
                     stats.reconstructed += 1
                     stats.donor += 1
@@ -736,7 +739,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
                 layer = GSLayer()
                 layer.layerId = layer.associatedMasterId = ids[master.name]
                 glyph.layers.append(layer)
-                draw_into(layer, out8[master.name][0])
+                draw_into(layer, out8[master.name][0], grid=outline_grid)
                 layer.width = out8[master.name][1]
             stats.donor += 1
             continue
@@ -778,7 +781,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
                     layer = GSLayer()
                     layer.layerId = layer.associatedMasterId = ids[master.name]
                     glyph.layers.append(layer)
-                    draw_into(layer, contours)
+                    draw_into(layer, contours, grid=outline_grid)
                     layer.width = width
                 except Exception as exc:  # noqa: BLE001 — fall back to freeze below
                     print(
@@ -813,7 +816,7 @@ def rebuild_style(config: ProjectConfig, style_key: str) -> RebuildStats:
             layer = GSLayer()
             layer.layerId = layer.associatedMasterId = ids[master.name]
             glyph.layers.append(layer)
-            draw_into(layer, ref[0])
+            draw_into(layer, ref[0], grid=outline_grid)
             layer.width = ref[1]
         stats.frozen += 1
         stats.glyphs[glyph.name] = "frozen"

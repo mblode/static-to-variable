@@ -31,6 +31,7 @@ from __future__ import annotations
 import itertools
 import math
 
+from fontTools.misc.bezierTools import splitCubicAtT
 from variable_gen.audit_support import segments_intersect
 from variable_gen.outlines import signature
 
@@ -46,12 +47,153 @@ RESAMPLE_STEP = 18  # target units between resampled points (dense
 # once with a coarser sample so weight still varies instead of freezing.
 FOLD_RETRY_RESAMPLE_STEP = 32
 MIN_RUN_PTS = 1  # min interior points per inter-corner run
+
+# ATTEMPTED AND REVERTED: resampling small contours more finely.
+#
+# Diagnosis stands and is the important part. The comma-accent family is
+# master-INCOMPATIBLE IN THE DONOR ITSELF -- Circular draws `undercommaaccent`
+# with 8 points at Thin and 9 at ExtraBlack -- so it cannot take the
+# already-compatible fast path and goes through this resampler. RESAMPLE_STEP is
+# an absolute 18 units, which is right for a bowl and starves a mark whose whole
+# perimeter is a few steps: a 7-segment accent came back as 25 segments at a
+# curvature roughness of 257 against the donor's 7.4, inherited identically by
+# every glyph carrying it.
+#
+# Sampling proportionally fixed exactly that -- undercommaaccent 257 -> 57,
+# commaaccent 157 -> 35, and the whole Xcommaaccent family with them -- but
+# finer sampling buys fidelity and pays in segment economy: 40 further glyphs
+# crossed the micro-segment threshold, `a` among them, and the flagged total
+# went 226 -> 259. Confining it to contours under 520 units changed nothing,
+# because the affected contours are all small already. The trade is intrinsic to
+# sampling density and cannot be tuned away.
+#
+# The correct fix is not a density knob. When masters differ by one or two
+# points, insert the missing points at the corresponding positions instead of
+# resampling every master onto a polyline -- compatibility by insertion rather
+# than by rebuild. That preserves the donor's own node structure, which is what
+# the resampler destroys, and it would address the 213 donor-inherited
+# incompatibilities rather than this one family.
+#
+# ATTEMPTED AND REVERTED: that insertion path, built and measured.
+#
+# It works, and the geometry is not what defeated it. Aligning the masters'
+# on-curve rings (Needleman-Wunsch over arc-length position, start-rotation
+# picked per master against the reference) paired `undercommaaccent`'s nodes
+# correctly and found ExtraBlack's genuinely extra one; splitting the sparse
+# masters' matching segment there with `splitCubicAtT`, plus exact degree
+# elevation where a line faced a curve, made all three masters share one
+# structure with every enclosed area preserved to 1e-9 relative and every node
+# still on the donor's own path. It reached 189 of the 332 glyphs that need
+# repair and left the donor's segment counts intact instead of the resampler's
+# 7 -> 25.
+#
+# What defeated it is `reconstruct_plan` in rebuild.py, one level up. Optical
+# rows are reconstructed INDEPENDENTLY and then required to share an identical
+# point structure (`_row_signature_details`), because opsz has to interpolate
+# too. Glide's Text cabinet is a separate drawing from the UI/Display one for
+# 121 glyphs -- all the round lowercase, a c d e g m o p q r s t and their
+# accented forms. Insertion is faithful to whichever drawing it is handed, so
+# those rows come out with different node counts and the build stops. The
+# resampler satisfies the contract only because it is NORMALISING: it erases the
+# difference between the two cabinets by rebuilding both onto the same grid.
+# Faithfulness and that contract are mutually exclusive, and every one of the
+# 121 casualties was a cabinet-differing glyph while every glyph the accent fix
+# targets is cabinet-identical.
+#
+# So this cannot be gated from inside reconstruct(), which sees one row and
+# cannot know whether the others were drawn the same. Anyone retrying it needs
+# `reconstruct_plan` to reconcile the rows -- reconstruct the opsz grid together,
+# or merge the per-row structures into their union before the signature check --
+# and only then is insertion safe to switch on. Measured on the last donors that
+# built green: baseline 226 flagged of 743, insertion 121 glyphs unbuildable.
+
 # The compatibility input is an 18-unit polyline sampling of the donor, not the
 # analytic curve itself. Chasing that polygon below its sub-unit chord error
 # fragments smooth bowls into dozens of tiny cubics whose handle-length jumps
 # show up during interpolation. A 1.5-unit fit stays visually on the donor while
 # recovering the short, smooth curve chains the samples represent.
 CURVE_FIT_TOLERANCE = 1.5
+MIN_HANDLE_LEN = 2.5
+RESAMPLE_STEP = 18  # target units between resampled points (dense
+# enough that curves stay smooth at display sizes)
+# When union-heal invents short-leg cusp folds at stem/bowl joins (d), retry
+# once with a coarser sample so weight still varies instead of freezing.
+FOLD_RETRY_RESAMPLE_STEP = 32
+MIN_RUN_PTS = 1  # min interior points per inter-corner run
+
+# ATTEMPTED AND REVERTED: resampling small contours more finely.
+#
+# Diagnosis stands and is the important part. The comma-accent family is
+# master-INCOMPATIBLE IN THE DONOR ITSELF -- Circular draws `undercommaaccent`
+# with 8 points at Thin and 9 at ExtraBlack -- so it cannot take the
+# already-compatible fast path and goes through this resampler. RESAMPLE_STEP is
+# an absolute 18 units, which is right for a bowl and starves a mark whose whole
+# perimeter is a few steps: a 7-segment accent came back as 25 segments at a
+# curvature roughness of 257 against the donor's 7.4, inherited identically by
+# every glyph carrying it.
+#
+# Sampling proportionally fixed exactly that -- undercommaaccent 257 -> 57,
+# commaaccent 157 -> 35, and the whole Xcommaaccent family with them -- but
+# finer sampling buys fidelity and pays in segment economy: 40 further glyphs
+# crossed the micro-segment threshold, `a` among them, and the flagged total
+# went 226 -> 259. Confining it to contours under 520 units changed nothing,
+# because the affected contours are all small already. The trade is intrinsic to
+# sampling density and cannot be tuned away.
+#
+# The correct fix is not a density knob. When masters differ by one or two
+# points, insert the missing points at the corresponding positions instead of
+# resampling every master onto a polyline -- compatibility by insertion rather
+# than by rebuild. That preserves the donor's own node structure, which is what
+# the resampler destroys, and it would address the 213 donor-inherited
+# incompatibilities rather than this one family.
+#
+# ATTEMPTED AND REVERTED: that insertion path, built and measured.
+#
+# It works, and the geometry is not what defeated it. Aligning the masters'
+# on-curve rings (Needleman-Wunsch over arc-length position, start-rotation
+# picked per master against the reference) paired `undercommaaccent`'s nodes
+# correctly and found ExtraBlack's genuinely extra one; splitting the sparse
+# masters' matching segment there with `splitCubicAtT`, plus exact degree
+# elevation where a line faced a curve, made all three masters share one
+# structure with every enclosed area preserved to 1e-9 relative and every node
+# still on the donor's own path. It reached 189 of the 332 glyphs that need
+# repair and left the donor's segment counts intact instead of the resampler's
+# 7 -> 25.
+#
+# What defeated it is `reconstruct_plan` in rebuild.py, one level up. Optical
+# rows are reconstructed INDEPENDENTLY and then required to share an identical
+# point structure (`_row_signature_details`), because opsz has to interpolate
+# too. Glide's Text cabinet is a separate drawing from the UI/Display one for
+# 121 glyphs -- all the round lowercase, a c d e g m o p q r s t and their
+# accented forms. Insertion is faithful to whichever drawing it is handed, so
+# those rows come out with different node counts and the build stops. The
+# resampler satisfies the contract only because it is NORMALISING: it erases the
+# difference between the two cabinets by rebuilding both onto the same grid.
+# Faithfulness and that contract are mutually exclusive, and every one of the
+# 121 casualties was a cabinet-differing glyph while every glyph the accent fix
+# targets is cabinet-identical.
+#
+# So this cannot be gated from inside reconstruct(), which sees one row and
+# cannot know whether the others were drawn the same. Anyone retrying it needs
+# `reconstruct_plan` to reconcile the rows -- reconstruct the opsz grid together,
+# or merge the per-row structures into their union before the signature check --
+# and only then is insertion safe to switch on. Measured on the last donors that
+# built green: baseline 226 flagged of 743, insertion 121 glyphs unbuildable.
+
+# The compatibility input is an 18-unit polyline sampling of the donor, not the
+# analytic curve itself. Chasing that polygon below its sub-unit chord error
+# fragments smooth bowls into dozens of tiny cubics whose handle-length jumps
+# show up during interpolation. A 1.5-unit fit stays visually on the donor while
+# recovering the short, smooth curve chains the samples represent.
+CURVE_FIT_TOLERANCE = 1.5
+#: Stop subdividing a run once it is this short. Nine samples is about 145 units
+#: of arc at `RESAMPLE_STEP`, and a stretch that small is not a curve the fit is
+#: failing to hold -- it is a corner no cubic can hold, so the recursion keeps
+#: halving and re-expresses the corner as curvature across a fan of near-collinear
+#: cubics. `dollar` came out with 81 segments against a donor's 12 that way, its
+#: G2 break total 44.1 against the donor's 5.0. Measured over 742 glyphs: 84
+#: improve, one loses two segments, 1165 segments come out of the font, and the
+#: reconstruction gets faster because it recurses less.
 CURVE_CORNER_ANGLE = math.radians(20)
 CURVE_LINE_TOLERANCE = 0.08
 
@@ -254,6 +396,421 @@ def _centroid(pts):
 def _already_compatible(outlines):
     sigs = {pos: signature(c) for pos, c in outlines.items()}
     return len(set(sigs.values())) == 1
+
+
+def _contour_nodes(contour):
+    """The on-curve nodes of a pen-op contour, in order, with their segments.
+
+    Returns (start, segments) where each segment ends at the next node, or None
+    for anything this cannot safely take apart.
+    """
+    if not contour or contour[0][0] != "moveTo":
+        return None
+    start = contour[0][1][0]
+    segments = []
+    for op, pts in contour[1:]:
+        if op in ("lineTo", "curveTo", "qCurveTo"):
+            segments.append((op, list(pts)))
+        elif op in ("closePath", "endPath"):
+            continue
+        else:
+            return None
+    if not segments:
+        return None
+    return start, segments
+
+
+def _is_closed(contour, taken=None):
+    """True when the contour's last segment lands back on its start point.
+
+    `closePath` can stand for an edge the segment list does not carry, and every
+    routine here that reorders segments needs to know which it is looking at.
+    """
+    taken = taken or _contour_nodes(contour)
+    if taken is None:
+        return False
+    start, segments = taken
+    return _dist(segments[-1][1][-1], start) < 1e-6
+
+
+def _rotate_contour(contour, shift):
+    """The same closed contour, re-emitted starting `shift` nodes further round.
+
+    Exact: no point moves and no segment changes kind. Only which node the path
+    is written from changes, which is the one thing gvar cares about and the one
+    thing the donor is entitled to disagree with itself about.
+    """
+    taken = _contour_nodes(contour)
+    if taken is None:
+        return None
+    start, segments = taken
+    count = len(segments)
+    shift %= count
+    if shift == 0:
+        return contour
+    ends = [start] + [segment[1][-1] for segment in segments]
+    if not _is_closed(contour):
+        # An open run has no rotation that means the same thing.
+        return None
+    rotated = segments[shift:] + segments[:shift]
+    new_start = ends[shift]
+    out = [("moveTo", [new_start])]
+    out.extend((op, list(pts)) for op, pts in rotated)
+    out.append(("closePath", []))
+    return out
+
+
+def _contour_node_points(contour, taken=None):
+    """The on-curve nodes of a closed contour, indexed the way a rotation is.
+
+    Node i is where segment i begins, so rotating by k makes node k the start.
+    Deliberately NOT `to_ring`'s dense ring: that carries curve samples whose
+    count follows the curve's length, so the same four-node circle yields 32
+    points at Thin and 12 at ExtraBlack, and comparing those lengths rejects
+    exactly the compatible shapes this is meant to rescue.
+    """
+    taken = taken or _contour_nodes(contour)
+    if taken is None:
+        return None
+    start, segments = taken
+    return [start] + [segment[1][-1] for segment in segments[:-1]]
+
+
+def _start_offset(ring, reference_ring):
+    """Which rotation of `ring` best lines its nodes up with the reference.
+
+    Compared in each contour's own normalised box, because the masters are
+    different weights and their nodes are nowhere near each other in absolute
+    terms.
+    """
+
+    def normalise(points):
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        width = (max(xs) - min(xs)) or 1.0
+        height = (max(ys) - min(ys)) or 1.0
+        return [((x - min(xs)) / width, (y - min(ys)) / height) for x, y in points]
+
+    here = normalise(ring)
+    there = normalise(reference_ring)
+    count = len(here)
+    best = (None, None)
+    for shift in range(count):
+        cost = sum(
+            (here[(index + shift) % count][0] - there[index][0]) ** 2
+            + (here[(index + shift) % count][1] - there[index][1]) ** 2
+            for index in range(count)
+        )
+        if best[0] is None or cost < best[0]:
+            best = (cost, shift)
+    return best[1]
+
+
+def _align_starts(outlines, reference_pos):
+    """Rotate each contour so every master writes it from the same node.
+
+    The donors disagree about where a contour begins -- Circular starts the two
+    dots of `divide` at a different point round the ring in each weight -- and
+    `_starts_aligned` quite rightly refuses to interpolate that. But refusing
+    sends a set of outlines that are otherwise perfectly compatible through the
+    full resample and refit, and that is what destroys them: the dots arrive as
+    four-segment circles and leave as eight-segment shapes rippling ninety times
+    the donor's own curvature. `degree` and `percent` lose their rings the same
+    way, and all three are on the list of shapes a human marked as not round.
+
+    Rotating is exact -- no point moves, no segment changes kind -- so where it
+    is enough, the donor's own drawing survives intact. Returns None when it
+    cannot align, leaving the existing path to deal with it.
+    """
+    positions = sorted(outlines)
+    if reference_pos not in outlines:
+        return None
+    reference = outlines[reference_pos]
+    out = {reference_pos: reference}
+    for pos in positions:
+        if pos == reference_pos:
+            continue
+        contours = outlines[pos]
+        if len(contours) != len(reference):
+            return None
+        rotated = []
+        for index, contour in enumerate(contours):
+            nodes = _contour_node_points(contour)
+            reference_nodes = _contour_node_points(reference[index])
+            if nodes is None or reference_nodes is None:
+                return None
+            if len(nodes) != len(reference_nodes) or len(nodes) < 3:
+                return None
+            turned = _rotate_contour(contour, _start_offset(nodes, reference_nodes))
+            if turned is None:
+                return None
+            rotated.append(turned)
+        out[pos] = rotated
+    return out
+
+
+def _contour_runs(contour, taken=None):
+    """A closed contour as consecutive same-kind runs, starting at a run boundary.
+
+    Returns (runs, rotation) where each run is (kind, [segments]) and `rotation`
+    is how many segments the contour was turned to make it begin at a boundary.
+    A closed contour whose first and last segment share a kind has one run that
+    wraps the start, so it has to be turned before the runs can be read off at
+    all. Returns None for anything that cannot be decomposed.
+    """
+    taken = taken or _contour_nodes(contour)
+    if taken is None:
+        return None
+    _start, segments = taken
+    kinds = [op for op, _pts in segments]
+    if len(set(kinds)) == 1:
+        return [(kinds[0], list(segments))], 0
+    turn = next(i for i in range(len(kinds)) if kinds[i] != kinds[i - 1])
+    ordered = segments[turn:] + segments[:turn]
+    runs = []
+    for op, pts in ordered:
+        if runs and runs[-1][0] == op:
+            runs[-1][1].append((op, pts))
+        else:
+            runs.append((op, [(op, pts)]))
+    return runs, turn
+
+
+def _split_segment_once(op, pts, start):
+    """Halve one segment exactly. Returns [(op, pts), (op, pts)] and the midpoint."""
+    if op == "lineTo":
+        end = pts[-1]
+        mid = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+        return [("lineTo", [mid]), ("lineTo", [end])], mid
+    if op == "curveTo" and len(pts) == 3:
+        c1, c2, end = pts
+        left, right = splitCubicAtT(start, c1, c2, end, 0.5)
+        return (
+            [("curveTo", [left[1], left[2], left[3]]), ("curveTo", [right[1], right[2], right[3]])],
+            left[3],
+        )
+    return None, None
+
+
+def _drop_redundant_line_nodes(run, start):
+    """Remove interior nodes of a straight run that sit exactly on its chord.
+
+    A node a master spends in the middle of a straight edge carries no shape:
+    the run means the same thing without it. Growing every other master to match
+    it would propagate a node nobody needs, so the redundant ones come out first
+    and only genuine differences are made up by splitting.
+
+    Exact by construction -- a point is removed only when it lies on the line
+    between its neighbours to within a rounding error, so the ink is unchanged.
+    """
+    if not run or run[0][0] != "lineTo":
+        return run
+    points = [start] + [pts[-1] for _op, pts in run]
+    kept = [points[0]]
+    for index in range(1, len(points) - 1):
+        before, here, after = kept[-1], points[index], points[index + 1]
+        dx, dy = after[0] - before[0], after[1] - before[1]
+        span = math.hypot(dx, dy)
+        if span <= 1e-9:
+            kept.append(here)
+            continue
+        offset = abs((here[0] - before[0]) * dy - (here[1] - before[1]) * dx) / span
+        # Also require it to sit BETWEEN them, so a spike doubling back is kept.
+        along = ((here[0] - before[0]) * dx + (here[1] - before[1]) * dy) / (span * span)
+        if offset > 1e-6 or not (0.0 < along < 1.0):
+            kept.append(here)
+    kept.append(points[-1])
+    return [("lineTo", [point]) for point in kept[1:]]
+
+
+def _grow_run(run, start, target):
+    """Split within one run until it has ``target`` segments. Exact, by halving.
+
+    The longest segment goes first, which is where a master that drew the run
+    with more segments almost always put its extra node, and which keeps the
+    result independent of the order the splits happen in.
+    """
+    segments = list(run)
+    heads = [start]
+    for op, pts in segments[:-1]:
+        heads.append(pts[-1])
+    while len(segments) < target:
+        lengths = [_dist(heads[i], segments[i][1][-1]) for i in range(len(segments))]
+        index = max(range(len(segments)), key=lambda i: lengths[i])
+        op, pts = segments[index]
+        pair, mid = _split_segment_once(op, pts, heads[index])
+        if pair is None:
+            return None
+        segments[index : index + 1] = pair
+        heads[index + 1 : index + 1] = [mid]
+    return segments
+
+
+def _run_start_node(runs, turn, begin):
+    """Where the contour starts once its run list is turned by ``turn``.
+
+    Turning the runs moves the start with them: the new first run begins where
+    the run before it ended. ``turn`` of zero leaves it where it was.
+    """
+    if not turn:
+        return begin
+    return runs[turn - 1][1][-1][1][-1]
+
+
+def _unify_run_counts(outlines, reference_pos):
+    """Give every master the same segment count in each run, by exact splitting.
+
+    Circular draws the same stretch with different numbers of segments in
+    different weights. `three` is `L CCCC L CCCC LLLLLL` at Thin and
+    `L CCCC L CCC LLLLLL` at Book -- one curve fewer in the middle run -- and
+    ExtraBlack is Book's again, turned by a node. The run STRUCTURE agrees; only
+    the counts differ. 173 of the 388 glyphs that still miss the fast path are
+    this case, `zero` `three` `o` `b` `p` `t` `asciitilde` among them.
+
+    Halving a segment is exact -- de Casteljau for a cubic, the midpoint for a
+    line -- so bringing the sparser masters up to the densest changes no shape at
+    all. It only adds nodes, and it adds the same number to the same run in every
+    master, which is what gvar requires.
+
+    Returns None unless every master decomposes into the same runs in the same
+    cyclic order, leaving a genuine drawing difference to the resampler.
+    """
+    positions = sorted(outlines)
+    reference = outlines.get(reference_pos)
+    if reference is None:
+        return None
+
+    decomposed = {}
+    for pos in positions:
+        contours = outlines[pos]
+        if len(contours) != len(reference):
+            return None
+        shapes = []
+        for contour in contours:
+            # Parsed once and passed down: `_contour_runs`, `_contour_node_points`
+            # and `_is_closed` each re-derive the same segment list otherwise.
+            parsed = _contour_nodes(contour)
+            if parsed is None:
+                return None
+            taken = _contour_runs(contour, parsed)
+            nodes = _contour_node_points(contour, parsed)
+            if taken is None or nodes is None:
+                return None
+            # An implicit closing edge means the segment list does not cover the
+            # whole loop, and turning it would drop that edge on the floor.
+            # `donor_outline` materialises the edge, so real donor contours
+            # arrive explicitly closed; a synthetic one may not.
+            if not _is_closed(contour, parsed):
+                return None
+            runs, turn = taken
+            shapes.append((runs, nodes[turn % len(nodes)]))
+        decomposed[pos] = shapes
+
+    out = {pos: [] for pos in positions}
+    for index in range(len(reference)):
+        pattern = [kind for kind, _ in decomposed[reference_pos][index][0]]
+        aligned = {}
+        for pos in positions:
+            runs, begin = decomposed[pos][index]
+            if len(runs) != len(pattern):
+                return None
+            kinds = [kind for kind, _ in runs]
+            count = len(kinds)
+            # A repeating run pattern matches at more than one rotation -- the
+            # `L,C,L,C` of a rounded rectangle matches at 0 and at 2 -- so the
+            # first match is not necessarily the right one, and taking it can
+            # correspond the far side of the contour to the near side. Score the
+            # candidates by where their nodes actually sit and keep the best.
+            turns = [
+                t for t in range(count) if [kinds[(t + i) % count] for i in range(count)] == pattern
+            ]
+            if not turns:
+                return None
+            if len(turns) == 1:
+                turn = turns[0]
+            else:
+                # Compare against where the REFERENCE's runs start, not where its
+                # contour originally did: `_contour_runs` has already turned both
+                # to begin at a run boundary.
+                anchor = decomposed[reference_pos][index][1]
+                turn = min(
+                    turns,
+                    key=lambda t: _dist(_run_start_node(runs, t, begin), anchor),
+                )
+            if turn:
+                begin = _run_start_node(runs, turn, begin)
+            aligned[pos] = (runs[turn:] + runs[:turn], begin)
+
+        # Redundant collinear nodes come out before the counts are compared, or a
+        # node one master wastes in the middle of a straight edge would be forced
+        # on all the others.
+        trimmed = {}
+        for pos in positions:
+            runs, begin = aligned[pos]
+            head = begin
+            per_run = []
+            for _kind, run in runs:
+                lean = _drop_redundant_line_nodes(run, head)
+                per_run.append(lean)
+                head = run[-1][1][-1]
+            trimmed[pos] = per_run
+        targets = [max(len(trimmed[pos][run]) for pos in positions) for run in range(len(pattern))]
+        for pos in positions:
+            runs, begin = aligned[pos]
+            segments = []
+            head = begin
+            for run_index, (_kind, run) in enumerate(runs):
+                grown = _grow_run(trimmed[pos][run_index], head, targets[run_index])
+                if grown is None:
+                    return None
+                segments.extend(grown)
+                head = grown[-1][1][-1]
+            out[pos].append([("moveTo", [begin]), *segments, ("closePath", [])])
+    return out
+
+
+def _starts_correspond(outlines, reference_pos):
+    """True when no rotation would line the masters up better than they already are.
+
+    `_starts_aligned` asks an absolute question -- does the start node sit within
+    a fixed fraction of the contour box in every master -- and on a letterform
+    that changes proportion with weight the answer is no even when nothing is
+    wrong. `H` begins at the same corner in all three weights, but as the stems
+    thicken that corner slides from 0.917 of the box across to 0.693, which reads
+    as drift and is not. A hundred glyphs, `A` `H` `K` `M` `N` `four` `slash`
+    among them, were being sent through the resample and refit on that basis.
+
+    The question that actually matters is relative: is this the best of the
+    rotations available? If some other rotation would fit the reference
+    noticeably better then the starts really have drifted and the masters would
+    interpolate node onto the wrong node. If the current one is already the best,
+    they correspond, however far the box has moved underneath them.
+    """
+    if reference_pos not in outlines:
+        return False
+    reference = outlines[reference_pos]
+    for pos, contours in outlines.items():
+        if pos == reference_pos:
+            continue
+        if len(contours) != len(reference):
+            return False
+        for index, contour in enumerate(contours):
+            if not _is_closed(contour) or not _is_closed(reference[index]):
+                # `_contour_node_points` drops the final node when the contour
+                # closes implicitly, so the rings being compared would be a node
+                # short and could agree by omission.
+                return False
+            nodes = _contour_node_points(contour)
+            reference_nodes = _contour_node_points(reference[index])
+            if nodes is None or reference_nodes is None:
+                return False
+            if len(nodes) != len(reference_nodes):
+                return False
+            if len(nodes) < 3:
+                continue
+            if _start_offset(nodes, reference_nodes) != 0:
+                return False
+    return True
 
 
 def _starts_aligned(outlines, tol=0.12):
@@ -538,7 +1095,16 @@ def _ink_tournament(out, info, outlines_by_pos, reference_pos):
     cross = _disjoint_cross(out)
     coarse = _ink_defect(out, blur=2)
     chosen, chosen_info, chosen_coarse, chosen_cross = out, info, coarse, cross
-    if cross or not info.get("note", "").startswith("uniform"):
+    # A result that came through the compatible fast path IS the donor's own
+    # drawing, so there is nothing for a resample of it to improve. It can still
+    # lose: both score 0.0 coarse, the fine score is relative-only, and a denser
+    # polyline wins that trivially -- `uni2088` lost at 0.00072 against 0.0 and
+    # shipped as a 26-segment resample of a shape that was already correct.
+    # Still challenge it when the ink is actually crossed, which is a real defect
+    # wherever it comes from.
+    if cross or (
+        info.get("stage") != "compatible" and not info.get("note", "").startswith("uniform")
+    ):
         aligned = _uniform_aligned(outlines_by_pos, reference_pos)
         if (
             aligned is not None
@@ -774,9 +1340,61 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
     # numeral swap), then quite correctly fails the ink-quality gate.
     ordered = _order_normalize(outlines_by_pos, reference_pos)
     working = ordered if ordered is not None else outlines_by_pos
+    # Order is not the only thing the donors disagree about. They also start the
+    # same contour at different nodes, which `_starts_aligned` refuses -- and
+    # refusing costs the whole drawing, because the fallback resamples and refits
+    # a set of outlines that were compatible in every other respect. Rotating the
+    # start is exact, so try it before giving up on the fast path.
+    # Note the condition is on the RESULT, not on the input. Requiring the input
+    # to be already-compatible is circular: a rotated start is itself what makes
+    # `signature()` disagree, so the glyphs most in need of rotating are exactly
+    # the ones such a guard excludes. `section` is written
+    # `MLCCCCCLCCCLCCCCCLCCC` at Thin and ExtraBlack and `MCLCCCLCCCCCLCCCLCCCC`
+    # at Book -- the same sequence turned by one node, and nothing else.
+    # `_starts_aligned` indexes every master by the reference's contour count, so
+    # it is only meaningful once they agree on how many contours there are.
+    if len({len(contours) for contours in working.values()}) == 1 and not _starts_aligned(working):
+        turned = _align_starts(working, reference_pos)
+        # Accepted on structure alone, deliberately. Re-testing the rotated set
+        # with `_starts_aligned` re-applies the absolute question the rotation
+        # existed to answer, and throws away 110 glyphs' worth of exact donor
+        # geometry; asking `_starts_correspond` instead is no test at all, since
+        # `_align_starts` rotates by the offset that function checks for and the
+        # answer is yes by construction (measured: 172 of 172). What actually
+        # guards this is the gate below -- a rotation that corresponds the wrong
+        # nodes fails `_interp_ok` or shows up as ink in `_quality_offenders`,
+        # and falls through to reconstruction with the rotation still applied.
+        if turned is not None and _already_compatible(turned):
+            working = turned
+
+    # Rotation alone cannot reconcile masters that spend different numbers of
+    # segments on the same run. Splitting is exact, so bringing the sparser ones
+    # up to the densest costs nothing but nodes -- and it is far cheaper than
+    # what the alternative does, which is rebuild every master on a shared
+    # polyline and refit the lot.
+    if len({len(contours) for contours in working.values()}) == 1 and not _already_compatible(
+        working
+    ):
+        unified = _unify_run_counts(working, reference_pos)
+        # Unifying run counts gives no rotation freedom to a contour drawn
+        # entirely in one kind: `_contour_runs` sees a single run and leaves the
+        # start where it found it. So `threequarters` comes out with its repaired
+        # `three` and a four-node fraction bar that ExtraBlack still starts two
+        # nodes round, and because the gate is all-or-nothing across contours,
+        # that one bar throws the whole repaired glyph away. Rotating afterwards
+        # costs nothing and is now possible: unification has already made the
+        # node counts equal, which is all `_align_starts` needs.
+        if unified is not None and not (
+            _starts_aligned(unified) or _starts_correspond(unified, reference_pos)
+        ):
+            returned = _align_starts(unified, reference_pos)
+            if returned is not None and _already_compatible(returned):
+                unified = returned
+        if unified is not None and _already_compatible(unified):
+            working = unified
     if (
         _already_compatible(working)
-        and _starts_aligned(working)
+        and (_starts_aligned(working) or _starts_correspond(working, reference_pos))
         and _cu2qu_safe(working)
         and _interp_ok(working)
         and not _quality_offenders(working, outlines_by_pos)
@@ -1066,8 +1684,15 @@ def _outline_corner_count(contours):
     return sum(sum(corners) for contour in contours for _, _, corners in [to_ring(contour)])
 
 
-def _shared_corner_candidates(outlines_by_pos):
-    """Rank polyline nodes that are sharp at the same index in every master."""
+def _shared_corner_candidates(outlines_by_pos, combine=min):
+    """Rank polyline nodes that are sharp at the same index in every master.
+
+    ``combine`` decides what "sharp" means across the masters. ``min`` asks
+    whether every master turns there, which is the right question when the
+    masters were corresponded by their own corners. ``max`` asks whether ANY of
+    them does, which is the right question once `_project_contour_set` has given
+    them a shared index space by construction -- see `_curve_corner_indices`.
+    """
     positions = sorted(outlines_by_pos)
     if not positions:
         return []
@@ -1078,7 +1703,7 @@ def _shared_corner_candidates(outlines_by_pos):
         if not rings[positions[0]] or len({len(ring) for ring in rings.values()}) != 1:
             continue
         for index in range(len(rings[positions[0]])):
-            score = min(_polyline_turn(rings[pos], index) for pos in positions)
+            score = combine(_polyline_turn(rings[pos], index) for pos in positions)
             if score > CURVE_CORNER_ANGLE:
                 candidates.append((score, ci, index))
     return candidates
@@ -1126,11 +1751,32 @@ def _reference_corner_candidates(outlines_by_pos, reference_pos=400):
 def _curve_corner_indices(outlines_by_pos, originals_by_pos):
     candidates = _shared_corner_candidates(outlines_by_pos)
     expected = _expected_corner_count(originals_by_pos) if originals_by_pos is not None else None
+    if originals_by_pos is not None and expected is None and len(outlines_by_pos) > 1:
+        # `_expected_corner_count` gives up when the masters disagree about how
+        # many corners they have by more than one, which is `dollar` ([20, 20,
+        # 12] -- the counters fill in at ExtraBlack) and `cent`. That is the case
+        # where scoring an index by the MINIMUM turn is most destructive: it
+        # keeps only what is sharp in the thinnest and the fattest at once, four
+        # of `dollar`'s thirteen real corners, and the fitter then subdivides
+        # around the nine it cannot see. Anchoring on a node that is smooth in
+        # one master costs that master a node it did not need; burying a corner
+        # costs a fan of cubics trying to hold it.
+        union = _shared_corner_candidates(outlines_by_pos, combine=max)
+        if len(union) > len(candidates):
+            candidates = union
     if expected is not None and len(candidates) < expected:
         # Index-matched sharps can be empty when a false donor corner forced
         # arc-length projection: anchors share indices with the reference, but
-        # other masters are smooth there. Use the reference master's sharps.
-        candidates = _reference_corner_candidates(outlines_by_pos)
+        # other masters are smooth there. Take every master's sharps rather than
+        # only the reference's -- the reference cannot know where the others
+        # turn, and anchoring on its corners alone leaves theirs buried inside a
+        # fit run, where the fitter subdivides trying to hold a right angle with
+        # a cubic. `iogonek` arrived as 10 mostly-straight donor segments and
+        # left as 32 all-curve ones that way. The union's own size is then the
+        # budget: it is the set of real corners, not a count borrowed from the
+        # donor.
+        candidates = _shared_corner_candidates(outlines_by_pos, combine=max)
+        expected = None
     if expected is not None:
         if len(candidates) < expected:
             return None
@@ -1198,6 +1844,232 @@ def _stabilize_cubic_joins(contours_by_pos, hard_corners_by_pos):
             )
 
 
+#: Spacing, in font units, of the analytic tangent index built from the donor.
+#: Two units is the same resolution the curve-quality audit samples curvature at,
+#: and it is well under the resampler's 18-unit step, so the nearest indexed
+#: sample to a run endpoint is always on the right stretch of curve.
+#: Fit run endpoints to the donor's own tangent instead of the polyline secant.
+#:
+#: MEASURED, AND OFF BY DEFAULT. `_fit_start_tangent` estimates a tangent from
+#: the first chord of an 18-unit polyline. A chord is an O(h) estimator, so it is
+#: wrong by degrees on a tight curve, and because `_stabilize_cubic_joins` then
+#: forces the arms collinear about the node the error cannot surface as a kink --
+#: it is spent entirely as curvature. That is why the audit finds no smooth-node
+#: kink above half a degree while counting 1281 G2 breaks.
+#:
+#: Substituting the donor's own tangent confirms the diagnosis. Measured on the
+#: flagged glyphs that still take the refit path after `_align_starts` has done
+#: its work, as ripple at wght 950:
+#:
+#:     median -6.1%, 20 better, 7 worse, 4 unchanged
+#:
+#: The wins are large and on shapes people complain about -- `ampersand` 269.86
+#: -> 18.90, `section` 38.28 -> 9.59, `uni2782` 591.14 -> 166.30, `infinity`
+#: 7.88 -> 2.56. So do the losses: `currency` 1.04 -> 1.73, `uni2079` and
+#: `uni2089` 22.04 -> 32.05.
+#:
+#: It is off because of those seven, not because of the median. The release gate
+#: is a ratchet -- no glyph may score worse than its recorded baseline -- so this
+#: lands as part of a change that also fixes where the splits go, and is
+#: re-baselined once. On its own it would have to be argued glyph by glyph.
+#:
+#: The tangent is found by arc-length position around the contour, not by nearest
+#: point. Nearest point was tried first and cannot work: the match is exact --
+#: median distance zero -- but a run endpoint sits ON a node where two edges meet
+#: with different tangents, and distance cannot say which edge this run travels
+#: along. Three threshold variants each only traded one glyph against another.
+#: Ordering was the missing constraint, not a tighter bound.
+DONOR_TANGENTS = False
+
+#: Sampling resolution of the donor curve, in font units.
+DONOR_TANGENT_STEP = 0.25
+
+#: A run endpoint further than this from the donor's own outline is not a point
+#: on it. The resampler only ever places points on the polyline through the
+#: donor's curve, so the true distance is a sagitta -- under three units on the
+#: tightest curve in the family. Past this, the projection has found some other
+#: stroke and its tangent would be worse than the secant it replaces.
+DONOR_TANGENT_REACH = 2.0
+
+#: A donor tangent disagreeing with the secant by more than this has not found
+#: the run's own curve. The secant is a poor estimate of the ANGLE -- that is the
+#: whole reason for this index -- but it is a reliable estimate of the DIRECTION,
+#: because it is built from points that genuinely lie along the run. So a wide
+#: disagreement means the nearest indexed sample belongs to some other stroke
+#: passing close by, and taking its tangent would be worse than doing nothing.
+DONOR_TANGENT_MAX_TURN = 10.0
+
+
+def _analytic_ring(contour):
+    """Dense samples of one donor contour: (point, tangent, arclength-so-far).
+
+    Lines are included as well as curves. A tangent is only ever asked for on a
+    curve -- straight runs never reach the fitter -- but the walk that finds
+    *which* part of the curve a point belongs to has to traverse the straight
+    stretches too, or it loses its place on any glyph with a flat side.
+    """
+    samples = []
+    here = None
+    total = 0.0
+
+    def emit(point, tangent):
+        nonlocal total
+        if samples:
+            total += math.hypot(point[0] - samples[-1][0][0], point[1] - samples[-1][0][1])
+        samples.append((point, tangent, total))
+
+    for op, pts in contour or ():
+        if not pts:
+            continue
+        if op == "moveTo":
+            here = pts[-1]
+            continue
+        if op == "lineTo":
+            end = pts[-1]
+            if here is not None:
+                tangent = _unit(here, end)
+                steps = max(1, int(_dist(here, end) / DONOR_TANGENT_STEP))
+                for index in range(steps + 1):
+                    t = index / steps
+                    emit(
+                        (here[0] + (end[0] - here[0]) * t, here[1] + (end[1] - here[1]) * t),
+                        tangent,
+                    )
+            here = end
+            continue
+        if op == "curveTo" and here is not None and len(pts) == 3:
+            c1, c2, p3 = pts
+            p0 = here
+            length = _dist(p0, c1) + _dist(c1, c2) + _dist(c2, p3)
+            steps = max(2, int(length / DONOR_TANGENT_STEP))
+            for index in range(steps + 1):
+                t = index / steps
+                u = 1 - t
+                dx = (
+                    3 * u * u * (c1[0] - p0[0])
+                    + 6 * u * t * (c2[0] - c1[0])
+                    + 3 * t * t * (p3[0] - c2[0])
+                )
+                dy = (
+                    3 * u * u * (c1[1] - p0[1])
+                    + 6 * u * t * (c2[1] - c1[1])
+                    + 3 * t * t * (p3[1] - c2[1])
+                )
+                norm = math.hypot(dx, dy)
+                emit(_cubic(p0, c1, c2, p3, t), (dx / norm, dy / norm) if norm > 1e-9 else None)
+            here = p3
+            continue
+        if op == "qCurveTo":
+            here = pts[-1]
+    return samples, total
+
+
+def _match_original(ring, originals):
+    """Which donor contour this resampled ring is a polyline of.
+
+    Contour order does not survive the reconstruction, so this is matched by
+    where the contour sits and how big it is -- the same reasoning the circle
+    roster uses, and for the same reason.
+    """
+    if not originals or not ring:
+        return None
+    rx = sum(point[0] for point in ring) / len(ring)
+    ry = sum(point[1] for point in ring) / len(ring)
+    rw = max(point[0] for point in ring) - min(point[0] for point in ring)
+    rh = max(point[1] for point in ring) - min(point[1] for point in ring)
+    best = None
+    best_cost = None
+    for contour in originals:
+        points = [point for _, pts in contour for point in pts if point]
+        if not points:
+            continue
+        cx = sum(point[0] for point in points) / len(points)
+        cy = sum(point[1] for point in points) / len(points)
+        cw = max(point[0] for point in points) - min(point[0] for point in points)
+        ch = max(point[1] for point in points) - min(point[1] for point in points)
+        cost = math.hypot(cx - rx, cy - ry) + abs(cw - rw) + abs(ch - rh)
+        if best_cost is None or cost < best_cost:
+            best_cost, best = cost, contour
+    return best
+
+
+class _RingTangents:
+    """Tangents on the donor's own curve, found by position AROUND the contour.
+
+    Matching a resampled point to the donor by nearest point alone does not
+    work, and the way it fails is instructive: the match is exact -- the median
+    distance is zero -- but a run endpoint sits ON a node, two edges meet there
+    with different tangents, and nothing about distance says which of them this
+    run travels along. Picking wrong substitutes a tangent pointing back down
+    the other edge, which is worse than the secant it replaced. Thresholds
+    cannot fix that, because the two candidates are equidistant by construction.
+
+    Arc length can. The ring is a polyline of this contour and runs the same way
+    around it, so a point's fraction of the way around the ring is its fraction
+    of the way around the donor. That fixes an ordering, and ordering is exactly
+    what distance was missing: the answer is refined to the nearest sample near
+    the predicted place rather than the nearest sample anywhere.
+    """
+
+    #: Refinement window, as a fraction of the contour. Wide enough to absorb the
+    #: length a polyline loses to its chords, far too narrow to reach the other
+    #: side of a node.
+    WINDOW = 0.02
+
+    def __init__(self, ring, original):
+        self.samples, self.total = _analytic_ring(original)
+        self.ok = bool(self.samples) and self.total > 0 and len(ring) > 2
+        if not self.ok:
+            return
+        lengths = [0.0]
+        for index in range(1, len(ring)):
+            lengths.append(lengths[-1] + _dist(ring[index - 1], ring[index]))
+        lengths.append(lengths[-1] + _dist(ring[-1], ring[0]))
+        self.ring_total = lengths[-1] or 1.0
+        self.lengths = lengths
+        start = min(range(len(self.samples)), key=lambda i: _dist(self.samples[i][0], ring[0]))
+        self.offset = self.samples[start][2]
+        # The ring may run the other way round the contour than the donor does.
+        # One probe settles it: take a point a little along the ring and see
+        # whether its match lies ahead of the start or behind it.
+        probe = min(len(ring) - 1, max(1, len(ring) // 8))
+        ahead = min(range(len(self.samples)), key=lambda i: _dist(self.samples[i][0], ring[probe]))
+        delta = (self.samples[ahead][2] - self.offset) % self.total
+        self.forward = delta < self.total / 2
+
+    def at(self, index, point, hint):
+        """The donor's tangent where ring point ``index`` sits, oriented by hint."""
+        if not self.ok or index >= len(self.lengths):
+            return None
+        fraction = self.lengths[index] / self.ring_total
+        travelled = fraction * self.total
+        target = (
+            (self.offset + travelled) % self.total
+            if self.forward
+            else (self.offset - travelled) % self.total
+        )
+        window = self.WINDOW * self.total
+        best = None
+        best_distance = None
+        for sample, tangent, position in self.samples:
+            if tangent is None:
+                continue
+            gap = abs(position - target)
+            if min(gap, self.total - gap) > window:
+                continue
+            distance = _dist(sample, point)
+            if best_distance is None or distance < best_distance:
+                best_distance, best = distance, tangent
+        if best is None:
+            return None
+        if best[0] * hint[0] + best[1] * hint[1] < 0:
+            best = (-best[0], -best[1])
+        aligned = max(-1.0, min(1.0, best[0] * hint[0] + best[1] * hint[1]))
+        if math.degrees(math.acos(aligned)) > DONOR_TANGENT_MAX_TURN:
+            return None
+        return best
+
+
 def _restore_compatible_curves(outlines_by_pos, originals_by_pos=None):
     """Replace temporary compatibility polylines with shared cubic structure.
 
@@ -1224,6 +2096,20 @@ def _restore_compatible_curves(outlines_by_pos, originals_by_pos=None):
     result = {pos: [] for pos in positions}
     for ci in range(contour_count):
         rings = {pos: _line_pts(outlines_by_pos[pos][ci]) for pos in positions}
+        # The fitter's own view of a run endpoint is the first chord of an
+        # 18-unit polyline: an O(h) estimate of a tangent, wrong by degrees on a
+        # tight curve, and spent entirely as curvature once the joins are made
+        # collinear. The donor's own tangent at the same place is exact.
+        donor_tangents = (
+            {
+                pos: _RingTangents(
+                    rings[pos], _match_original(rings[pos], originals_by_pos.get(pos))
+                )
+                for pos in positions
+            }
+            if DONOR_TANGENTS and originals_by_pos
+            else None
+        )
         counts = {len(ring) for ring in rings.values()}
         if len(counts) != 1 or not counts or next(iter(counts)) < 3:
             return None
@@ -1231,13 +2117,43 @@ def _restore_compatible_curves(outlines_by_pos, originals_by_pos=None):
         hard_corners = selected_corners[ci]
         corners = sorted(hard_corners)
         # A closed smooth path cannot be fitted as one span because its endpoints
-        # coincide. Four stable arc-order anchors give circles and bowls enough
-        # freedom without inventing visible corners.
+        # coincide. It needs four anchors, and WHERE they go decides whether the
+        # result reads as a drawn outline.
+        #
+        # Arc-order quarters (0, n/4, n/2, 3n/4) are stable but arbitrary: they
+        # land wherever the resampler happened to step, so a bowl comes out with
+        # its nodes off the extremes and every extremum buried mid-segment. That
+        # is the measured defect -- Glide's `o` carries nodes at (286.5, 460.3)
+        # where the donor puts them on the axis extremes, and 415 glyphs have at
+        # least one extremum with no node on it.
+        #
+        # The axis extremes of the reference ring are just as stable, shared
+        # across masters by index like the quarters they replace, and cost no
+        # extra nodes -- the same four anchors, moved to where a type designer
+        # would put them. Anything the fitter still needs is added between them
+        # as before.
+        # Extrema anchor EVERY contour, not only the fully smooth ones. Gating
+        # this on `len(corners) < 2` reached bowls and circles but skipped every
+        # glyph that has a corner anywhere in it, which is most of them, and left
+        # 2731 extrema with no node on them.
+        # REVERTED: anchoring smooth contours at axis extremes and exact
+        # turning points. It measured well in aggregate (missing extrema 2842 ->
+        # 2364, curvature roughness 7.26 -> 5.43, node count slightly down) but
+        # put a visible flat facet and corner into the inner notch of `tilde`,
+        # and with it every tilde-bearing glyph -- 1.9% of the glyph's ink moved.
+        # Three attempts to keep the gains without the damage all failed:
+        # local-extrema detection shattered straight edges, per-master snapping
+        # broke cross-master compatibility, and dropping the box extremes in
+        # favour of exact turning points regressed 109 glyphs (`degree` 2.5 ->
+        # 73.4). Node placement on a sinuous contour needs anchors chosen by
+        # shape -- inflections for an S, box extremes for a bowl -- which is a
+        # real piece of work, not a threshold to tune.
+        #
+        # `outlineGrid` in `outlines.draw_into` is kept: it only rounds
+        # coordinates, changes no structure, and is measured shape-neutral.
         if len(corners) < 2:
             corners = sorted({*corners, 0, count // 4, count // 2, 3 * count // 4})
         elif 0 not in corners:
-            # Preserve the already-aligned start point while keeping all real
-            # corners as independent tangent boundaries.
             corners = [0, *corners]
 
         contours = {pos: [("moveTo", [rings[pos][corners[0]]])] for pos in positions}
@@ -1248,7 +2164,21 @@ def _restore_compatible_curves(outlines_by_pos, originals_by_pos=None):
                 for pos in positions:
                     contours[pos].append(("lineTo", [samples[pos][-1]]))
                 continue
-            fitted = _fit_shared_cubics(samples, CURVE_FIT_TOLERANCE)
+            start_tangents = end_tangents = None
+            if donor_tangents:
+                start_tangents, end_tangents = {}, {}
+                for pos in positions:
+                    points = samples[pos]
+                    start_hint = _fit_start_tangent(points)
+                    end_hint = _fit_end_tangent(points)
+                    finish = end if end > start else end + count
+                    start_tangents[pos] = (
+                        donor_tangents[pos].at(start, points[0], start_hint) or start_hint
+                    )
+                    end_tangents[pos] = (
+                        donor_tangents[pos].at(finish % count, points[-1], end_hint) or end_hint
+                    )
+            fitted = _fit_shared_cubics(samples, CURVE_FIT_TOLERANCE, start_tangents, end_tangents)
             for pos in positions:
                 contours[pos].extend(("curveTo", [c1, c2, p3]) for c1, c2, p3 in fitted[pos])
         for pos in positions:

@@ -101,6 +101,7 @@ class Style:
     config_base_source: str | None = None
     quadratic_reference: QuadraticReference | None = None
     quadratic_topology: QuadraticTopology | None = None
+    insert_extrema: bool = False
 
 
 @dataclass(frozen=True)
@@ -394,6 +395,7 @@ def _parse_style(
         config_base_source=base_source_value,
         quadratic_reference=quadratic_reference,
         quadratic_topology=quadratic_topology,
+        insert_extrema=_optional_bool(raw, "insertExtrema", config_path),
     )
 
 
@@ -750,6 +752,15 @@ def _optional_str(raw: dict[str, Any], key: str, config_path: Path) -> str | Non
         return None
     if not isinstance(value, str) or not value:
         raise ConfigError(f"{config_path}: {key} must be a non-empty string when present")
+    return value
+
+
+def _optional_bool(raw: dict[str, Any], key: str, config_path: Path) -> bool:
+    value = raw.get(key)
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ConfigError(f"{config_path}: {key} must be a boolean when present")
     return value
 
 
