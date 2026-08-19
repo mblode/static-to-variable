@@ -66,6 +66,38 @@ def fix_vertical_metrics(
     )
 
 
+def _build_elidable_map(font) -> dict[tuple[str, int], bool]:
+    """Build a map of (axis_tag, axis_value) to whether it's marked elidable in STAT."""
+    elidable: dict[tuple[str, int], bool] = {}
+    if "STAT" not in font:
+        return elidable
+    stat = font["STAT"].table
+    if not stat.AxisValueArray:
+        return elidable
+    # Build a map of axis index to axis tag for indexed lookups
+    axis_tags: dict[int, str] = {}
+    if stat.DesignAxisRecord:
+        for i, axis in enumerate(stat.DesignAxisRecord.Axis):
+            axis_tags[i] = axis.AxisTag
+    for av in stat.AxisValueArray.AxisValue:
+        flags = getattr(av, "Flags", 0)
+        is_elidable = bool(flags & 0x0002)
+        # Extract axis tag and value from various AxisValue formats
+        axis_tag = None
+        value = None
+        if hasattr(av, "AxisTag"):
+            axis_tag = av.AxisTag
+        if hasattr(av, "AxisIndex"):
+            axis_tag = axis_tags.get(av.AxisIndex)
+        if hasattr(av, "Value"):
+            value = int(round(av.Value))
+        elif hasattr(av, "NominalValue"):
+            value = int(round(av.NominalValue))
+        if axis_tag and value is not None:
+            elidable[(axis_tag, value)] = is_elidable
+    return elidable
+
+
 def fix_instances(font, config: ProjectConfig, italic: bool):
     """Rewrite fvar named-instance subfamily + PostScript names and drop orphan
     name records, deriving names from the weight coordinate so the result is
@@ -76,6 +108,7 @@ def fix_instances(font, config: ProjectConfig, italic: bool):
     ps_family = _ps_family(config)
     name = font["name"]
     stat_name_ids: set[int] = set()
+    elidable_values = _build_elidable_map(font)
     if "STAT" in font:
         stat = font["STAT"].table
         if stat.DesignAxisRecord:
@@ -87,12 +120,16 @@ def fix_instances(font, config: ProjectConfig, italic: bool):
     for inst in font["fvar"].instances:
         parts: list[str] = []
         at_default = True
-        for index, axis in enumerate(config.axes):
+        for axis in config.axes:
             value = int(round(inst.coordinates.get(axis.tag, axis.default)))
             label = {int(pos): nm for pos, nm in axis.named_instances.items()}.get(
                 value, str(value)
             )
-            if index == 0 or value != int(axis.default):
+            is_at_default = value == int(axis.default)
+            is_elidable = elidable_values.get((axis.tag, value), False)
+            # Include the label if: value is not at default OR value is at default
+            # but not marked elidable in STAT. This respects per-axis elidability.
+            if not is_at_default or not is_elidable:
                 parts.append(label)
             if value != int(axis.default):
                 at_default = False

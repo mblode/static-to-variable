@@ -10,7 +10,7 @@ if str(SRC_DIR) not in sys.path:
 
 from glyphsLib.classes import GSFont, GSFontMaster, GSGlyph, GSLayer  # noqa: E402
 
-from variable_gen.outlines import donor_outline, draw_into, signature  # noqa: E402
+from variable_gen.outlines import GRID, donor_outline, draw_into, signature  # noqa: E402
 
 
 class _AllOffCurveGlyph:
@@ -80,3 +80,64 @@ def test_donor_outline_materializes_an_implicit_closing_line() -> None:
     contours, _ = donor_outline({"shape": _ImplicitClosingLineGlyph()}, "shape")
 
     assert contours[0][-2] == ("lineTo", [(0, 0)])
+
+
+def _layer() -> GSLayer:
+    font = GSFont()
+    master = GSFontMaster()
+    master.id = "m1"
+    font.masters.append(master)
+    glyph = GSGlyph("shape")
+    font.glyphs.append(glyph)
+    layer = GSLayer()
+    layer.layerId = "m1"
+    glyph.layers.append(layer)
+    return layer
+
+
+_FRACTIONAL = [
+    [
+        ("moveTo", ((0.4, 0.6),)),
+        ("curveTo", ((10.2, 20.7), (30.9, 40.1), (50.5, 60.4))),
+        ("lineTo", ((70.49, 80.51),)),
+        ("closePath", ()),
+    ]
+]
+
+
+def test_draw_into_grid_snaps_every_point_and_keeps_structure() -> None:
+    """Snapping moves coordinates onto the grid without changing structure.
+
+    Point counts and node types must survive, because interpolation
+    compatibility is a property of the structure rather than of the coordinates.
+    Rounding is per-point so this holds by construction; the test pins it so a
+    later rewrite cannot quietly break it.
+    """
+    snapped, plain = _layer(), _layer()
+    draw_into(snapped, _FRACTIONAL, grid=GRID)
+    draw_into(plain, _FRACTIONAL)
+
+    points = [node for path in snapped.paths for node in path.nodes]
+    assert points, "snapped layer drew nothing"
+    for node in points:
+        assert float(node.position.x) == int(node.position.x), node
+        assert float(node.position.y) == int(node.position.y), node
+
+    assert len(snapped.paths) == len(plain.paths)
+    assert [len(p.nodes) for p in snapped.paths] == [len(p.nodes) for p in plain.paths]
+    assert [[str(n.type) for n in p.nodes] for p in snapped.paths] == [
+        [str(n.type) for n in p.nodes] for p in plain.paths
+    ]
+
+    for a, b in zip(points, [n for p in plain.paths for n in p.nodes], strict=True):
+        assert abs(float(a.position.x) - float(b.position.x)) <= 0.5
+        assert abs(float(a.position.y) - float(b.position.y)) <= 0.5
+
+
+def test_draw_into_without_grid_preserves_exact_coordinates() -> None:
+    """Snapping is opt-in: the default must not move anything."""
+    layer = _layer()
+    draw_into(layer, _FRACTIONAL)
+    xs = [float(n.position.x) for p in layer.paths for n in p.nodes]
+    assert any(abs(x - 0.4) < 1e-9 for x in xs)
+    assert any(abs(x - 70.49) < 1e-9 for x in xs)

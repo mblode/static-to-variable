@@ -44,6 +44,11 @@
     "verticalMetrics": { "$ref": "#/$defs/verticalMetrics" },
     "discovery": { "$ref": "#/$defs/discovery" },
     "glyphs": { "$ref": "#/$defs/glyphs" },
+    "outlineGrid": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Snap emitted outline coordinates to this grid, in font units. 1 rounds to whole units, which is what a face drawn on the integer grid looks like and what hinting and rasterisers assume. Omit or set 0 to emit exact reconstructed coordinates."
+    },
     "normalize": { "$ref": "#/$defs/normalize" },
     "output": { "$ref": "#/$defs/output" }
   },
@@ -157,7 +162,8 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/master" }
         },
-        "output": { "type": "string", "minLength": 1 }
+        "output": { "type": "string", "minLength": 1 },
+        "insertExtrema": { "type": "boolean" }
       }
     },
     "quadraticReference": {

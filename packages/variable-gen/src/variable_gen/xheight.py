@@ -7,6 +7,7 @@ nothing about glyph classification, donor files, font metadata, or CLI policy.
 from __future__ import annotations
 
 import math
+from collections.abc import Collection
 from typing import Any, Literal, Protocol
 
 from fontTools.pens.recordingPen import RecordingPen
@@ -503,6 +504,7 @@ def map_contours(
     float_hi: float,
     *,
     refit: bool = False,
+    rigid: Collection[int] = (),
 ) -> Contours:
     """Apply the map. A contour floating clear of the lowercase band is an accent
     or a tittle, so it is translated whole rather than strained, keeping its shape
@@ -515,7 +517,26 @@ def map_contours(
     floating contour by the rise pushed that caron 44 units clear of the ascender
     it belongs to.
 
+    ``rigid`` names contour indices that must be translated for the same reason
+    even though they sit inside the band. The map is piecewise linear in y, so a
+    shape spanning one rate comes out scaled by it and a shape spanning two comes
+    out sheared -- and a circle put through either stops being a circle. The
+    caller knows which contours are circles by design; this cannot be measured
+    here, because the thing being measured would already be the damaged shape.
+
+    Two identical dots at different heights is the clearest case. Circular draws
+    `divide` with both dots 179 units across, at y 104 and y 496. Straining each
+    through its own stretch of the map lands them at 200 and 173 -- one 34% larger
+    in area than the other, which is what a reader sees before any curve quality
+    question arises. Translating both keeps them the size the donor drew and keeps
+    them equal to each other.
+
+    A rigid contour is moved so its own centre lands where the map sends it,
+    rather than by the base's shift: a dot sitting low in the band and one sitting
+    high travel by genuinely different amounts, and that difference is the whole
+    point of the raise.
     """
+    rigid = set(rigid)
     floating = []
     base_top = None
     for contour in contours:
@@ -527,9 +548,14 @@ def map_contours(
 
     shift = delta if base_top is None else ymap(base_top) - base_top
     out = []
-    for contour, is_float in zip(contours, floating, strict=False):
+    for index, (contour, is_float) in enumerate(zip(contours, floating, strict=False)):
         if is_float:
             out.append([(k, tuple((x, y + shift) for x, y in pts)) for k, pts in contour])
+        elif index in rigid:
+            ys = [p[1] for _, pts in contour for p in pts]
+            centre = (min(ys) + max(ys)) / 2
+            own = ymap(centre) - centre
+            out.append([(k, tuple((x, y + own) for x, y in pts)) for k, pts in contour])
         elif refit:
             out.append(refit_contour(contour, ymap))
         else:
@@ -646,6 +672,22 @@ def redraw_polygons(
 # measure the target against the fitted outline independently.
 FIT_TOLERANCE = 0.4
 
+#: How far the directly-mapped contour may sit from the true mapped curve before
+#: it is worth refitting. Deliberately looser than FIT_TOLERANCE, because the two
+#: are not paying for the same thing.
+#:
+#: The fitter is accurate in POSITION and blind to CURVATURE: it re-chooses every
+#: split from a greedy longest-span search, so it can sit inside 0.4 units and
+#: still be visibly lumpy. Measured on `asciitilde`, where the map is gentle:
+#: donor roughness 4.4, directly mapped 4.2, refitted 31.1 -- the refit spends
+#: seven times the roughness to buy 0.45 units of position.
+#:
+#: One unit on a 1000-unit em is 0.016 px at 16 px text, below the rasteriser's
+#: own quantisation and far below perception. Curvature roughness is not: it is
+#: what makes a wave read as faceted. So a contour the map barely disturbs keeps
+#: its drawn structure, and only one the map genuinely warps is refitted.
+DIRECT_MAP_TOLERANCE = 1.0
+
 # Fit slightly inside the target to leave room for peaks missed between samples.
 FIT_GUARD = 0.70
 
@@ -664,12 +706,41 @@ SAMPLES_MAX = 96
 # search-for-the-longest-segment loop affordable.
 GRID_PER_SEGMENT = 64
 
+# Candidate splits per source segment, and the longest span the search will
+# consider, in source segments. Every source node is in the candidate set at any
+# setting; the rest of the fraction is how finely a split may land between them.
+# Sixteen is where the measured gain flattens: it costs the derivation about five
+# minutes against the greedy search's thirty seconds, and thirty-two doubles that
+# again for no further improvement. Three segments is longer than any smooth run
+# a face is drawn with, so a longer span would be merging away drawn structure
+# rather than fitting it.
+SPLIT_PER_SEGMENT = 16
+SPAN_SEGMENTS_MAX = 3
+
+# How short a control arm may be, as a fraction of its own chord, before the end
+# it belongs to is treated as a cusp rather than as a curve with a curvature.
+RETRACTED_ARM = 0.01
+
+# What a span that cannot hold the tolerance counts as, in cubics. Above the
+# length of any real chain, so such a span is only ever taken where the map has
+# warped a stretch past what any candidate cubic can carry.
+OVERRUN_COST = 100.0
+
 # Area and moment can also be matched by a curve with very long control arms,
 # which passes the distance test and still bulges. Levien's mitigation: a
 # ReLU-shaped penalty on arm length, in unit-chord terms, multiplying the
 # measured error. The constants are his.
 ARM_ELBOW = 0.65
 ARM_SLOPE = 2.0
+
+# The same penalty at the other extreme. A root can balance the area and the
+# moment by pulling an arm to nothing instead, which is a cusp of unbounded
+# curvature rather than a bulge, and the audit scored the one it put in `x` six
+# orders of magnitude above the donor. Rejecting those roots outright fixed `x`
+# and cost ExtraBlack more than it bought -- spans only a short-armed cubic could
+# hold became unfittable and had to be split -- so they are priced, not banned.
+ARM_FLOOR = 0.05
+ARM_CUSP = 3.0
 
 
 def _bezier_point(pts, t):
@@ -1080,7 +1151,8 @@ def _at_arclen(table, fraction):
 
 
 def _arm_penalty(d):
-    return 1.0 + max(0.0, d - ARM_ELBOW) * ARM_SLOPE
+    """Levien's ReLU on an over-long arm, and its mirror on a retracted one."""
+    return 1.0 + max(0.0, d - ARM_ELBOW) * ARM_SLOPE + max(0.0, 1.0 - d / ARM_FLOOR) * ARM_CUSP
 
 
 def _fit_cubic(run, i0, i1, tolerance, best_effort=False):
@@ -1130,6 +1202,13 @@ def _fit_cubic(run, i0, i1, tolerance, best_effort=False):
     distance = _CurveDist(run, t0, t1, chord)
     best, best_error = None, None
     for d0, d1 in _arm_lengths(th0, th1, unit_area, unit_moment):
+        if d0 < 0.0 or d1 < 0.0:
+            # An arm reaching backwards past its own endpoint is not a length.
+            # A retracted one is: it satisfies both integrals and is a cusp of
+            # unbounded curvature, the mirror of the looped root at the other
+            # extreme. _arm_penalty prices both rather than discarding either,
+            # so a span that only a near-cusp can hold stays fittable.
+            continue
         curve = (
             start,
             place(d0 * math.cos(th0), d0 * math.sin(th0)),
@@ -1170,44 +1249,161 @@ def _fit_line(run, t0, t1, start, end, accuracy2):
     return _raise_line(start, end), worst
 
 
-def _fit_chain(run, tolerance):
-    """Fit the run with as few cubics as the tolerance allows.
+def _end_curvature(curve, at_end):
+    """Signed curvature of a cubic at one of its ends, or None where it has none.
 
-    Each cubic takes the longest span it can hold: double the reach until it
-    fails, then bisect. Doubling stops at the first failure rather than searching
-    the whole run, which keeps the search honest on a closed run, where a span
-    approaching the full loop shrinks back towards a zero-length chord and would
-    otherwise look feasible again.
+    B'(0) = 3(P1-P0) and B''(0) = 6(P2-2P1+P0), so kappa reduces to
+    (2/3) cross(P1-P0, P2-P1) / |P1-P0|^3, and symmetrically at t=1.
+
+    That denominator goes to zero as the handle retracts, and the curve really
+    does have unbounded curvature there -- a cusp, not a smooth point. Reporting
+    it as zero would be the worst possible answer, because it makes the cusp look
+    like the flattest join available and something choosing joins by curvature
+    would seek them out. So it is reported as absent instead, and the caller
+    prices it as the defect it is.
     """
-    cache = {}
+    p0, p1, p2, p3 = (curve[3], curve[2], curve[1], curve[0]) if at_end else curve
+    ax, ay = p1[0] - p0[0], p1[1] - p0[1]
+    bx, by = p2[0] - p1[0], p2[1] - p1[1]
+    arm = math.hypot(ax, ay)
+    if arm <= RETRACTED_ARM * math.dist(p0, p3):
+        return None
+    return (2.0 / 3.0) * (ax * by - ay * bx) / (arm**3) * (-1.0 if at_end else 1.0)
 
-    def fit(i0, i1):
-        if (i0, i1) not in cache:
-            cache[(i0, i1)] = _fit_cubic(run, i0, i1, tolerance)
-        return cache[(i0, i1)]
 
-    out, i0 = [], 0
-    while i0 < run.grid:
-        whole = fit(i0, run.grid)
-        if whole is not None:
-            out.append(whole[0])
-            break
-        reach, step = i0, 1
-        while i0 + step < run.grid and fit(i0, i0 + step) is not None:
-            reach = i0 + step
-            step *= 2
-        high = min(run.grid, i0 + step)
-        reach = max(reach, i0 + 1)
-        while high - reach > 1:
-            middle = (reach + high) // 2
-            if fit(i0, middle) is not None:
-                reach = middle
-            else:
-                high = middle
-        found = fit(i0, reach) or _fit_cubic(run, i0, reach, tolerance, best_effort=True)
-        out.append(found[0])
-        i0 = reach
+def _g2_defect(left, right):
+    """How badly two cubics disagree on curvature where they meet, as a ratio.
+
+    Levien's minimum-curvature-variation result says the smoothest curve through
+    given tangents has curvature linear in arclength, so what reads as faceting
+    is a *step* in curvature, not a large curvature. Measuring the step against
+    the curvature it interrupts is what makes the number comparable between a
+    tight counter and a wide bowl, and is the same ratio the Glide curve audit
+    calls harmony. Clamped at 1 so one bad join cannot outvote every other term,
+    and a join where either side has retracted its handle is charged that full
+    amount: the curvature there is unbounded rather than absent.
+    """
+    k0, k1 = _end_curvature(left, True), _end_curvature(right, False)
+    if k0 is None or k1 is None:
+        return 1.0
+    scale = max(abs(k0), abs(k1))
+    if scale < 1e-9:
+        return 0.0
+    return min(1.0, abs(k0 - k1) / scale)
+
+
+def _fit_chain(run, tolerance):
+    """Fit the run with fewest cubics, breaking ties by curvature continuity.
+
+    The greedy search this replaces gave each cubic the longest span it could
+    hold within the positional tolerance. That is accurate in position and blind
+    to curvature: a span can sit inside 0.4 units of the true curve and still
+    break it somewhere the designer did not, leaving a curvature step the source
+    never had. Measured on `asciitilde`, the map alone left roughness at 4.41
+    against the donor's 4.43 and the greedy refit took it to 31.09.
+
+    So the split points are searched rather than taken as they come. Candidate
+    splits sit on a fraction of each source segment, which puts the source's own
+    nodes among them, and a shortest path over those candidates picks the chain.
+    Its cost is the pair (cubics, curvature), compared in that order, so node
+    count decides outright -- the donor is the target and a smoother outline
+    bought with more nodes is not a fix -- and curvature separates only chains of
+    equal length. A join landing on a source node costs nothing: the source's own
+    curvature step there is the shape as drawn, and reproducing it is the goal
+    rather than the defect.
+
+    Fewest is fewest over the candidate grid, which is coarser than the every-node
+    grid the greedy search could reach into, so a run here and there comes back
+    one cubic longer than greedy found. Measured over the donor set that is worth
+    between a third of a percent and two and a half percent of the segment count,
+    against roughly a third off the 90th-percentile roughness.
+
+    Spans that cannot hold the tolerance are absent from the graph. Where that
+    would leave a node with nowhere to go -- the map warping some stretch past
+    what any candidate cubic can carry -- one best-effort short span is added so
+    the search still completes, counted as many cubics so it is taken only where
+    nothing else reaches.
+    """
+    step = max(1, GRID_PER_SEGMENT // SPLIT_PER_SEGMENT)
+    nodes = list(range(0, run.grid + 1, step))
+    reach = SPAN_SEGMENTS_MAX * GRID_PER_SEGMENT
+
+    # edges[i0] maps a reachable end node to the cubic that spans it. Lengthening
+    # a span stops at the first length that will not hold, rather than carrying on
+    # to the reach: past that point the error only grows, and on a closed run a
+    # span approaching the whole loop shrinks back towards a zero-length chord and
+    # would otherwise look feasible again.
+    edges: dict[int, dict[int, tuple[tuple, float]]] = {}
+    for i0 in nodes[:-1]:
+        spans: dict[int, tuple[tuple, float]] = {}
+        for i1 in range(i0 + step, min(run.grid, i0 + reach) + 1, step):
+            found = _fit_cubic(run, i0, i1, tolerance)
+            if found is None:
+                break
+            spans[i1] = (found[0], 1.0)
+        if not spans:
+            short = min(i0 + step, run.grid)
+            forced = _fit_cubic(run, i0, short, tolerance, best_effort=True)
+            spans[short] = (forced[0], OVERRUN_COST)
+        edges[i0] = spans
+    edges[run.grid] = {}
+
+    # Relaxation over a DAG, so one pass in increasing end node suffices. The
+    # state is the edge arrived by, not the node, because the join cost depends
+    # on the previous cubic as well as the next one.
+    best: dict[tuple[int, int], tuple[tuple[float, float], tuple[int, int] | None]] = {
+        (0, i1): ((edges[0][i1][1], 0.0), None) for i1 in edges[0]
+    }
+    arriving: dict[int, list[tuple[int, int]]] = {}
+    for i1 in edges[0]:
+        arriving.setdefault(i1, []).append((0, i1))
+    for node in nodes:
+        for state in arriving.get(node, ()):
+            cubics, defect = best[state][0]
+            curve = edges[state[0]][node][0]
+            for i2, (nxt, weight) in edges[node].items():
+                join = 0.0 if node % GRID_PER_SEGMENT == 0 else _g2_defect(curve, nxt)
+                candidate = (cubics + weight, defect + join)
+                key = (node, i2)
+                if key not in best:
+                    arriving.setdefault(i2, []).append(key)
+                if key not in best or candidate < best[key][0]:
+                    best[key] = (candidate, state)
+
+    # Distinct from the `state` loop variable above: this one walks the chain
+    # back from the winning end and has to be able to hold the None terminator.
+    cursor: tuple[int, int] | None = min(arriving[run.grid], key=lambda s: best[s][0])
+    out = []
+    while cursor is not None:
+        out.append(edges[cursor[0]][cursor[1]][0])
+        cursor = best[cursor][1]
+    out.reverse()
     return out
+
+
+def _direct_map(contour, ymap):
+    """Map every control point through the y map, without refitting."""
+    return [(kind, tuple((x, ymap(y)) for x, y in points)) for kind, points in contour]
+
+
+def _direct_error(contour, mapped, ymap, steps=24):
+    """Worst gap between the directly-mapped curve and the true mapped curve.
+
+    The true mapped point at parameter t is (x(t), ymap(y(t))): the map moves y
+    only, so it can be evaluated exactly on the source curve. Comparing that
+    against the curve you get by moving the control points tells you whether the
+    shortcut is honest for this contour.
+    """
+    worst = 0.0
+    for (kind, source), (_kind, moved) in zip(contour, mapped, strict=True):
+        if kind == "l":
+            continue
+        for step in range(steps + 1):
+            t = step / steps
+            true_x, true_y = _bezier_point(source, t)
+            got = _bezier_point(moved, t)
+            worst = max(worst, math.hypot(got[0] - true_x, got[1] - ymap(true_y)))
+    return worst
 
 
 def refit_contour(
@@ -1230,6 +1426,18 @@ def refit_contour(
     """
     if not contour:
         return contour
+
+    # Refit only what needs refitting. The fitter exists because a non-affine
+    # map cannot be applied to control points exactly -- but over a contour that
+    # sits inside one band the map is very nearly affine, and moving the control
+    # points is already within tolerance. Refitting anyway re-chooses every split
+    # from a greedy longest-span search, which is accurate in position and blind
+    # to curvature: it took `asciitilde` from 12 clean segments at a curvature
+    # roughness of 4.4 to 16 segments at 44.1, a tenfold degradation of a glyph
+    # the map barely touches (1.25% rate variation across its whole y-range).
+    direct = _direct_map(contour, ymap)
+    if _direct_error(contour, direct, ymap) <= DIRECT_MAP_TOLERANCE:
+        return direct
 
     # Corners: where the outline genuinely turns, and where a line meets a curve.
     corner = []
