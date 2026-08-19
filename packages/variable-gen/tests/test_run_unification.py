@@ -122,3 +122,68 @@ def test_unification_declines_a_contour_that_closes_implicitly() -> None:
         ("closePath", []),
     ]
     assert _unify_run_counts({400.0: [open_ended], 950.0: [open_ended]}, 400.0) is None
+
+
+def test_promoting_a_line_to_a_cubic_traces_the_same_straight_segment() -> None:
+    """A line IS a cubic with its controls on the chord; the raise must be exact.
+
+    Prevents: `_promote_lines_to_curves` bowing a straight stem while making the
+    masters agree, which would be a shape change dressed up as notation.
+    """
+    from variable_gen.reconstruct_compatible import _promote_lines_to_curves
+
+    def box(curved_top):
+        top = (
+            ("curveTo", [(33.0, 100.0), (67.0, 100.0), (100.0, 100.0)])
+            if curved_top
+            else ("lineTo", [(100.0, 100.0)])
+        )
+        return [
+            ("moveTo", [(0.0, 0.0)]),
+            ("lineTo", [(0.0, 100.0)]),
+            top,
+            ("lineTo", [(100.0, 0.0)]),
+            ("lineTo", [(0.0, 0.0)]),
+            ("closePath", []),
+        ]
+
+    outlines = {400.0: [box(False)], 950.0: [box(True)]}
+    promoted = _promote_lines_to_curves(outlines, 400.0)
+
+    raised = promoted[400.0][0][2]
+    assert raised[0] == "curveTo"
+    # Controls a third and two thirds along the chord from (0,100) to (100,100),
+    # so the cubic traces exactly that straight segment.
+    assert raised[1][0] == pytest.approx((100 / 3, 100.0))
+    assert raised[1][1] == pytest.approx((200 / 3, 100.0))
+    assert raised[1][2] == (100.0, 100.0)
+    # Every other segment is left alone -- no blanket promotion.
+    assert [op for op, _ in promoted[400.0][0]] == [
+        "moveTo",
+        "lineTo",
+        "curveTo",
+        "lineTo",
+        "lineTo",
+        "closePath",
+    ]
+
+
+def test_promotion_declines_when_the_counts_do_not_already_agree() -> None:
+    """Without positional correspondence there is no 'same place' to compare."""
+    from variable_gen.reconstruct_compatible import _promote_lines_to_curves
+
+    short = [
+        ("moveTo", [(0.0, 0.0)]),
+        ("lineTo", [(100.0, 0.0)]),
+        ("lineTo", [(0.0, 0.0)]),
+        ("closePath", []),
+    ]
+    long = [
+        ("moveTo", [(0.0, 0.0)]),
+        ("curveTo", [(30.0, 0.0), (70.0, 0.0), (100.0, 0.0)]),
+        ("lineTo", [(50.0, 50.0)]),
+        ("lineTo", [(0.0, 0.0)]),
+        ("closePath", []),
+    ]
+    outlines = {400.0: [short], 950.0: [long]}
+    assert _promote_lines_to_curves(outlines, 400.0) is outlines
