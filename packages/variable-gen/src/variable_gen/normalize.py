@@ -64,6 +64,62 @@ def layer_metrics(layer):
     return abs(ap.value), bp.bounds[1], bp.bounds[3]  # area, ymin, ymax
 
 
+#: A contour sitting entirely above this fraction of the layer's height is a
+#: floating accent, not part of the letter, and must not decide the letter's box.
+DETACHED_ABOVE = 0.5
+
+
+def base_metrics(layer):
+    """(ymin, ymax) of the letter itself, ignoring contours that float above it.
+
+    `layer_metrics` measures the whole layer. That is wrong for the rule this
+    module implements, whose own description is about letters that "sit on the
+    baseline": a dieresis floats clear of the letter, so including its dots reads
+    the ACCENT's height as the letter's cap.
+
+    The consequence was measurable and had been shipping unnoticed. Circular's
+    dots gain mass with weight while the accent top stays near the ascender, so
+    across Thin/Book/ExtraBlack `adieresis` spans 687/730/768 -- a 43-unit
+    shortfall against a 40-unit tolerance. It tripped by three units, and the
+    rescale then squashed the whole glyph, base and dots together, to make the
+    accent tops agree. The base letter of `adieresis` `edieresis` `odieresis`
+    `udieresis` came out 4.2-4.9% shorter than the same letter standing alone at
+    ExtraBlack, and the dots came out elliptical, 167x167 to 169x159.
+
+    The signature is unmistakable once looked for: those six glyphs have an
+    IDENTICAL ymax at every weight, while every other accented glyph varies --
+    including `atilde` and `ntilde`, whose spread is larger. Nothing else in the
+    pipeline pins a height like that.
+
+    Returns None when the layer cannot be measured, and falls back to the whole
+    layer when nothing qualifies as base ink.
+    """
+    paths = list(layer.paths or [])
+    if not paths:
+        return None
+    boxes = []
+    for path in paths:
+        pen = BoundsPen(None)
+        try:
+            path.draw(pen)
+        except Exception:  # noqa: BLE001
+            return None
+        if pen.bounds is None:
+            continue
+        boxes.append((pen.bounds[1], pen.bounds[3]))
+    if not boxes:
+        return None
+    low = min(box[0] for box in boxes)
+    high = max(box[1] for box in boxes)
+    height = high - low
+    if height <= 0:
+        return low, high
+    grounded = [box for box in boxes if box[0] <= low + height * DETACHED_ABOVE]
+    if not grounded:
+        return low, high
+    return min(box[0] for box in grounded), max(box[1] for box in grounded)
+
+
 def _first_donor_path(config: ProjectConfig, style: Style):
     donor_by_id = {d.id: d for d in style.donors}
     return donor_by_id[style.masters[0].donor_id].path
@@ -110,10 +166,10 @@ def normalize_style(config: ProjectConfig, style_key: str) -> NormalizeStats:
             ref = row_layers.get(default_master.id)
             if ref is None or len(row_layers) < 2:
                 continue
-            ref_m = layer_metrics(ref)
-            if ref_m is None or ref_m[1] is None:
+            ref_m = base_metrics(ref)
+            if ref_m is None:
                 continue
-            ref_ymin, ref_ymax = ref_m[1], ref_m[2]
+            ref_ymin, ref_ymax = ref_m
             ref_h = ref_ymax - ref_ymin
             if ref_h <= 0:
                 continue
@@ -121,11 +177,11 @@ def normalize_style(config: ProjectConfig, style_key: str) -> NormalizeStats:
             boxes: dict[str, tuple[float, float]] = {}
             complete = True
             for mid, layer in row_layers.items():
-                metrics = layer_metrics(layer)
-                if metrics is None or metrics[1] is None:
+                metrics = base_metrics(layer)
+                if metrics is None:
                     complete = False
                     break
-                boxes[mid] = (metrics[1], metrics[2])
+                boxes[mid] = metrics
             if not (complete and boxes):
                 continue
             float_up = max(box[0] for box in boxes.values()) - ref_ymin
