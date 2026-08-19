@@ -1418,6 +1418,11 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
     # numeral swap), then quite correctly fails the ink-quality gate.
     ordered = _order_normalize(outlines_by_pos, reference_pos)
     working = ordered if ordered is not None else outlines_by_pos
+    #: The rotated/unified set is tried as a fast-path candidate only. Rotation
+    #: is structure-preserving so it is safe to keep in `working` for the
+    #: resampler too, but unification adds nodes and must not become the
+    #: resampler's input when the fast path is refused.
+    candidate = None
     # Order is not the only thing the donors disagree about. They also start the
     # same contour at different nodes, which `_starts_aligned` refuses -- and
     # refusing costs the whole drawing, because the fallback resamples and refits
@@ -1471,7 +1476,21 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
             if returned is not None and _already_compatible(returned):
                 unified = returned
         if unified is not None and _already_compatible(unified):
-            working = unified
+            # Only as a fast-path CANDIDATE. Unification adds nodes, which is
+            # free when the result ships as-is and is not free when it becomes
+            # the resampler's input: `p` kinks 8.7 -> 17.7 degrees at wght 587
+            # when refitted from a unified set rather than the donor's own.
+            candidate = unified
+    if candidate is not None and (
+        _already_compatible(candidate)
+        and (_starts_aligned(candidate) or _starts_correspond(candidate, reference_pos))
+        and _cu2qu_safe(candidate)
+        and _interp_ok(candidate)
+        and not _quality_offenders(candidate, outlines_by_pos)
+        and not _has_interpolated_self_intersection(candidate)
+        and _interp_smooth(candidate)
+    ):
+        return candidate, {"stage": "compatible", "note": ""}
     if (
         _already_compatible(working)
         and (_starts_aligned(working) or _starts_correspond(working, reference_pos))
@@ -1479,6 +1498,7 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
         and _interp_ok(working)
         and not _quality_offenders(working, outlines_by_pos)
         and not _has_interpolated_self_intersection(working)
+        and _interp_smooth(working)
     ):
         return working, {"stage": "compatible", "note": ""}
 
@@ -2758,9 +2778,8 @@ def _joint_break(in_tan, out_tan, index):
 #: master. Keeping the donor's own drawing is worth doing only where the donor's
 #: masters also correspond; where they do not, the resampler's normalisation
 #: interpolates better than fidelity does.
-#: NOT WIRED IN. `_interp_smooth` below is written and measured but not part of
-#: the fast-path gate, because it is a trade the maintainer has to make rather
-#: than a fix. At every limit from 15 to 35 degrees it rejects the `three` family
+#: WIRED IN, as a deliberate trade. `_interp_smooth` rejects a reconstruction
+#: whose midpoint kinks where both masters are smooth. At every limit from 15 to 35 degrees it rejects the `three` family
 #: along with the glyphs it is meant to reject, and that family is the single
 #: biggest at-master win this work produced (169x the donor's curvature down to
 #: 1.55). Measured at 20 degrees over 480 roman glyphs: compatible fast path
