@@ -549,6 +549,84 @@ def _align_starts(outlines, reference_pos):
     return out
 
 
+def _promote_lines_to_curves(outlines, reference_pos):
+    """Raise a line to a cubic wherever another master curves in the same place.
+
+    A line IS a cubic: put the controls a third and two thirds along the chord
+    and the curve is the same straight segment, exactly. So where the masters
+    agree on how many segments a contour has and disagree only about whether one
+    of them is straight, that disagreement is notation, not shape. Circular does
+    this constantly at the small sizes -- `c.ordn` is `CLCCCCLCCC` at Thin and
+    Book and `CCCCCCLCCC` at ExtraBlack, one segment drawn straight in two
+    weights and curved in the third.
+
+    Only the mismatched segments are raised, and only when the counts already
+    agree: a blanket promotion would turn every stem into a curve, and a stem
+    that is a cubic is free to bow once its coordinates are rounded.
+
+    Returns the outlines unchanged when there is nothing to do.
+    """
+    positions = sorted(outlines)
+    reference = outlines.get(reference_pos)
+    if reference is None or len(positions) < 2:
+        return outlines
+
+    parsed = {}
+    for pos in positions:
+        contours = outlines[pos]
+        if len(contours) != len(reference):
+            return outlines
+        taken = [_contour_nodes(contour) for contour in contours]
+        if any(item is None for item in taken):
+            return outlines
+        parsed[pos] = taken
+
+    out = {pos: list(outlines[pos]) for pos in positions}
+    changed = False
+    for index in range(len(reference)):
+        counts = {len(parsed[pos][index][1]) for pos in positions}
+        if len(counts) != 1:
+            continue
+        length = counts.pop()
+        curved = {
+            step
+            for step in range(length)
+            for pos in positions
+            if parsed[pos][index][1][step][0] == "curveTo"
+        }
+        straight = {
+            step
+            for step in range(length)
+            for pos in positions
+            if parsed[pos][index][1][step][0] == "lineTo"
+        }
+        mismatched = sorted(curved & straight)
+        if not mismatched:
+            continue
+        for pos in positions:
+            start, segments = parsed[pos][index]
+            rebuilt = list(segments)
+            here = start
+            for step, (op, pts) in enumerate(segments):
+                end = pts[-1]
+                if step in mismatched and op == "lineTo":
+                    rebuilt[step] = (
+                        "curveTo",
+                        [
+                            (here[0] + (end[0] - here[0]) / 3, here[1] + (end[1] - here[1]) / 3),
+                            (
+                                here[0] + 2 * (end[0] - here[0]) / 3,
+                                here[1] + 2 * (end[1] - here[1]) / 3,
+                            ),
+                            end,
+                        ],
+                    )
+                    changed = True
+                here = end
+            out[pos][index] = [("moveTo", [start]), *rebuilt, ("closePath", [])]
+    return out if changed else outlines
+
+
 def _contour_runs(contour, taken=None):
     """A closed contour as consecutive same-kind runs, starting at a run boundary.
 
@@ -1375,7 +1453,9 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
     if len({len(contours) for contours in working.values()}) == 1 and not _already_compatible(
         working
     ):
-        unified = _unify_run_counts(working, reference_pos)
+        # A line and a cubic drawn over the same chord are the same segment, so
+        # normalise that away before asking whether the run patterns agree.
+        unified = _unify_run_counts(_promote_lines_to_curves(working, reference_pos), reference_pos)
         # Unifying run counts gives no rotation freedom to a contour drawn
         # entirely in one kind: `_contour_runs` sees a single run and leaves the
         # start where it found it. So `threequarters` comes out with its repaired
