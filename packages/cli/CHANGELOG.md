@@ -1,5 +1,13 @@
 # static-to-variable
 
+## 0.6.1
+
+### Patch Changes
+
+- 71b4c04: Preserve independently authored optical master rows. Drawing pipelines can content-address source layers with the optical-authorship user-data marker; incomplete rows, incompatible outlines, and unsafe interpolation now fail with named diagnostics instead of silently donor-freezing the drawings.
+- deb292d: Allow provenance-marked optical drawings to preserve an existing TrueType default master exactly. The optional `quadraticReference` style contract reconciles authored cubic masters to compatible quadratic topology before varLib, keeps the protected UI outline and metrics unchanged, and fails closed on incompatible geometry.
+- df928a6: Fix the italic angle on bootstrapped sources. Glyphs measures the italic angle clockwise from vertical and `post` measures it counter-clockwise, and glyphsLib negates again on the way out to UFO, so copying `post.italicAngle` straight across left a forward-leaning italic reporting a positive angle in the built font. Projects with their own `.glyphs` sources were unaffected, since they never bootstrap.
+
 ## 0.6.0
 
 ### Minor Changes
