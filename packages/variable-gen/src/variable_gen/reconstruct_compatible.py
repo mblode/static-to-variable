@@ -31,7 +31,7 @@ from __future__ import annotations
 import itertools
 import math
 
-from fontTools.misc.bezierTools import splitCubicAtT
+from fontTools.misc.bezierTools import calcCubicArcLength, splitCubicAtT
 from variable_gen.audit_support import segments_intersect
 from variable_gen.outlines import signature
 
@@ -845,6 +845,295 @@ def _unify_run_counts(outlines, reference_pos):
                 head = grown[-1][1][-1]
             out[pos].append([("moveTo", [begin]), *segments, ("closePath", [])])
     return out
+
+
+def _normalised_nodes(contour):
+    taken = _contour_nodes(contour)
+    nodes = _contour_node_points(contour, taken)
+    if taken is None or nodes is None or not _is_closed(contour, taken):
+        return None
+    xs = [point[0] for point in nodes]
+    ys = [point[1] for point in nodes]
+    width = (max(xs) - min(xs)) or 1.0
+    height = (max(ys) - min(ys)) or 1.0
+    return [((x - min(xs)) / width, (y - min(ys)) / height) for x, y in nodes]
+
+
+def _rotate_nearest_start(contour, reference_contour):
+    """Rotate a differently segmented contour to the reference's start site."""
+    here = _normalised_nodes(contour)
+    there = _normalised_nodes(reference_contour)
+    if here is None or there is None:
+        return None
+    anchor = there[0]
+    shift = min(
+        range(len(here)),
+        key=lambda index: (here[index][0] - anchor[0]) ** 2 + (here[index][1] - anchor[1]) ** 2,
+    )
+    return _rotate_contour(contour, shift)
+
+
+def _segment_arc_length(start, segment):
+    op, points = segment
+    if op == "lineTo":
+        return _dist(start, points[-1])
+    if op == "curveTo" and len(points) == 3:
+        return calcCubicArcLength(start, *points)
+    return None
+
+
+def _contour_fraction_data(contour):
+    """Return parsed segments, starts, lengths and node fractions for a loop."""
+    taken = _contour_nodes(contour)
+    if taken is None or not _is_closed(contour, taken):
+        return None
+    start, segments = taken
+    starts = []
+    lengths = []
+    here = start
+    for segment in segments:
+        length = _segment_arc_length(here, segment)
+        if length is None:
+            return None
+        starts.append(here)
+        lengths.append(length)
+        here = segment[1][-1]
+    total = sum(lengths)
+    if total <= 1e-9:
+        return None
+    travelled = 0.0
+    fractions = []
+    for length in lengths:
+        fractions.append(travelled / total)
+        travelled += length
+    return segments, starts, lengths, total, fractions
+
+
+def _cubic_t_at_length(start, points, wanted, total):
+    if wanted <= 0:
+        return 0.0
+    if wanted >= total:
+        return 1.0
+    low, high = 0.0, 1.0
+    for _ in range(28):
+        mid = (low + high) / 2
+        left, _right = splitCubicAtT(start, *points, mid)
+        if calcCubicArcLength(*left) < wanted:
+            low = mid
+        else:
+            high = mid
+    return (low + high) / 2
+
+
+def _split_contour_at_fractions(contour, fractions):
+    """Split a contour exactly at normalised arclength positions."""
+    data = _contour_fraction_data(contour)
+    if data is None:
+        return None
+    segments, starts, lengths, total, _own = data
+    cuts_by_segment = [[] for _ in segments]
+    cumulative = 0.0
+    segment_index = 0
+    for fraction in fractions:
+        wanted = fraction * total
+        while segment_index + 1 < len(segments) and wanted > cumulative + lengths[segment_index]:
+            cumulative += lengths[segment_index]
+            segment_index += 1
+        local = wanted - cumulative
+        if local <= 1e-7 or lengths[segment_index] - local <= 1e-7:
+            continue
+        op, points = segments[segment_index]
+        t = (
+            local / lengths[segment_index]
+            if op == "lineTo"
+            else _cubic_t_at_length(starts[segment_index], points, local, lengths[segment_index])
+        )
+        cuts_by_segment[segment_index].append(t)
+
+    rebuilt = []
+    for index, (op, points) in enumerate(segments):
+        cuts = sorted(set(cuts_by_segment[index]))
+        if not cuts:
+            rebuilt.append((op, list(points)))
+            continue
+        if op == "lineTo":
+            begin, end = starts[index], points[-1]
+            for t in cuts:
+                rebuilt.append(
+                    (
+                        "lineTo",
+                        [(begin[0] + (end[0] - begin[0]) * t, begin[1] + (end[1] - begin[1]) * t)],
+                    )
+                )
+            rebuilt.append(("lineTo", [end]))
+            continue
+        pieces = splitCubicAtT(starts[index], *points, *cuts)
+        rebuilt.extend(("curveTo", [piece[1], piece[2], piece[3]]) for piece in pieces)
+    return [("moveTo", [starts[0]]), *rebuilt, ("closePath", [])]
+
+
+def _raise_line_segment(start, end):
+    return (
+        "curveTo",
+        [
+            (start[0] + (end[0] - start[0]) / 3, start[1] + (end[1] - start[1]) / 3),
+            (start[0] + 2 * (end[0] - start[0]) / 3, start[1] + 2 * (end[1] - start[1]) / 3),
+            end,
+        ],
+    )
+
+
+def _match_piece_kinds(contours):
+    """Degree-elevate only pieces whose corresponding master is curved."""
+    parsed = [_contour_nodes(contour) for contour in contours]
+    if any(item is None for item in parsed):
+        return None
+    counts = {len(item[1]) for item in parsed}
+    if len(counts) != 1:
+        return None
+    count = counts.pop()
+    out = []
+    for taken in parsed:
+        start, segments = taken
+        here = start
+        rebuilt = []
+        for index, (op, points) in enumerate(segments):
+            if op == "lineTo" and any(other[1][index][0] == "curveTo" for other in parsed):
+                rebuilt.append(_raise_line_segment(here, points[-1]))
+            else:
+                rebuilt.append((op, list(points)))
+            here = points[-1]
+        out.append([("moveTo", [start]), *rebuilt, ("closePath", [])])
+    return out
+
+
+def _node_subset_map(template_points, template_fractions, points, fractions):
+    """Map a master's nodes to an ordered subset of the densest master."""
+    if len(points) > len(template_points) or not points:
+        return None
+    count, template_count = len(points), len(template_points)
+    infinity = float("inf")
+    costs = [[infinity] * template_count for _ in range(count)]
+    previous = [[None] * template_count for _ in range(count)]
+
+    def match_cost(master_index, template_index):
+        dx = points[master_index][0] - template_points[template_index][0]
+        dy = points[master_index][1] - template_points[template_index][1]
+        df = fractions[master_index] - template_fractions[template_index]
+        return dx * dx + dy * dy + 0.25 * df * df
+
+    costs[0][0] = match_cost(0, 0)
+    for master_index in range(1, count):
+        first_template = master_index
+        last_template = template_count - (count - master_index)
+        for template_index in range(first_template, last_template + 1):
+            best, prior = min(
+                (costs[master_index - 1][candidate], candidate)
+                for candidate in range(master_index - 1, template_index)
+            )
+            costs[master_index][template_index] = best + match_cost(master_index, template_index)
+            previous[master_index][template_index] = prior
+    end = min(
+        range(count - 1, template_count),
+        key=lambda template_index: costs[count - 1][template_index],
+    )
+    mapping = [None] * template_count
+    for master_index in range(count - 1, -1, -1):
+        mapping[end] = master_index
+        end = previous[master_index][end]
+    return mapping
+
+
+def _union_node_fractions(mapping, template_fractions, own_fractions):
+    """Place missing nodes between their mapped neighbours in one master.
+
+    Absolute arclength positions drift as independently drawn masters change
+    weight.  A missing node therefore inherits its relative position within
+    the semantic span bounded by the nearest nodes that do map, rather than
+    copying the template's absolute contour fraction.
+    """
+    chosen = []
+    for template_index in range(1, len(mapping)):
+        own_index = mapping[template_index]
+        if own_index is not None:
+            chosen.append(own_fractions[own_index])
+            continue
+        before = max(index for index in range(template_index) if mapping[index] is not None)
+        after = next(
+            (
+                index
+                for index in range(template_index + 1, len(mapping))
+                if mapping[index] is not None
+            ),
+            len(mapping),
+        )
+        template_before = template_fractions[before]
+        template_after = template_fractions[after] if after < len(mapping) else 1.0
+        own_before = own_fractions[mapping[before]]
+        own_after = own_fractions[mapping[after]] if after < len(mapping) else 1.0
+        ratio = (template_fractions[template_index] - template_before) / (
+            template_after - template_before
+        )
+        chosen.append(own_before + ratio * (own_after - own_before))
+    return chosen
+
+
+def exact_node_union(outlines, reference_pos):
+    """Make independent cubic masters compatible by exact node insertion.
+
+    Unlike the resampler, this never refits a curve. The densest master's node
+    ring is the semantic template; missing sites are placed between their
+    mapped neighbours and obtained with de Casteljau in the other masters. The
+    source geometry is therefore unchanged to floating-point precision.
+    Passing an entire 2-D master grid at once is intentional: the union must be
+    shared across optical rows too.
+    """
+    if reference_pos not in outlines or len(outlines) < 2:
+        return None
+    ordered = _order_normalize(outlines, reference_pos)
+    if ordered is None:
+        return None
+    positions = list(ordered)
+    result = {position: [] for position in positions}
+    for contour_index in range(len(ordered[reference_pos])):
+        template_position = max(
+            positions,
+            key=lambda position: len(_contour_nodes(ordered[position][contour_index])[1]),
+        )
+        template_contour = ordered[template_position][contour_index]
+        aligned = []
+        for position in positions:
+            contour = (
+                template_contour
+                if position == template_position
+                else _rotate_nearest_start(ordered[position][contour_index], template_contour)
+            )
+            if contour is None:
+                return None
+            aligned.append(contour)
+        data = [_contour_fraction_data(contour) for contour in aligned]
+        if any(item is None for item in data):
+            return None
+        template_index = positions.index(template_position)
+        template_points = _normalised_nodes(aligned[template_index])
+        template_fractions = data[template_index][4]
+        split = []
+        for contour, item in zip(aligned, data, strict=True):
+            points = _normalised_nodes(contour)
+            mapping = _node_subset_map(template_points, template_fractions, points, item[4])
+            if mapping is None:
+                return None
+            chosen = _union_node_fractions(mapping, template_fractions, item[4])
+            rebuilt = _split_contour_at_fractions(contour, chosen)
+            if rebuilt is None:
+                return None
+            split.append(rebuilt)
+        matched = _match_piece_kinds(split)
+        if matched is None:
+            return None
+        for position, contour in zip(positions, matched, strict=True):
+            result[position].append(contour)
+    return result if _already_compatible(result) else None
 
 
 def _starts_correspond(outlines, reference_pos):
