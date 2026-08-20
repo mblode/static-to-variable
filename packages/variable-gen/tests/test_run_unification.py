@@ -9,6 +9,7 @@ as a rounding error, or the whole point is lost.
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from variable_gen.reconstruct_compatible import (  # noqa: E402
     _grow_run,
     _split_segment_once,
     _unify_run_counts,
+    exact_node_union,
 )
 
 K = 0.5522847498307936
@@ -187,3 +189,47 @@ def test_promotion_declines_when_the_counts_do_not_already_agree() -> None:
     ]
     outlines = {400.0: [short], 950.0: [long]}
     assert _promote_lines_to_curves(outlines, 400.0) is outlines
+
+
+def test_exact_node_union_preserves_differently_segmented_curves() -> None:
+    one = _square(100.0)
+    two = _square(140.0, extra_curve=True)
+    outlines = {400.0: [one], 950.0: [two]}
+
+    unified = exact_node_union(outlines, 400.0)
+
+    assert unified is not None
+    assert _already_compatible(unified)
+    assert sum(op == "curveTo" for op, _ in unified[400.0][0]) == 2
+    assert sum(op == "curveTo" for op, _ in unified[950.0][0]) == 2
+    # The added node lies on the unsplit master's original cubic exactly.  It
+    # need not be t=.5 because the correspondence is by arclength.
+    first_curve = [points for op, points in unified[400.0][0] if op == "curveTo"][0]
+    original = (
+        (100.0, 0.0),
+        (100.0 + 100.0 * K * 0.5, 0.0),
+        (100.0 + 100.0 * K * 0.5, 100.0),
+        (100.0, 100.0),
+    )
+    assert (
+        min(math.dist(first_curve[-1], _cubic_at(*original, step / 10000)) for step in range(10001))
+        < 0.02
+    )
+
+
+def test_exact_node_union_promotes_only_a_corresponding_straight_piece() -> None:
+    line = [
+        ("moveTo", [(0.0, 0.0)]),
+        ("lineTo", [(100.0, 0.0)]),
+        ("lineTo", [(0.0, 0.0)]),
+        ("closePath", []),
+    ]
+    curve = [
+        ("moveTo", [(0.0, 0.0)]),
+        ("curveTo", [(33.0, 0.0), (67.0, 0.0), (100.0, 0.0)]),
+        ("lineTo", [(0.0, 0.0)]),
+        ("closePath", []),
+    ]
+    unified = exact_node_union({400.0: [line], 950.0: [curve]}, 400.0)
+    assert unified is not None
+    assert [op for op, _ in unified[400.0][0]] == ["moveTo", "curveTo", "lineTo", "closePath"]
