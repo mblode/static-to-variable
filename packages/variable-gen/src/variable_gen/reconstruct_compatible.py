@@ -1261,8 +1261,8 @@ def reconstruct(outlines_by_pos, reference_pos=400, *, _fold_retry=True):
                     # cusp folds at stem/bowl joins (visible stairsteps on d).
                     # Retry once with coarser resampling; if folds remain, keep
                     # the pre-refit compatibility polyline so weight still
-                    # varies — freezing to Book@400 is worse than a dense
-                    # interpolating outline.
+                    # varies — freezing to the middle master @400 is worse
+                    # than a dense interpolating outline.
                     if _has_excess_short_folds(healed, outlines_by_pos):
                         if _fold_retry and RESAMPLE_STEP < FOLD_RETRY_RESAMPLE_STEP:
                             saved = RESAMPLE_STEP
@@ -1943,7 +1943,7 @@ def _reconstruct_base(outlines_by_pos, reference_pos=400):
                 break  # aligned passed for this variant; skip its plain uniform
             # Topology-changing glyphs often fail the midpoint-area gate on every
             # corner path. Prefer weight-varying uniforms over freezing to
-            # Book@400; still prefer non-SI over SI when both exist.
+            # middle master @400; still prefer non-SI over SI when both exist.
             slot = best_relaxed_si if has_si else best_relaxed
             if slot is None or ink < slot[0] - 1e-9:
                 chosen = (ink, uni, f"{full}+relax-gates")

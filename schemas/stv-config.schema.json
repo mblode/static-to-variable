@@ -162,8 +162,7 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/master" }
         },
-        "output": { "type": "string", "minLength": 1 },
-        "insertExtrema": { "type": "boolean" }
+        "output": { "type": "string", "minLength": 1 }
       }
     },
     "quadraticReference": {
