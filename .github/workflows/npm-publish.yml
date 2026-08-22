@@ -36,13 +36,21 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
 
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          version: "0.11.18"
+
       - name: Upgrade npm for OIDC trusted publishing
         run: npm install -g npm@11.12.1
 
       - run: npm ci
+      - run: uv sync
 
-      - name: Build the CLI (tsdown + bundled engine)
-        run: npx turbo run build --filter=static-to-variable
+      # Rung 1: the release job blocks on the same full gate used before a
+      # push, so a green Changesets run cannot hide a red Python or E2E gate.
+      - name: Verify the release candidate
+        run: npm run verify:full
 
       - name: Create Release Pull Request or Publish
         uses: changesets/action@v1

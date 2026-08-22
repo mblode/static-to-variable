@@ -101,7 +101,6 @@ class Style:
     config_base_source: str | None = None
     quadratic_reference: QuadraticReference | None = None
     quadratic_topology: QuadraticTopology | None = None
-    insert_extrema: bool = False
 
 
 @dataclass(frozen=True)
@@ -395,7 +394,6 @@ def _parse_style(
         config_base_source=base_source_value,
         quadratic_reference=quadratic_reference,
         quadratic_topology=quadratic_topology,
-        insert_extrema=_optional_bool(raw, "insertExtrema", config_path),
     )
 
 
