@@ -36,10 +36,17 @@ from glyphsLib.classes import GSAxis, GSFontMaster, GSLayer
 from variable_gen import reconstruct_compatible as rc
 from variable_gen.common import PipelineError
 from variable_gen.config import GlyphStrategy, ProjectConfig, Style
+from variable_gen.interpolation_kinks import interpolation_kink_defects
 from variable_gen.outlines import Contour, donor_outline, draw_into
 from variable_gen.reconstruct_compatible import (
+    _already_compatible,
+    _cu2qu_safe,
+    _has_interpolated_self_intersection,
     _interp_ok,
+    _interp_smooth,
+    _quality_offenders,
     _struct_ok,
+    exact_node_union,
     open_bar,
     reconstruct,
     union_overlaps,
@@ -216,6 +223,74 @@ def _plan_groups(plan: list[PlanMaster], primary_tag: str = "wght") -> list[Reco
     ]
 
 
+# Provisional font-unit threshold from interpolation_kinks; not yet calibrated
+# against rendered evidence.
+_INTERPOLATION_KINK_THRESHOLD = 0.9
+
+
+def _grid_interp_ok(
+    outlines: dict[AxisLocation, list],
+    plan: list[PlanMaster],
+    glyph_name: str = "glyph",
+) -> bool:
+    """Apply existing between-master and kink gates along every 1D grid row."""
+    if not plan:
+        return True
+    for axis_tag, _value in plan[0].location.values:
+        axis_rows: dict[AxisLocation, list[PlanMaster]] = {}
+        for master in plan:
+            axis_rows.setdefault(master.location.without(axis_tag), []).append(master)
+        for masters in axis_rows.values():
+            if len(masters) < 2:
+                continue
+            axis_outlines = {
+                master.location[axis_tag]: outlines[master.location] for master in masters
+            }
+            if (
+                not _interp_ok(axis_outlines)
+                or not _interp_smooth(axis_outlines)
+                or _has_interpolated_self_intersection(axis_outlines)
+            ):
+                return False
+    return _grid_kink_ok(outlines, plan, glyph_name)
+
+
+def _grid_kink_ok(
+    outlines: dict[AxisLocation, list],
+    plan: list[PlanMaster],
+    glyph_name: str,
+) -> bool:
+    """Reject when adjacent masters on a 1D row have interpolation kinks."""
+    if not plan:
+        return True
+    for axis_tag, _value in plan[0].location.values:
+        axis_rows: dict[AxisLocation, list[PlanMaster]] = {}
+        for master in plan:
+            axis_rows.setdefault(master.location.without(axis_tag), []).append(master)
+        for masters in axis_rows.values():
+            if len(masters) < 2:
+                continue
+            ordered = sorted(masters, key=lambda item: item.location[axis_tag])
+            for left_master, right_master in zip(ordered, ordered[1:], strict=False):
+                try:
+                    defects = interpolation_kink_defects(
+                        outlines[left_master.location],
+                        outlines[right_master.location],
+                        glyph_name=glyph_name,
+                        threshold=_INTERPOLATION_KINK_THRESHOLD,
+                        t=0.5,
+                        left_location=left_master.location.as_dict(),
+                        right_location=right_master.location.as_dict(),
+                    )
+                except ValueError as error:
+                    if "non-finite" in str(error):
+                        raise
+                    return False
+                if defects:
+                    return False
+    return True
+
+
 def _outline_signature(contours) -> tuple:
     """The interpolation-relevant operations and point counts of an outline."""
     return tuple(tuple((op, len(points)) for op, points in contour) for contour in contours)
@@ -278,20 +353,54 @@ def reconstruct_plan(
     cache_dir: Path | None = None,
     cache_stats: ReconstructionCacheStats | None = None,
 ) -> dict[str, tuple]:
-    """Reconstruct each optical-size row independently, then merge.
+    """Use exact insertion across the full grid, then reconstruct rows.
 
-    ``reconstruct`` is 1D. A 3×2 wght×opsz grid must not be fed in as six
-    keys on one axis — that is both wrong and extremely slow.
+    ``exact_node_union`` can see every axis and only inserts nodes on existing
+    paths, so it gets first refusal on incompatible donor structures. The
+    general ``reconstruct`` fallback remains 1D: a 3×2 wght×opsz grid must not
+    be fed in as six keys on one axis — that is both wrong and extremely slow.
+
+    Full-grid candidates deliberately bypass the row cache because its keys and
+    values are 1D. Cache telemetry counts one bypass per accepted exact glyph.
     """
     merged_outlines: dict[str, dict[AxisLocation, list]] = {}
     merged_info: dict[str, list[dict]] = {}
     failures: dict[str, list[str]] = {}
     groups = _plan_groups(plan, primary_tag)
+
+    exact_outlines: dict[str, dict[AxisLocation, list]] = {}
+    for name, outs in donor_outlines.items():
+        grid = {master.location: outs[master.name][0] for master in plan}
+        # Preserve the existing donor fast path and its metadata. Exact union is
+        # a repair for incompatible structures, not an alternate scheduler for
+        # glyphs that already interpolate as drawn.
+        if _already_compatible(grid):
+            continue
+        rebuilt = exact_node_union(grid, reference_location)
+        if (
+            rebuilt is None
+            or not _struct_ok(rebuilt)
+            or not _cu2qu_safe(rebuilt)
+            or not _grid_interp_ok(rebuilt, plan, name)
+            # Exact subdivision should not move ink. This existing donor-relative
+            # gate makes that contract fail closed without inventing a new score.
+            or _quality_offenders(rebuilt, grid)
+        ):
+            continue
+        # exact_node_union sorts locations internally. Restore plan order so
+        # source order, serial runs, and parallel runs emit the same mapping.
+        exact_outlines[name] = {master.location: rebuilt[master.location] for master in plan}
+        if cache_stats is not None:
+            cache_stats.bypassed += 1
+
     for row in groups:
         jobs = {
             name: {master.location[primary_tag]: outs[master.name][0] for master in row.masters}
             for name, outs in donor_outlines.items()
+            if name not in exact_outlines
         }
+        if not jobs:
+            continue
         cache_context = ReconstructionCacheContext(
             primary_tag=primary_tag,
             axis_locations=tuple(master.location.values for master in row.masters),
@@ -326,7 +435,15 @@ def reconstruct_plan(
     _raise_row_topology_error(failures)
 
     result: dict[str, tuple] = {}
-    for name, outlines in merged_outlines.items():
+    for name in donor_outlines:
+        if name in exact_outlines:
+            row_info = {"stage": "reconstructed", "note": "exact-node-union"}
+            result[name] = (
+                exact_outlines[name],
+                {"stage": "reconstructed", "rows": [dict(row_info) for _ in groups]},
+            )
+            continue
+        outlines = merged_outlines[name]
         infos = merged_info[name]
         stage = (
             "reconstructed"

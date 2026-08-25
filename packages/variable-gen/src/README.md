@@ -10,7 +10,8 @@ Implementation modules for `variable-gen`, the config-driven build engine the CL
 - `variable_gen.reconstruct_compatible` — the per-glyph outline reconstruction engine.
 - `variable_gen.reconstruction_cache` — fail-closed content-addressed storage for pure reconstruction results.
 - `variable_gen.normalize` — normalize donor-inherited glyph height defects.
-- `variable_gen.xheight` — font-agnostic, geometry-derived x-height transformation and cubic refitting.
+- `variable_gen.contours` — generic cubic contour I/O: glyph drawing, flattening, and scanline runs.
+- `variable_gen.interpolation_kinks` — read-only, scale-aware interpolation kink measurements for compatible cubic outlines.
 - `variable_gen.designspace` — export UFOs and a corrected `.designspace`.
 - `variable_gen.authorship` — validate content-addressed manual source layers and require complete primary-axis rows.
 - `variable_gen.build` — build the variable font(s) with fontmake and run the per-weight fidelity check.
