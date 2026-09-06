@@ -180,6 +180,21 @@ def _write_layout_report(config: ProjectConfig, style_key: str, layout, hinting)
     path.write_text(json.dumps(merged, indent=2) + "\n")
 
 
+def _optimize_unmarked_variations(font: TTFont, preserved: frozenset[str]) -> None:
+    """Apply the normal IUP optimization only outside the authored glyph set."""
+    glyf = font["glyf"]
+    h_metrics = font["hmtx"].metrics
+    v_metrics = getattr(font.get("vmtx"), "metrics", None)
+    for name, variations in font["gvar"].variations.items():
+        if name in preserved:
+            continue
+        coordinates, controls = glyf._getCoordinatesAndControls(name, h_metrics, v_metrics)
+        for variation in variations:
+            if any(delta is None for delta in variation.coordinates):
+                raise PipelineError("Selective compression requires explicit input deltas")
+            variation.optimize(coordinates, controls.endPts, tolerance=0.5)
+
+
 def build_style(config: ProjectConfig, style_key: str) -> list[str]:
     style = config.styles[style_key]
     # From-scratch project: no .glyphs source means no masters to interpolate.
@@ -212,13 +227,25 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
                 # production names, e.g. Gcommaaccent -> uni0122, and the
                 # layout port then loses every unencoded glyph's lookups)
                 "--no-production-names",
-                *([] if style.optimize_gvar else ["--no-optimize-gvar"]),
+                # Reference export already converts and reverses every master.
+                # Reversing again changes the shipped contour program.
+                *(["--keep-direction"] if style.quadratic_reference and authored.glyphs else []),
+                *(
+                    ["--no-optimize-gvar"]
+                    if not style.optimize_gvar
+                    or (style.preserve_authored_deltas and authored.glyphs)
+                    else []
+                ),
                 "--output-path",
                 str(out),
             ],
             config.repo_root,
         )
         if p.returncode == 0:
+            if style.optimize_gvar and style.preserve_authored_deltas and authored.glyphs:
+                with TTFont(str(out)) as explicit:
+                    _optimize_unmarked_variations(explicit, authored.glyphs)
+                    explicit.save(str(out))
             # The build SUCCEEDED structurally, but the glyphsLib/cu2qu round-trip
             # can still leave complex glyphs that COLLAPSE at interpolated weights.
             # Detect them in the actual VF and freeze to the default donor, rebuild.

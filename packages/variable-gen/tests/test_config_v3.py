@@ -61,6 +61,20 @@ def test_gvar_optimization_requires_a_boolean(value, tmp_path) -> None:
         load_config(path)
 
 
+def test_authored_delta_preservation_is_opt_in_and_boolean(tmp_path) -> None:
+    raw = _load_raw()
+    raw["styles"]["roman"]["preserveAuthoredDeltas"] = True
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(raw))
+    config = load_config(path)
+    assert config.styles["roman"].preserve_authored_deltas is True
+    assert config.styles["italic"].preserve_authored_deltas is False
+    raw["styles"]["roman"]["preserveAuthoredDeltas"] = "true"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ConfigError, match="preserveAuthoredDeltas must be a boolean"):
+        load_config(path)
+
+
 def test_axis_range_and_named_instances() -> None:
     config = load_config(CONFIG_PATH)
 
@@ -174,6 +188,42 @@ def test_loads_quadratic_topology_contract() -> None:
     assert topology.master_names == tuple(
         master["name"] for master in data["styles"]["roman"]["masters"]
     )
+
+
+def test_loads_protected_reference_masters() -> None:
+    data = _load_raw()
+    name = data["styles"]["roman"]["masters"][0]["name"]
+    data["styles"]["roman"]["quadraticReference"] = {
+        "path": "reference.ttf",
+        "protectedMasters": {name: {"wght": 100, "opsz": 32}},
+    }
+    reference = load_config(_write_temp(data)).styles["roman"].quadratic_reference
+    assert reference is not None
+    assert reference.protected_masters == {name: {"wght": 100.0, "opsz": 32.0}}
+    assert reference.location == {}
+
+
+@pytest.mark.parametrize("protected", [{}, {"missing": {}}, {"missing": 42}, []])
+def test_rejects_invalid_protected_reference_masters(protected: object) -> None:
+    data = _load_raw()
+    data["styles"]["roman"]["quadraticReference"] = {
+        "path": "reference.ttf",
+        "protectedMasters": protected,
+    }
+    with pytest.raises(ConfigError):
+        load_config(_write_temp(data))
+
+
+def test_rejects_reference_location_with_protected_masters() -> None:
+    data = _load_raw()
+    name = data["styles"]["roman"]["masters"][0]["name"]
+    data["styles"]["roman"]["quadraticReference"] = {
+        "path": "reference.ttf",
+        "location": {},
+        "protectedMasters": {name: {}},
+    }
+    with pytest.raises(ConfigError, match="either location or protectedMasters"):
+        load_config(_write_temp(data))
 
 
 def test_rejects_quadratic_topology_without_reference() -> None:

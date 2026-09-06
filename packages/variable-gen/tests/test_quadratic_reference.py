@@ -9,10 +9,15 @@ from fontTools.cu2qu.ufo import fonts_to_quadratic
 from fontTools.designspaceLib import AxisDescriptor, DesignSpaceDocument, SourceDescriptor
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
-from fontTools.ttLib import TTFont
+from fontTools.ttLib import TTFont, newTable
+from fontTools.ttLib.tables.TupleVariation import TupleVariation
+from fontTools.ttLib.tables import otTables
+from fontTools.pens.transformPen import TransformPen
+from fontTools.varLib.varStore import OnlineVarStoreBuilder
 from fontTools.varLib.instancer import instantiateVariableFont
 
 from variable_gen.authorship import OPTICAL_AUTHORSHIP_KEY
+from variable_gen.build import _optimize_unmarked_variations
 from variable_gen.common import PipelineError
 from variable_gen.quadratic_reference import (
     _fixed_quadratic_spline,
@@ -125,7 +130,7 @@ def _signature(glyph) -> tuple[tuple[str, int], ...]:
     return tuple((operation, len(points)) for operation, points in recording.value)
 
 
-def _compile_variable(fonts: list[ufoLib2.Font]) -> TTFont:
+def _compile_variable(fonts: list[ufoLib2.Font], *, optimize_gvar: bool = True) -> TTFont:
     document = DesignSpaceDocument()
     axis = AxisDescriptor()
     axis.name = "Optical size"
@@ -142,7 +147,123 @@ def _compile_variable(fonts: list[ufoLib2.Font]) -> TTFont:
         source.location = {axis.name: optical_size}
         source.font = font
         document.addSource(source)
-    return ufo2ft.compileVariableTTF(document, useProductionNames=False)
+    return ufo2ft.compileVariableTTF(document, useProductionNames=False, optimizeGvar=optimize_gvar)
+
+
+def test_selective_compression_keeps_authored_deltas_and_normal_unmarked_output() -> None:
+    def sources():
+        fonts = _source_set()
+        for font in fonts:
+            font["unmarked"].clearContours()
+            _recording(font["curve"]).replay(font["unmarked"].getPen())
+        return fonts
+
+    explicit = _compile_variable(sources(), optimize_gvar=False)
+    standard = _compile_variable(sources())
+    before = [(v.axes, list(v.coordinates)) for v in explicit["gvar"].variations["curve"]]
+    _optimize_unmarked_variations(explicit, frozenset({"curve"}))
+    assert [(v.axes, list(v.coordinates)) for v in explicit["gvar"].variations["curve"]] == before
+    actual = explicit["gvar"].variations["unmarked"]
+    expected = standard["gvar"].variations["unmarked"]
+    assert any(delta is None for variation in actual for delta in variation.coordinates)
+    assert [(v.axes, list(v.coordinates)) for v in actual] == [
+        (v.axes, list(v.coordinates)) for v in expected
+    ]
+
+
+def test_display_weight_row_is_preserved_with_text_as_the_default(tmp_path: Path) -> None:
+    path = tmp_path / "reference.ttf"
+    _reference_font(path)
+    reference = TTFont(path)
+    FontBuilder(font=reference).setupFvar(
+        [("wght", 100, 400, 900, "Weight"), ("opsz", 14, 14, 32, "Optical size")], []
+    )
+    reference["gvar"] = newTable("gvar")
+    reference["gvar"].variations = {name: [] for name in reference.getGlyphOrder()}
+    coordinates, _, _ = reference["glyf"]["curve"].getCoordinates(reference["glyf"])
+    for support, height_delta, advance_delta in [((-1, -1, 0), -24, -20), ((0, 1, 1), 30, 40)]:
+        deltas = [(0, height_delta if y else 0) for _, y in coordinates] + [(0, 0)] * 4
+        deltas[len(coordinates) + 1] = (advance_delta, 0)
+        reference["gvar"].variations["curve"].append(TupleVariation({"wght": support}, deltas))
+    store = OnlineVarStoreBuilder(["wght", "opsz"])
+    store.setSupports([{"wght": (-1, -1, 0)}, {"wght": (0, 1, 1)}])
+    indices = {
+        name: store.storeDeltas([-20, 40] if name == "curve" else [0, 0])
+        for name in reference.getGlyphOrder()
+    }
+    reference["HVAR"] = newTable("HVAR")
+    hvar = reference["HVAR"].table = otTables.HVAR()
+    hvar.Version = 0x10000
+    hvar.VarStore = store.finish()
+    hvar.AdvWidthMap = otTables.VarIdxMap()
+    hvar.AdvWidthMap.mapping = indices
+    hvar.LsbMap = hvar.RsbMap = None
+    reference.save(path)
+
+    fonts = [_source_font(height=220 + i * 20, width=520 + i * 20, marked=True) for i in range(3)]
+    for scale, width in [(0.84, 480), (1, 500), (1.2, 540)]:
+        font = _exact_reference_source(marked=False)
+        old = _recording(font["curve"])
+        font["curve"].clearContours()
+        old.replay(TransformPen(font["curve"].getPen(), (1, 0, 0, scale, 0, 0)))
+        font["curve"].width = width
+        fonts.append(font)
+    preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=path,
+        reference_location={},
+        protected_locations={
+            3 + i: {"wght": weight, "opsz": 32} for i, weight in enumerate((100, 400, 900))
+        },
+    )
+    document = DesignSpaceDocument()
+    for name, tag, minimum, default, maximum in [
+        ("Weight", "wght", 100, 400, 900),
+        ("Optical size", "opsz", 14, 14, 32),
+    ]:
+        axis = AxisDescriptor()
+        axis.name, axis.tag = name, tag
+        axis.minimum, axis.default, axis.maximum = minimum, default, maximum
+        document.addAxis(axis)
+    locations = [(weight, opsz) for opsz in (14, 32) for weight in (100, 400, 900)]
+    for index, (font, (weight, opsz)) in enumerate(zip(fonts, locations, strict=True)):
+        source = SourceDescriptor()
+        source.name = f"master-{index}"
+        source.font = font
+        source.familyName, source.styleName = font.info.familyName, font.info.styleName
+        source.location = {"Weight": weight, "Optical size": opsz}
+        document.addSource(source)
+    variable = ufo2ft.compileVariableTTF(document, useProductionNames=False, optimizeGvar=False)
+    assert {axis.axisTag: axis.defaultValue for axis in variable["fvar"].axes} == {
+        "wght": 400,
+        "opsz": 14,
+    }
+    for weight in (100, 237, 400, 625, 900):
+        expected = reference.getGlyphSet(location={"wght": weight, "opsz": 32})["curve"]
+        actual = variable.getGlyphSet(location={"wght": weight, "opsz": 32})["curve"]
+        assert _same_filled_path(_recording(actual), _recording(expected))
+        assert actual.width == pytest.approx(expected.width, abs=1e-9)
+    text = variable.getGlyphSet()["curve"]
+    assert text.width == 540
+    assert not _same_filled_path(_recording(text), _recording(reference.getGlyphSet()["curve"]))
+
+
+@pytest.mark.parametrize("locations", [{}, {3: {}}, {True: {}}])
+def test_protected_master_indices_fail_before_source_mutation(tmp_path, locations) -> None:
+    path = tmp_path / "reference.ttf"
+    _reference_font(path)
+    fonts = _source_set()
+    before = [_recording(font["curve"]).value for font in fonts]
+    with pytest.raises(ValueError, match="existing source masters"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=path,
+            reference_location={},
+            protected_locations=locations,
+        )
+    assert [_recording(font["curve"]).value for font in fonts] == before
 
 
 def _cubic_point(curve: tuple[complex, complex, complex, complex], t: float) -> complex:

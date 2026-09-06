@@ -377,30 +377,43 @@ def _reconcile_glyph(
     originals: list[RecordingPen],
     reference_glyph,
     max_error: float,
+    additional_reference_glyphs=None,
 ) -> tuple[bool, int, int]:
     quadratic = [_recording(font[name]) for font in fonts]
-    reference = _recording(reference_glyph)
-    reference_width = reference_glyph.width
     default_glyph = fonts[default_index][name]
-    if _same_filled_path(quadratic[default_index], reference):
-        default_glyph.width = reference_width
+    protected_glyphs = {
+        index: reference_glyph
+        for index, recording in enumerate(originals)
+        if recording.value == originals[default_index].value
+        and fonts[index][name].width == default_glyph.width
+    }
+    protected_glyphs.update(additional_reference_glyphs or {})
+    references = {index: _recording(glyph) for index, glyph in protected_glyphs.items()}
+    reference = references[default_index]
+    if all(_same_filled_path(quadratic[index], rec) for index, rec in references.items()):
+        for index, glyph in protected_glyphs.items():
+            fonts[index][name].width = glyph.width
         return False, 0, 0
 
     source_contours = [_contours(recording, name) for recording in originals]
     quadratic_contours = [_contours(recording, name) for recording in quadratic]
     reference_contours = _contours(reference, name)
+    protected_contours = {index: _contours(rec, name) for index, rec in references.items()}
     contour_counts = {len(contours) for contours in quadratic_contours}
     contour_counts.add(len(reference_contours))
     if len(contour_counts) != 1:
         raise PipelineError(f"{name}: reference contour count is incompatible")
+    reference_signature = [
+        [(op, len(points)) for op, points in contour] for contour in reference_contours
+    ]
+    for contours in protected_contours.values():
+        if [
+            [(op, len(points)) for op, points in contour] for contour in contours
+        ] != reference_signature:
+            raise PipelineError(f"{name}: protected reference masters have incompatible topology")
 
     reconciled: list[list[list[Operation]]] = [[[] for _ in reference_contours] for _ in fonts]
-    protected_indices = {
-        index
-        for index, recording in enumerate(originals)
-        if recording.value == originals[default_index].value
-        and fonts[index][name].width == default_glyph.width
-    }
+    protected_indices = set(protected_glyphs)
     expanded = 0
     maximum_segments = 0
     for contour_index, reference_contour in enumerate(reference_contours):
@@ -411,10 +424,13 @@ def _reconcile_glyph(
                 f"{name}: reference operation count is incompatible in contour {contour_index}"
             )
         current_points = [_require_point(ops[0][1][0], name, "source moveTo") for ops in source_ops]
-        reference_current = _require_point(reference_contour[0][1][0], name, "reference moveTo")
+        reference_current = {
+            index: _require_point(contours[contour_index][0][1][0], name, "reference moveTo")
+            for index, contours in protected_contours.items()
+        }
         for font_index in range(len(fonts)):
             reconciled[font_index][contour_index].append(
-                reference_contour[0]
+                protected_contours[font_index][contour_index][0]
                 if font_index in protected_indices
                 else quadratic_ops[font_index][0]
             )
@@ -431,7 +447,7 @@ def _reconcile_glyph(
             if kind != "qCurveTo":
                 for font_index in range(len(fonts)):
                     reconciled[font_index][contour_index].append(
-                        reference_operation
+                        protected_contours[font_index][contour_index][operation_index]
                         if font_index in protected_indices
                         else quadratic_ops[font_index][operation_index]
                     )
@@ -440,10 +456,12 @@ def _reconcile_glyph(
                         current_points[font_index] = _require_point(
                             points[-1], name, "source operation endpoint"
                         )
-                if reference_operation[1]:
-                    reference_current = _require_point(
-                        reference_operation[1][-1], name, "reference operation endpoint"
-                    )
+                for index, contours in protected_contours.items():
+                    points = contours[contour_index][operation_index][1]
+                    if points:
+                        reference_current[index] = _require_point(
+                            points[-1], name, "reference operation endpoint"
+                        )
                 continue
 
             reference_count = _quadratic_count(reference_operation[1], name)
@@ -477,7 +495,9 @@ def _reconcile_glyph(
                 if font_index in protected_indices:
                     reconciled[font_index][contour_index].extend(
                         _pad_reference_operation(
-                            reference_current, reference_operation, prefix_count
+                            reference_current[font_index],
+                            protected_contours[font_index][contour_index][operation_index],
+                            prefix_count,
                         )
                     )
                 else:
@@ -485,16 +505,20 @@ def _reconcile_glyph(
                         _partition_spline(spline, prefix_count)
                     )
                 current_points[font_index] = curves[font_index][-1]
-            reference_current = _require_point(
-                reference_operation[1][-1], name, "reference qCurveTo endpoint"
-            )
+            for index, contours in protected_contours.items():
+                reference_current[index] = _require_point(
+                    contours[contour_index][operation_index][1][-1],
+                    name,
+                    "reference qCurveTo endpoint",
+                )
 
     for font_index, font in enumerate(fonts):
         _draw_contours(font[name], reconciled[font_index])
         if font_index in protected_indices:
-            font[name].width = reference_width
-    if not _same_filled_path(_recording(default_glyph), reference):
-        raise PipelineError(f"{name}: protected reference geometry moved during reconciliation")
+            font[name].width = protected_glyphs[font_index].width
+    for index, rec in references.items():
+        if not _same_filled_path(_recording(fonts[index][name]), rec):
+            raise PipelineError(f"{name}: protected reference geometry moved in master {index}")
     return True, expanded, maximum_segments
 
 
@@ -508,6 +532,7 @@ def preserve_quadratic_reference(
     topology_contract: dict[str, tuple[tuple[tuple[str, int], ...], ...]] | None = None,
     topology_contract_master_names: tuple[str, ...] = (),
     source_master_names: tuple[str, ...] = (),
+    protected_locations: dict[int, dict[str, float]] | None = None,
 ) -> QuadraticReferenceReport:
     """Convert ``fonts`` in place while preserving a protected TT default.
 
@@ -521,13 +546,27 @@ def preserve_quadratic_reference(
         raise ValueError("default_index is outside the source font list")
     if max_error <= 0:
         raise ValueError("max_error must be positive")
+    locations = (
+        {default_index: reference_location} if protected_locations is None else protected_locations
+    )
+    if not locations or any(
+        not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(fonts)
+        for index in locations
+    ):
+        raise ValueError("protected_locations must identify existing source masters")
+    if protected_locations is not None and reference_location:
+        raise ValueError("Use either reference_location or protected_locations")
+    reference_index = default_index if default_index in locations else min(locations)
     _validate_topology_contract(
         fonts,
         topology_contract,
         expected_master_names=topology_contract_master_names,
         source_master_names=source_master_names,
     )
-    reference = _reference_font(reference_path, reference_location)
+    reference_fonts = {
+        index: _reference_font(reference_path, location) for index, location in locations.items()
+    }
+    reference = reference_fonts[reference_index]
     reference_upem = reference["head"].unitsPerEm
     source_upems = {font.info.unitsPerEm for font in fonts if font.info.unitsPerEm is not None}
     if len(source_upems) != 1 or reference_upem not in source_upems:
@@ -545,13 +584,20 @@ def preserve_quadratic_reference(
         }
     )
     originals = {name: [_reverse_recording(font[name]) for font in fonts] for name in authored}
-    reference_glyphs = reference.getGlyphSet()
+    protected_glyph_sets = {index: font.getGlyphSet() for index, font in reference_fonts.items()}
+    reference_glyphs = protected_glyph_sets[reference_index]
     for name in authored:
-        if any(name not in font for font in fonts) or name not in reference_glyphs:
+        if any(name not in font for font in fonts) or any(
+            name not in glyphs for glyphs in protected_glyph_sets.values()
+        ):
             raise PipelineError(f"{name}: quadratic reference glyph is missing")
         for recording in originals[name]:
             _contours(recording, name)
-        _contours(_recording(reference_glyphs[name]), name)
+        signatures = {
+            _topology(_recording(glyphs[name]), name) for glyphs in protected_glyph_sets.values()
+        }
+        if len(signatures) != 1:
+            raise PipelineError(f"{name}: protected reference masters have incompatible topology")
     fonts_to_quadratic(
         fonts,
         max_err=max_error,
@@ -564,10 +610,13 @@ def preserve_quadratic_reference(
         changed, glyph_expanded, glyph_maximum = _reconcile_glyph(
             name,
             fonts,
-            default_index,
+            reference_index,
             originals[name],
             reference_glyphs[name],
             max_error,
+            additional_reference_glyphs={
+                index: glyphs[name] for index, glyphs in protected_glyph_sets.items()
+            },
         )
         if changed:
             converted += 1
