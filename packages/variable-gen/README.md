@@ -63,6 +63,24 @@ During designspace export, the engine converts all masters together and reconcil
 
 A style can also set `"optimizeGvar": false` to retain explicit TrueType variation deltas instead of IUP compression. This can preserve interpolated coordinates when new optical masters change the default outline used for delta inference. It may increase font size and does not preserve cubic-to-quadratic subdivision by itself. The default is `true`.
 
+To retain explicit deltas only for marked drawings, set `"preserveAuthoredDeltas": true` with the default `optimizeGvar: true`. Unmarked glyphs still receive normal IUP compression. This avoids changing their inferred coordinates as a side effect of disabling compression globally.
+
+To protect several masters while keeping a different optical row as the default, replace `location` with `protectedMasters`:
+
+```json
+"quadraticReference": {
+  "path": "release/previous-variable.ttf",
+  "protectedMasters": {
+    "Display Thin": { "wght": 100, "opsz": 32 },
+    "Display Regular": { "wght": 400, "opsz": 32 },
+    "Display ExtraBlack": { "wght": 950, "opsz": 32 }
+  },
+  "maxError": 1
+}
+```
+
+Keys identify configured masters; values locate their authority in the reference font. The engine matches exported sources by configured axis location, including when Glyphs adds an Italic suffix to a style name. All protected reference instances must have compatible topology. This preserves each specified master during conversion; verify compiled intermediate outlines separately, since variation compression and rounding occur afterward. `location` and `protectedMasters` are mutually exclusive.
+
 `rebuild` writes a reconstruction report (read by the `repair_build` promotion gate) at `packages/variable-gen/reports/reconstruction-report.json`. `build` writes a layout report (read by the `layout` promotion gate) at `packages/variable-gen/reports/layout-report.json`.
 
 ## OpenType layout, kerning, and hinting

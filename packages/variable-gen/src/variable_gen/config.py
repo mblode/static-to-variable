@@ -77,6 +77,7 @@ class QuadraticReference:
     config_path: str
     location: dict[str, float] = field(default_factory=dict)
     max_error: float = 1.0
+    protected_masters: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,7 @@ class Style:
     quadratic_reference: QuadraticReference | None = None
     quadratic_topology: QuadraticTopology | None = None
     optimize_gvar: bool = True
+    preserve_authored_deltas: bool = False
 
 
 @dataclass(frozen=True)
@@ -350,6 +352,9 @@ def _parse_style(
     optimize_gvar = raw.get("optimizeGvar", True)
     if not isinstance(optimize_gvar, bool):
         raise ConfigError(f"{config_path}: style {key!r} optimizeGvar must be a boolean")
+    preserve_authored_deltas = raw.get("preserveAuthoredDeltas", False)
+    if not isinstance(preserve_authored_deltas, bool):
+        raise ConfigError(f"{config_path}: style {key!r} preserveAuthoredDeltas must be a boolean")
 
     donors: list[Donor] = []
     donor_ids: set[str] = set()
@@ -375,7 +380,10 @@ def _parse_style(
     output_value = _required_str(raw, "output", config_path)
     base_source_value = _optional_str(raw, "baseSource", config_path)
     quadratic_reference = _parse_quadratic_reference(
-        raw.get("quadraticReference"), repo_root, config_path
+        raw.get("quadraticReference"),
+        repo_root,
+        config_path,
+        tuple(master.name for master in masters),
     )
     quadratic_topology = _parse_quadratic_topology(
         raw.get("quadraticTopology"), tuple(master.name for master in masters), config_path
@@ -399,11 +407,12 @@ def _parse_style(
         quadratic_reference=quadratic_reference,
         quadratic_topology=quadratic_topology,
         optimize_gvar=optimize_gvar,
+        preserve_authored_deltas=preserve_authored_deltas,
     )
 
 
 def _parse_quadratic_reference(
-    raw: Any, repo_root: Path, config_path: Path
+    raw: Any, repo_root: Path, config_path: Path, master_names: tuple[str, ...] = ()
 ) -> QuadraticReference | None:
     if raw is None:
         return None
@@ -418,6 +427,28 @@ def _parse_quadratic_reference(
         if not isinstance(tag, str) or not tag:
             raise ConfigError(f"{config_path}: quadraticReference.location tags must be strings")
         location[tag] = _coerce_number(value, f"quadraticReference.location.{tag}", config_path)
+    protected_masters: dict[str, dict[str, float]] = {}
+    if "protectedMasters" in raw:
+        protected_raw = raw["protectedMasters"]
+        if not isinstance(protected_raw, dict) or not protected_raw:
+            raise ConfigError(
+                f"{config_path}: quadraticReference.protectedMasters must be a non-empty object"
+            )
+        if "location" in raw:
+            raise ConfigError(f"{config_path}: use either location or protectedMasters")
+        for name, coordinates in protected_raw.items():
+            if name not in master_names:
+                raise ConfigError(f"{config_path}: unknown protected master {name!r}")
+            if not isinstance(coordinates, dict):
+                raise ConfigError(
+                    f"{config_path}: protected master {name!r} location must be an object"
+                )
+            parsed = {}
+            for tag, value in coordinates.items():
+                if not isinstance(tag, str) or not tag:
+                    raise ConfigError(f"{config_path}: protected master axis tags must be strings")
+                parsed[tag] = _coerce_number(value, f"protectedMasters.{name}.{tag}", config_path)
+            protected_masters[name] = parsed
     max_error = _coerce_number(raw.get("maxError", 1.0), "quadraticReference.maxError", config_path)
     if max_error <= 0:
         raise ConfigError(f"{config_path}: quadraticReference.maxError must be positive")
@@ -426,6 +457,7 @@ def _parse_quadratic_reference(
         config_path=path_value,
         location=location,
         max_error=max_error,
+        protected_masters=protected_masters,
     )
 
 
