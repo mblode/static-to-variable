@@ -4,10 +4,142 @@ from copy import deepcopy
 
 from fontTools.misc.roundTools import otRound
 from fontTools.ttLib import TTFont
+from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
 from fontTools.ttLib.tables.TupleVariation import TupleVariation
+from fontTools.varLib.instancer import instantiateVariableFont
 from fontTools.varLib.iup import iup_delta
 
 from variable_gen.common import PipelineError
+
+
+def stationary_prefix_map(original, expanded) -> tuple[int, ...]:
+    """Match exact native points, allowing only stationary off/on prefix pairs."""
+    if original.isComposite() or expanded.isComposite():
+        raise PipelineError("Prefix mapping requires simple contours")
+    if len(original.endPtsOfContours) != len(expanded.endPtsOfContours):
+        raise PipelineError("Prefix mapping changed contour count")
+    mapping = []
+    old_start = new_start = 0
+
+    def same(a, b):
+        return all(abs(x - y) <= 1e-9 for x, y in zip(a, b, strict=True))
+
+    for old_end, new_end in zip(original.endPtsOfContours, expanded.endPtsOfContours, strict=True):
+        i, j = old_start, new_start
+        while j <= new_end:
+            matches = (
+                i <= old_end
+                and (original.flags[i] & 1) == (expanded.flags[j] & 1)
+                and same(original.coordinates[i], expanded.coordinates[j])
+            )
+            prefix = (
+                i > old_start
+                and j + 1 <= new_end
+                and original.flags[i - 1] & 1
+                and not expanded.flags[j] & 1
+                and expanded.flags[j + 1] & 1
+                and same(original.coordinates[i - 1], expanded.coordinates[j])
+                and same(original.coordinates[i - 1], expanded.coordinates[j + 1])
+            )
+            if matches and prefix:
+                raise PipelineError("Ambiguous stationary prefix mapping")
+            if matches:
+                mapping.append(i)
+                i, j = i + 1, j + 1
+            elif prefix:
+                mapping.extend((i - 1, i - 1))
+                j += 2
+            else:
+                raise PipelineError("Expanded outline is not the exact native prefix program")
+        if i != old_end + 1:
+            raise PipelineError("Prefix mapping omitted native points")
+        old_start, new_start = old_end + 1, new_end + 1
+    return tuple(mapping)
+
+
+def restore_reference_with_prefixes(
+    reference: TTFont,
+    candidate: TTFont,
+    glyphs: frozenset[str],
+    protected_location: dict[str, float],
+) -> dict[str, int]:
+    """Retain native IUP fractions in their native base-coordinate frame.
+
+    The constant tuple restores the authored default drawing after rebasing.
+    Explicit residuals preserve candidate master deltas apart from the native
+    fractional inference. Callers must recheck authored fidelity and Display.
+    """
+    # The empty selection runs the existing shared coordinate-space checks.
+    restore_reference_inference(reference, candidate, frozenset())
+    protected_old = instantiateVariableFont(reference, protected_location, inplace=False)
+    protected_new = instantiateVariableFont(candidate, protected_location, inplace=False)
+    staged = {}
+    counts = {}
+    for name in sorted(glyphs):
+        mapping = stationary_prefix_map(protected_old["glyf"][name], protected_new["glyf"][name])
+        old, new = reference["glyf"][name], candidate["glyf"][name]
+        if len(mapping) != len(new.coordinates) or len(old.coordinates) != len(
+            protected_old["glyf"][name].coordinates
+        ):
+            raise PipelineError(f"{name}: prefix topology changed during instancing")
+        original_coords, original_controls = reference["glyf"]._getCoordinatesAndControls(
+            name, reference["hmtx"].metrics, getattr(reference.get("vmtx"), "metrics", None)
+        )
+        target_coords, _ = candidate["glyf"]._getCoordinatesAndControls(
+            name, candidate["hmtx"].metrics, getattr(candidate.get("vmtx"), "metrics", None)
+        )
+        revised_glyph = deepcopy(new)
+        revised_glyph.coordinates = GlyphCoordinates([old.coordinates[index] for index in mapping])
+        revised_glyph.recalcBounds(candidate["glyf"])
+        advance, lsb = candidate["hmtx"][name]
+        left = revised_glyph.xMin - lsb
+        top = bottom = 0
+        if "vmtx" in candidate:
+            vertical_advance, tsb = candidate["vmtx"][name]
+            top = revised_glyph.yMax + tsb
+            bottom = top - vertical_advance
+        base = list(revised_glyph.coordinates) + [
+            (left, 0),
+            (left + advance, 0),
+            (0, top),
+            (0, bottom),
+        ]
+        constant = [
+            tuple(a - b for a, b in zip(point, origin, strict=True))
+            for point, origin in zip(target_coords, base, strict=True)
+        ]
+        revised = [TupleVariation({}, constant)]
+        point_map = (*mapping, *range(len(old.coordinates), len(old.coordinates) + 4))
+        count = 0
+        for variation in candidate["gvar"].variations[name]:
+            if not variation.axes or any(delta is None for delta in variation.coordinates):
+                raise PipelineError(
+                    f"{name}: prefix restoration requires explicit nonconstant candidate deltas"
+                )
+            matches = [v for v in reference["gvar"].variations[name] if v.axes == variation.axes]
+            if len(matches) > 1:
+                raise PipelineError(f"{name}: ambiguous reference variation support")
+            if not matches or not any(delta is None for delta in matches[0].coordinates):
+                revised.append(deepcopy(variation))
+                continue
+            native = matches[0]
+            inferred = iup_delta(native.coordinates, original_coords, original_controls.endPts)
+            lifted = TupleVariation(native.axes, [native.coordinates[index] for index in point_map])
+            residual = [
+                tuple(
+                    value - otRound(original)
+                    for value, original in zip(delta, inferred[index], strict=True)
+                )
+                for delta, index in zip(variation.coordinates, point_map, strict=True)
+            ]
+            revised.extend((lifted, TupleVariation(variation.axes, residual)))
+            count += 1
+        staged[name] = revised_glyph, revised
+        counts[name] = count
+    for name, (glyph, variations) in staged.items():
+        candidate["glyf"][name] = glyph
+        candidate["gvar"].variations[name] = variations
+    return counts
 
 
 def restore_reference_inference(
