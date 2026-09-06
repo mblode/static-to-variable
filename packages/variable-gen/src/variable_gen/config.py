@@ -101,6 +101,7 @@ class Style:
     config_base_source: str | None = None
     quadratic_reference: QuadraticReference | None = None
     quadratic_topology: QuadraticTopology | None = None
+    optimize_gvar: bool = True
 
 
 @dataclass(frozen=True)
@@ -346,6 +347,9 @@ def _parse_style(
     italic = raw.get("italic", False)
     if not isinstance(italic, bool):
         raise ConfigError(f"{config_path}: style {key!r} italic must be a boolean")
+    optimize_gvar = raw.get("optimizeGvar", True)
+    if not isinstance(optimize_gvar, bool):
+        raise ConfigError(f"{config_path}: style {key!r} optimizeGvar must be a boolean")
 
     donors: list[Donor] = []
     donor_ids: set[str] = set()
@@ -394,6 +398,7 @@ def _parse_style(
         config_base_source=base_source_value,
         quadratic_reference=quadratic_reference,
         quadratic_topology=quadratic_topology,
+        optimize_gvar=optimize_gvar,
     )
 
 

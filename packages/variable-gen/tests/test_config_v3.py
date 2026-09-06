@@ -40,6 +40,27 @@ def test_loads_inter_example() -> None:
     assert config.family.designer == "The Inter Project Authors"
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+def test_style_can_control_gvar_optimization(enabled, tmp_path) -> None:
+    raw = _load_raw()
+    raw["styles"]["roman"]["optimizeGvar"] = enabled
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(raw))
+    config = load_config(path)
+    assert config.styles["roman"].optimize_gvar is enabled
+    assert config.styles["italic"].optimize_gvar is True
+
+
+@pytest.mark.parametrize("value", [0, 1, "false", None])
+def test_gvar_optimization_requires_a_boolean(value, tmp_path) -> None:
+    raw = _load_raw()
+    raw["styles"]["roman"]["optimizeGvar"] = value
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ConfigError, match="optimizeGvar must be a boolean"):
+        load_config(path)
+
+
 def test_axis_range_and_named_instances() -> None:
     config = load_config(CONFIG_PATH)
 

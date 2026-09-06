@@ -140,6 +140,11 @@
       },
       "properties": {
         "italic": { "type": "boolean" },
+        "optimizeGvar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to apply IUP compression to TrueType variation deltas. Disable to retain explicit deltas when exact interpolated outline preservation is required; font size may increase."
+        },
         "donors": {
           "type": "array",
           "minItems": 1,
