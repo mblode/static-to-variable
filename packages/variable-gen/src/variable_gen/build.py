@@ -212,6 +212,7 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
                 # production names, e.g. Gcommaaccent -> uni0122, and the
                 # layout port then loses every unencoded glyph's lookups)
                 "--no-production-names",
+                *([] if style.optimize_gvar else ["--no-optimize-gvar"]),
                 "--output-path",
                 str(out),
             ],
