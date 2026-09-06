@@ -192,6 +192,7 @@ def build_designspace(
     quadratic_reference_max_error: float = 1.0,
     quadratic_reference_masters: dict[str, dict[str, float]] | None = None,
     configured_master_locations: dict[str, dict[str, float]] | None = None,
+    quadratic_glyph_max_error: dict[str, float] | None = None,
     quadratic_topology: dict[str, tuple[tuple[tuple[str, int], ...], ...]] | None = None,
     quadratic_topology_master_names: tuple[str, ...] = (),
     default_master_name: str | None = None,
@@ -258,6 +259,7 @@ def build_designspace(
             # prefix (for example ``Glide Text Regular``).
             source_master_names=tuple(source.styleName for source in ds.sources),
             protected_locations=protected_locations,
+            glyph_max_error=quadratic_glyph_max_error,
         )
         print(
             "  Preserved quadratic reference: "
@@ -330,6 +332,9 @@ def export_designspace(config: ProjectConfig, style_key: str) -> Path:
         ),
         quadratic_reference_max_error=(
             quadratic_reference.max_error if quadratic_reference is not None else 1.0
+        ),
+        quadratic_glyph_max_error=(
+            quadratic_reference.glyph_max_error if quadratic_reference is not None else None
         ),
         quadratic_reference_masters=(
             quadratic_reference.protected_masters or None

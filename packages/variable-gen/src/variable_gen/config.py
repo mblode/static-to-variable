@@ -78,6 +78,7 @@ class QuadraticReference:
     location: dict[str, float] = field(default_factory=dict)
     max_error: float = 1.0
     protected_masters: dict[str, dict[str, float]] = field(default_factory=dict)
+    glyph_max_error: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -452,12 +453,24 @@ def _parse_quadratic_reference(
     max_error = _coerce_number(raw.get("maxError", 1.0), "quadraticReference.maxError", config_path)
     if max_error <= 0:
         raise ConfigError(f"{config_path}: quadraticReference.maxError must be positive")
+    glyph_errors_raw = raw.get("glyphMaxError", {})
+    if not isinstance(glyph_errors_raw, dict):
+        raise ConfigError(f"{config_path}: quadraticReference.glyphMaxError must be an object")
+    glyph_errors = {}
+    for name, value in glyph_errors_raw.items():
+        if not isinstance(name, str) or not name:
+            raise ConfigError(f"{config_path}: glyphMaxError requires non-empty glyph names")
+        error = _coerce_number(value, f"quadraticReference.glyphMaxError.{name}", config_path)
+        if not 0 < error < float("inf"):
+            raise ConfigError(f"{config_path}: glyphMaxError.{name} must be finite and positive")
+        glyph_errors[name] = error
     return QuadraticReference(
         path=_resolve_repo_path(repo_root, path_value),
         config_path=path_value,
         location=location,
         max_error=max_error,
         protected_masters=protected_masters,
+        glyph_max_error=glyph_errors,
     )
 
 

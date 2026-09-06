@@ -85,6 +85,8 @@ For matching point topology, a private coordinator can call `variation_reference
 
 `rebuild` writes a reconstruction report (read by the `repair_build` promotion gate) at `packages/variable-gen/reports/reconstruction-report.json`. `build` writes a layout report (read by the `layout` promotion gate) at `packages/variable-gen/reports/layout-report.json`.
 
+For finer fitting on selected authored drawings, add `"glyphMaxError": {"a": 0.25, "r": 0.25}` inside `quadraticReference`. These overrides force those glyphs through reference reconciliation, even if the preliminary conversion already matches the protected masters. Other glyphs retain their usual conversion. Values must be finite and positive, and named glyphs must carry authorship provenance. The error bounds describe curve approximation before integer font serialization; verify compiled stroke thickness separately.
+
 ## OpenType layout, kerning, and hinting
 
 A `.glyphs` source carries outlines and metrics only, so fontmake's variable font has no layout at all. `build` restores it from the donors afterwards, at the best fidelity that compiles:
