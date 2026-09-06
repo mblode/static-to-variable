@@ -160,6 +160,7 @@ def test_loads_quadratic_reference_contract() -> None:
         "path": "references/default.ttf",
         "location": {"opsz": 16, "wght": 400},
         "maxError": 0.75,
+        "glyphMaxError": {"curve": 0.25},
     }
     path = _write_temp(data)
 
@@ -170,6 +171,20 @@ def test_loads_quadratic_reference_contract() -> None:
     assert reference.path == (path.parent / "references/default.ttf").resolve()
     assert reference.location == {"opsz": 16.0, "wght": 400.0}
     assert reference.max_error == 0.75
+    assert reference.glyph_max_error == {"curve": 0.25}
+
+
+@pytest.mark.parametrize(
+    "value", [{"curve": 0}, {"curve": True}, {"curve": float("nan")}, {"": 0.25}, []]
+)
+def test_rejects_invalid_glyph_precision(value):
+    data = _load_raw()
+    data["styles"]["roman"]["quadraticReference"] = {
+        "path": "reference.ttf",
+        "glyphMaxError": value,
+    }
+    with pytest.raises(ConfigError):
+        load_config(_write_temp(data))
 
 
 def test_loads_quadratic_topology_contract() -> None:

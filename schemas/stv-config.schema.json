@@ -203,6 +203,12 @@
           "exclusiveMinimum": 0,
           "default": 1,
           "description": "Maximum cubic-to-quadratic approximation error in font units for non-reference masters."
+        },
+        "glyphMaxError": {
+          "type": "object",
+          "propertyNames": { "minLength": 1 },
+          "additionalProperties": { "type": "number", "exclusiveMinimum": 0 },
+          "description": "Per-authored-glyph fitting precision. Forces reference reconciliation for those glyphs without changing unmarked glyph conversion."
         }
       }
     },

@@ -378,6 +378,7 @@ def _reconcile_glyph(
     reference_glyph,
     max_error: float,
     additional_reference_glyphs=None,
+    force_precision: bool = False,
 ) -> tuple[bool, int, int]:
     quadratic = [_recording(font[name]) for font in fonts]
     default_glyph = fonts[default_index][name]
@@ -390,7 +391,9 @@ def _reconcile_glyph(
     protected_glyphs.update(additional_reference_glyphs or {})
     references = {index: _recording(glyph) for index, glyph in protected_glyphs.items()}
     reference = references[default_index]
-    if all(_same_filled_path(quadratic[index], rec) for index, rec in references.items()):
+    if not force_precision and all(
+        _same_filled_path(quadratic[index], rec) for index, rec in references.items()
+    ):
         for index, glyph in protected_glyphs.items():
             fonts[index][name].width = glyph.width
         return False, 0, 0
@@ -533,6 +536,7 @@ def preserve_quadratic_reference(
     topology_contract_master_names: tuple[str, ...] = (),
     source_master_names: tuple[str, ...] = (),
     protected_locations: dict[int, dict[str, float]] | None = None,
+    glyph_max_error: dict[str, float] | None = None,
 ) -> QuadraticReferenceReport:
     """Convert ``fonts`` in place while preserving a protected TT default.
 
@@ -584,6 +588,16 @@ def preserve_quadratic_reference(
         }
     )
     originals = {name: [_reverse_recording(font[name]) for font in fonts] for name in authored}
+    errors = glyph_max_error or {}
+    if set(errors) - set(authored):
+        raise PipelineError("Per-glyph quadratic precision requires authored glyphs")
+    if any(
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not 0 < value < float("inf")
+        for value in errors.values()
+    ):
+        raise ValueError("Per-glyph quadratic precision must be finite and positive")
     protected_glyph_sets = {index: font.getGlyphSet() for index, font in reference_fonts.items()}
     reference_glyphs = protected_glyph_sets[reference_index]
     for name in authored:
@@ -613,10 +627,11 @@ def preserve_quadratic_reference(
             reference_index,
             originals[name],
             reference_glyphs[name],
-            max_error,
+            errors.get(name, max_error),
             additional_reference_glyphs={
                 index: glyphs[name] for index, glyphs in protected_glyph_sets.items()
             },
+            force_precision=name in errors,
         )
         if changed:
             converted += 1

@@ -393,6 +393,46 @@ def test_authored_cubic_fit_stays_within_one_unit() -> None:
     assert 0 < maximum_error <= 1
 
 
+def test_per_glyph_precision_preserves_unmarked_conversion_and_reference(tmp_path):
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    ordinary, precise = _source_set(), _source_set()
+    preserve_quadratic_reference(
+        ordinary, default_index=1, reference_path=reference_path, reference_location={}
+    )
+    preserve_quadratic_reference(
+        precise,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        glyph_max_error={"curve": 0.1},
+    )
+    assert _recording(ordinary[0]["curve"]).value != _recording(precise[0]["curve"]).value
+    assert [_recording(font["unmarked"]).value for font in ordinary] == [
+        _recording(font["unmarked"]).value for font in precise
+    ]
+    with TTFont(reference_path) as reference:
+        assert _same_filled_path(
+            _recording(precise[1]["curve"]), _recording(reference.getGlyphSet()["curve"])
+        )
+
+
+def test_unmarked_precision_override_fails_before_conversion(tmp_path):
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    before = [_recording(font["curve"]).value for font in fonts]
+    with pytest.raises(PipelineError, match="requires authored glyphs"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+            glyph_max_error={"unmarked": 0.25},
+        )
+    assert [_recording(font["curve"]).value for font in fonts] == before
+
+
 def test_topology_contract_binds_every_authored_master_before_cu2qu(tmp_path: Path) -> None:
     reference_path = tmp_path / "reference.ttf"
     _reference_font(reference_path)
