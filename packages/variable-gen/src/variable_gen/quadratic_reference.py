@@ -37,6 +37,7 @@ from variable_gen.common import PipelineError
 
 Point = tuple[float, float]
 Operation = tuple[str, tuple[Point | None, ...]]
+SourceGroups = tuple[tuple[tuple[int, ...], ...], ...]
 
 
 @dataclass(frozen=True)
@@ -310,6 +311,153 @@ def _partition_spline(spline: list[Point], prefix_count: int) -> list[Operation]
     return result
 
 
+def _fit_piecewise_group(
+    groups: list[list[tuple[Point, Point, Point, Point]]],
+    reference_count: int,
+    tolerance: float,
+    glyph_name: str,
+) -> tuple[int, list[list[Operation]]]:
+    """Fit explicitly corresponding cubic groups around an intact reference tail.
+
+    A reviewed source may use several cubics for one native operation. Keep
+    each authored join explicit, and retain the reference operation's original
+    off-curve count in the final operation. Earlier quadratics become ordinary
+    prefixes; the protected master can use stationary prefixes in those slots.
+    This is a conversion primitive, not an inferred correspondence policy.
+    """
+    if not groups or any(not group for group in groups):
+        raise PipelineError(f"{glyph_name}: piecewise correspondence requires nonempty groups")
+    if reference_count < 1 or not math.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError("Piecewise conversion requires positive count and finite tolerance")
+    for group in groups:
+        for curve in group:
+            if len(curve) != 4 or any(
+                len(point) != 2 or not all(math.isfinite(value) for value in point)
+                for point in curve
+            ):
+                raise PipelineError(f"{glyph_name}: piecewise source must contain finite cubics")
+        if any(left[-1] != right[0] for left, right in zip(group, group[1:], strict=False)):
+            raise PipelineError(f"{glyph_name}: piecewise source has a disconnected join")
+    multiple = math.lcm(*(len(group) for group in groups))
+    minimum = max(len(group) for group in groups) * reference_count
+    initial = ((minimum + multiple - 1) // multiple) * multiple
+    for total in range(initial, 101 * multiple, multiple):
+        splines = [
+            [_fixed_quadratic_spline(curve, total // len(group), tolerance) for curve in group]
+            for group in groups
+        ]
+        if any(spline is None for group in splines for spline in group):
+            continue
+        prefix_count = total - reference_count
+        result: list[list[Operation]] = []
+        for fitted_group in splines:
+            operations: list[Operation] = []
+            for index, spline in enumerate(fitted_group):
+                assert spline is not None
+                count = len(spline) - 2
+                prefix = count - (reference_count if index == len(fitted_group) - 1 else 1)
+                operations.extend(_partition_spline(spline, prefix))
+            result.append(operations)
+        return prefix_count, result
+    raise PipelineError(f"{glyph_name}: piecewise source exceeds {tolerance:g}-unit cu2qu bound")
+
+
+def _piecewise_contours(
+    name: str,
+    originals: list[RecordingPen],
+    groupings: SourceGroups,
+    protected: dict[int, RecordingPen],
+    reference_index: int,
+    tolerance: float,
+) -> tuple[list[list[list[Operation]]], int, int]:
+    """Validate explicit per-master operation groups and stage their conversion."""
+    sources = [_contours(recording, name) for recording in originals]
+    references = {index: _contours(recording, name) for index, recording in protected.items()}
+    reference = references[reference_index]
+    if len(groupings) != len(sources):
+        raise PipelineError(f"{name}: piecewise groups must bind every source master")
+    for source, grouping in zip(sources, groupings, strict=True):
+        if len(source) != len(reference) or len(grouping) != len(reference):
+            raise PipelineError(f"{name}: piecewise contour count mismatch")
+        for contour, counts, target in zip(source, grouping, reference, strict=True):
+            if len(counts) != len(target) or any(
+                type(count) is not int or count < 1 for count in counts
+            ):
+                raise PipelineError(f"{name}: invalid piecewise operation counts")
+            if sum(counts) != len(contour):
+                raise PipelineError(f"{name}: piecewise groups must consume every source operation")
+    result: list[list[list[Operation]]] = [[[] for _ in reference] for _ in sources]
+    expanded = maximum = 0
+    for contour_index, target in enumerate(reference):
+        cursors = [0] * len(sources)
+        current: list[Point] = [(0, 0)] * len(sources)
+        reference_current: dict[int, Point] = {}
+        for operation_index, (kind, target_points) in enumerate(target):
+            chunks = []
+            for index, source in enumerate(sources):
+                count = groupings[index][contour_index][operation_index]
+                chunk = source[contour_index][cursors[index] : cursors[index] + count]
+                cursors[index] += count
+                chunks.append(chunk)
+            if kind != "qCurveTo":
+                if any(len(chunk) != 1 or chunk[0][0] != kind for chunk in chunks):
+                    raise PipelineError(f"{name}: incompatible grouped {kind} operation")
+                for index, chunk in enumerate(chunks):
+                    operation = (
+                        references[index][contour_index][operation_index]
+                        if index in references
+                        else chunk[0]
+                    )
+                    result[index][contour_index].append(operation)
+                    if chunk[0][1]:
+                        current[index] = _require_point(chunk[0][1][-1], name, kind)
+                for index, contours in references.items():
+                    points = contours[contour_index][operation_index][1]
+                    if points:
+                        reference_current[index] = _require_point(points[-1], name, kind)
+                continue
+            curves: list[list[tuple[Point, Point, Point, Point]]] = []
+            for index, chunk in enumerate(chunks):
+                group = []
+                for source_kind, points in chunk:
+                    start = current[index]
+                    if source_kind == "lineTo" and len(points) == 1:
+                        end = _require_point(points[0], name, "line endpoint")
+                        controls = tuple(
+                            (start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t)
+                            for t in (1 / 3, 2 / 3)
+                        )
+                        curve = (start, controls[0], controls[1], end)
+                    elif source_kind == "curveTo" and len(points) == 3:
+                        a, b, end = (
+                            _require_point(point, name, "cubic control") for point in points
+                        )
+                        curve = (start, a, b, end)
+                    else:
+                        raise PipelineError(
+                            f"{name}: grouped curve requires cubic or straight segments"
+                        )
+                    group.append(curve)
+                    current[index] = curve[-1]
+                curves.append(group)
+            reference_count = _quadratic_count(target_points, name)
+            prefix, fitted = _fit_piecewise_group(curves, reference_count, tolerance, name)
+            expanded += prefix
+            maximum = max(maximum, prefix + reference_count)
+            for index in range(len(sources)):
+                if index in references:
+                    operation = references[index][contour_index][operation_index]
+                    result[index][contour_index].extend(
+                        _pad_reference_operation(reference_current[index], operation, prefix)
+                    )
+                    reference_current[index] = _require_point(
+                        operation[1][-1], name, "reference endpoint"
+                    )
+                else:
+                    result[index][contour_index].extend(fitted[index])
+    return result, expanded, maximum
+
+
 def _pad_reference_operation(
     start: Point,
     operation: Operation,
@@ -537,6 +685,7 @@ def preserve_quadratic_reference(
     source_master_names: tuple[str, ...] = (),
     protected_locations: dict[int, dict[str, float]] | None = None,
     glyph_max_error: dict[str, float] | None = None,
+    source_groups: dict[str, SourceGroups] | None = None,
 ) -> QuadraticReferenceReport:
     """Convert ``fonts`` in place while preserving a protected TT default.
 
@@ -588,6 +737,9 @@ def preserve_quadratic_reference(
         }
     )
     originals = {name: [_reverse_recording(font[name]) for font in fonts] for name in authored}
+    source_groups = source_groups or {}
+    if set(source_groups) - set(authored):
+        raise PipelineError("Piecewise source correspondence requires authored glyphs")
     errors = glyph_max_error or {}
     if set(errors) - set(authored):
         raise PipelineError("Per-glyph quadratic precision requires authored glyphs")
@@ -612,8 +764,26 @@ def preserve_quadratic_reference(
         }
         if len(signatures) != 1:
             raise PipelineError(f"{name}: protected reference masters have incompatible topology")
+    staged_groups = {
+        name: _piecewise_contours(
+            name,
+            originals[name],
+            groups,
+            {index: _recording(glyphs[name]) for index, glyphs in protected_glyph_sets.items()},
+            reference_index,
+            errors.get(name, max_error),
+        )
+        for name, groups in source_groups.items()
+    }
+    # Dictionaries expose the same glyph objects while excluding explicitly
+    # grouped drawings from cu2qu's one-operation-per-master requirement.
+    conversion_fonts = (
+        [{name: font[name] for name in font.keys() if name not in source_groups} for font in fonts]
+        if source_groups
+        else fonts
+    )
     fonts_to_quadratic(
-        fonts,
+        conversion_fonts,
         max_err=max_error,
         reverse_direction=True,
         remember_curve_type=False,
@@ -621,6 +791,21 @@ def preserve_quadratic_reference(
 
     converted = exact = expanded = maximum_segments = 0
     for name in authored:
+        if name in staged_groups:
+            contours, glyph_expanded, glyph_maximum = staged_groups[name]
+            for index, font in enumerate(fonts):
+                _draw_contours(font[name], contours[index])
+                if index in protected_glyph_sets:
+                    reference_glyph = protected_glyph_sets[index][name]
+                    font[name].width = reference_glyph.width
+                    if not _same_filled_path(_recording(font[name]), _recording(reference_glyph)):
+                        raise PipelineError(
+                            f"{name}: grouped conversion moved protected reference geometry"
+                        )
+            converted += 1
+            expanded += glyph_expanded
+            maximum_segments = max(maximum_segments, glyph_maximum)
+            continue
         changed, glyph_expanded, glyph_maximum = _reconcile_glyph(
             name,
             fonts,

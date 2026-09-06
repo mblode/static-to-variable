@@ -325,6 +325,56 @@ def test_reference_geometry_survives_compatible_closed_variable_build(tmp_path: 
     assert text["hmtx"].metrics["curve"][0] == 520
 
 
+def test_piecewise_authored_source_compiles_with_exact_protected_masters(tmp_path: Path) -> None:
+    from fontTools.misc.bezierTools import splitCubicAtT
+
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    glyph = fonts[0]["curve"]
+    glyph.clearContours()
+    pen = glyph.getPen()
+    pen.moveTo((0, 0))
+    for curve in splitCubicAtT((0, 0), (0, 220), (100, 220), (100, 0), 0.5):
+        pen.curveTo(*curve[1:])
+    pen.closePath()
+    untouched = _source_set()
+    fonts_to_quadratic(untouched, max_err=1, reverse_direction=True, remember_curve_type=False)
+    preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        protected_locations={1: {}, 2: {}},
+        source_groups={"curve": (((1, 1, 2, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))},
+    )
+    assert len({_signature(font["curve"]) for font in fonts}) == 1
+    for actual, expected in zip(fonts, untouched, strict=True):
+        assert _recording(actual["unmarked"]).value == _recording(expected["unmarked"]).value
+    variable = _compile_variable(fonts, optimize_gvar=False)
+    reference = TTFont(reference_path).getGlyphSet()["curve"]
+    for optical_size in (16, 28):
+        instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
+        assert _same_filled_path(_recording(instance.getGlyphSet()["curve"]), _recording(reference))
+        assert instance["hmtx"].metrics["curve"][0] == 500
+
+
+def test_incomplete_piecewise_contract_fails_before_any_source_mutation(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    before = [[_recording(font[name]).value for name in font.keys()] for font in fonts]
+    with pytest.raises(PipelineError, match="every source master"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+            source_groups={"curve": (((1, 1, 1, 1),),)},
+        )
+    assert before == [[_recording(font[name]).value for name in font.keys()] for font in fonts]
+
+
 def test_reference_count_contracts_a_conservative_preliminary_conversion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
