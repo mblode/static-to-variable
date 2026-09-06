@@ -325,7 +325,10 @@ def test_reference_geometry_survives_compatible_closed_variable_build(tmp_path: 
     assert text["hmtx"].metrics["curve"][0] == 520
 
 
-def test_piecewise_authored_source_compiles_with_exact_protected_masters(tmp_path: Path) -> None:
+@pytest.mark.parametrize("metadata", [False, True])
+def test_piecewise_authored_source_compiles_with_exact_protected_masters(
+    tmp_path: Path, metadata
+) -> None:
     from fontTools.misc.bezierTools import splitCubicAtT
 
     reference_path = tmp_path / "reference.ttf"
@@ -340,13 +343,17 @@ def test_piecewise_authored_source_compiles_with_exact_protected_masters(tmp_pat
     pen.closePath()
     untouched = _source_set()
     fonts_to_quadratic(untouched, max_err=1, reverse_direction=True, remember_curve_type=False)
+    groups = (((1, 1, 2, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))
+    if metadata:
+        for font, contours in zip(fonts, groups, strict=True):
+            font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
     preserve_quadratic_reference(
         fonts,
         default_index=1,
         reference_path=reference_path,
         reference_location={},
         protected_locations={1: {}, 2: {}},
-        source_groups={"curve": (((1, 1, 2, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))},
+        source_groups=None if metadata else {"curve": groups},
     )
     assert len({_signature(font["curve"]) for font in fonts}) == 1
     for actual, expected in zip(fonts, untouched, strict=True):
@@ -371,6 +378,31 @@ def test_incomplete_piecewise_contract_fails_before_any_source_mutation(tmp_path
             reference_path=reference_path,
             reference_location={},
             source_groups={"curve": (((1, 1, 1, 1),),)},
+        )
+    assert before == [[_recording(font[name]).value for name in font.keys()] for font in fonts]
+
+
+@pytest.mark.parametrize("failure", ["missing", "unmarked", "conflict"])
+def test_source_group_metadata_cannot_be_partial_unmarked_or_overridden(tmp_path, failure):
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    for font in fonts:
+        font["curve"].lib[OPTICAL_AUTHORSHIP_KEY] = PROVENANCE
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
+    if failure == "missing":
+        del fonts[1]["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY]
+    elif failure == "unmarked":
+        for font in fonts:
+            del font["curve"].lib[OPTICAL_AUTHORSHIP_KEY]
+    before = [[_recording(font[name]).value for name in font.keys()] for font in fonts]
+    with pytest.raises(PipelineError):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+            source_groups={} if failure == "conflict" else None,
         )
     assert before == [[_recording(font[name]).value for name in font.keys()] for font in fonts]
 

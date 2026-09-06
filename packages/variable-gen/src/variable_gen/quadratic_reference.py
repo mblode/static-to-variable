@@ -38,6 +38,28 @@ from variable_gen.common import PipelineError
 Point = tuple[float, float]
 Operation = tuple[str, tuple[Point | None, ...]]
 SourceGroups = tuple[tuple[tuple[int, ...], ...], ...]
+SOURCE_GROUPS_KEY = "com.mblode.stv.quadraticSourceGroups"
+
+
+def _source_group_metadata(fonts) -> dict[str, SourceGroups]:
+    """Read author-supplied groups in the same master order as the UFO sources."""
+    names = {name for font in fonts for name in font.keys() if SOURCE_GROUPS_KEY in font[name].lib}
+    result = {}
+    for name in sorted(names):
+        if not any(name in font and font[name].lib.get(OPTICAL_AUTHORSHIP_KEY) for font in fonts):
+            raise PipelineError(f"{name}: source group metadata requires authored provenance")
+        masters = []
+        for index, font in enumerate(fonts):
+            if name not in font or SOURCE_GROUPS_KEY not in font[name].lib:
+                raise PipelineError(f"{name}: source group metadata is missing in master {index}")
+            contours = font[name].lib[SOURCE_GROUPS_KEY]
+            if not isinstance(contours, (list, tuple)) or any(
+                not isinstance(counts, (list, tuple)) for counts in contours
+            ):
+                raise PipelineError(f"{name}: source group metadata must contain contour counts")
+            masters.append(tuple(tuple(counts) for counts in contours))
+        result[name] = tuple(masters)
+    return result
 
 
 @dataclass(frozen=True)
@@ -737,7 +759,10 @@ def preserve_quadratic_reference(
         }
     )
     originals = {name: [_reverse_recording(font[name]) for font in fonts] for name in authored}
-    source_groups = source_groups or {}
+    metadata_groups = _source_group_metadata(fonts)
+    if source_groups is not None and metadata_groups:
+        raise PipelineError("Use either source group metadata or explicit source_groups")
+    source_groups = metadata_groups if source_groups is None else source_groups
     if set(source_groups) - set(authored):
         raise PipelineError("Piecewise source correspondence requires authored glyphs")
     errors = glyph_max_error or {}
