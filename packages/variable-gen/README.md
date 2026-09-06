@@ -81,6 +81,8 @@ To protect several masters while keeping a different optical row as the default,
 
 Keys identify configured masters; values locate their authority in the reference font. The engine matches exported sources by configured axis location, including when Glyphs adds an Italic suffix to a style name. All protected reference instances must have compatible topology. This preserves each specified master during conversion; verify compiled intermediate outlines separately, since variation compression and rounding occur afterward. `location` and `protectedMasters` are mutually exclusive.
 
+For matching point topology, a private coordinator can call `variation_reference.restore_reference_inference(reference, candidate, glyphs)` after compilation. It retains the reference's sparse variation tuples and adds explicit integer residuals, recovering fractional interpolation that explicit delta rounding loses. Axis normalization, `avar`, units per em, and point topology must match. This is an opt-in low-level operation, not an automatic preservation guarantee: a changed default can alter IUP interpolation. Recheck protected geometry, authored fidelity, and serialized output after calling it.
+
 `rebuild` writes a reconstruction report (read by the `repair_build` promotion gate) at `packages/variable-gen/reports/reconstruction-report.json`. `build` writes a layout report (read by the `layout` promotion gate) at `packages/variable-gen/reports/layout-report.json`.
 
 ## OpenType layout, kerning, and hinting
