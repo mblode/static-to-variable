@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { Component, useEffect, useRef, useState } from "react";
 
+import { TrackedLink } from "@/components/tracked-link";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -216,24 +217,30 @@ export function SingleGlyphViewer({
            * few hundred KB, and then report it as a broken or mistyped one.
            */}
           <Button asChild size="xs" variant="outline">
-            <a
+            <TrackedLink
+              action="download_font_ttf"
               download={`${font.id}-variable.ttf`}
+              event="download_clicked"
               href={font.ttf}
+              label={`Download ${font.name} TTF`}
               rel="nofollow"
             >
               <ArrowDownIcon />
               Download TTF
-            </a>
+            </TrackedLink>
           </Button>
           <Button asChild size="xs" variant="outline">
-            <a
+            <TrackedLink
+              action="download_font_woff2"
               download={`${font.id}-variable.woff2`}
+              event="download_clicked"
               href={font.file}
+              label={`Download ${font.name} WOFF2`}
               rel="nofollow"
             >
               <ArrowDownIcon />
               Download WOFF2
-            </a>
+            </TrackedLink>
           </Button>
         </span>
       </div>
