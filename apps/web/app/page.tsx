@@ -6,6 +6,7 @@ import { CopyInstall } from "@/components/copy-install";
 import { FileStackCollapse } from "@/components/file-stack-collapse";
 import { GlyphViewer } from "@/components/glyph-viewer";
 import { Section, SectionHeading } from "@/components/section";
+import { TrackedLink } from "@/components/tracked-link";
 import { Button } from "@/components/ui/button";
 import { ZoneBreadcrumb } from "@/components/zone-breadcrumb";
 import {
@@ -172,16 +173,24 @@ export default function Home() {
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
           <Button asChild size="lg">
-            <a href={quickstartUrl}>
+            <TrackedLink
+              action="open_quickstart"
+              href={quickstartUrl}
+              label="Get started"
+            >
               Get started
               <ArrowUpRightIcon />
-            </a>
+            </TrackedLink>
           </Button>
           <Button asChild size="lg" variant="secondary">
-            <a href={githubUrl}>
+            <TrackedLink
+              action="open_github"
+              href={githubUrl}
+              label="View on GitHub"
+            >
               <GithubIcon />
               View on GitHub
-            </a>
+            </TrackedLink>
           </Button>
         </div>
       </header>
@@ -285,10 +294,14 @@ export default function Home() {
         </div>
         <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-4">
           <Button asChild size="lg">
-            <a href={quickstartUrl}>
+            <TrackedLink
+              action="open_quickstart"
+              href={quickstartUrl}
+              label="Get started"
+            >
               Get started
               <ArrowUpRightIcon />
-            </a>
+            </TrackedLink>
           </Button>
           <div className="flex items-center gap-5 text-muted-foreground text-sm">
             <a className="hover:text-foreground" href={githubUrl}>

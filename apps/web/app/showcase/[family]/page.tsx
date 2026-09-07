@@ -101,6 +101,18 @@ export default async function FamilyPage({
 
       <SingleGlyphViewer font={font} showGlyphs />
 
+      <section className="mt-10 rounded-xl bg-card p-5 ring-1 ring-foreground/10">
+        <h2 className="font-medium">Use the downloaded variable font</h2>
+        <p className="mt-2 max-w-2xl text-muted-foreground text-sm">
+          Choose WOFF2 for a website or TTF for desktop design tools. Put the
+          webfont in your project, declare its full weight range, then use any
+          weight between {font.axis.min} and {font.axis.max}.
+        </p>
+        <pre className="mt-4 overflow-x-auto rounded-lg bg-background p-4 font-mono text-muted-foreground text-xs leading-5">
+          <code>{`@font-face {\n  font-family: "${font.name}";\n  src: url("/${font.id}-variable.woff2") format("woff2");\n  font-style: normal;\n  font-weight: ${font.axis.min} ${font.axis.max};\n}\n\n.heading { font-family: "${font.name}", sans-serif; font-weight: 650; }`}</code>
+        </pre>
+      </section>
+
       <section className="mt-10 grid gap-6 sm:grid-cols-2">
         <div className="rounded-xl bg-card p-5 ring-1 ring-foreground/10">
           <h2 className="font-medium">Built from</h2>

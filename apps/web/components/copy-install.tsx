@@ -4,6 +4,7 @@ import { CheckIcon, CopySimpleIcon } from "blode-icons-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { captureConversion } from "@/lib/conversion-events";
 
 interface CopyInstallProps {
   code: string;
@@ -25,6 +26,11 @@ export function CopyInstall({ code }: CopyInstallProps) {
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(code);
+      captureConversion({
+        action: "copy_install_command",
+        href: "clipboard:npm-install-static-to-variable",
+        label: "Copy install command",
+      });
       setCopied(true);
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
