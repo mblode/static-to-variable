@@ -130,6 +130,9 @@ def test_native_frame_and_constant_tuple_keep_text_and_fractional_display_after_
     binary.seek(0)
     candidate = TTFont(binary)
     assert recording(candidate, 400, 14) == before
+    # The intermediate region must survive serialization even with a zero peak.
+    # Empty support passed numerical checks but glitched in the macOS browser.
+    assert candidate["gvar"].variations["curve"][0].axes == {"wght": (-1, 0, 1)}
     assert candidate["fvar"].axes[1].defaultValue == 14
     for weight in (*range(100, 951), 537.25, 949.99):
         actual = without_stationary_prefixes(recording(candidate, weight, 32))

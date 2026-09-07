@@ -108,7 +108,10 @@ def restore_reference_with_prefixes(
             tuple(a - b for a, b in zip(point, origin, strict=True))
             for point, origin in zip(target_coords, base, strict=True)
         ]
-        revised = [TupleVariation({}, constant)]
+        # Explicit zero-peak support keeps this constant in browser rasterizers;
+        # an empty support rendered differently from static instancing on macOS.
+        constant_support = {candidate["fvar"].axes[0].axisTag: (-1, 0, 1)}
+        revised = [TupleVariation(constant_support, constant)]
         point_map = (*mapping, *range(len(old.coordinates), len(old.coordinates) + 4))
         count = 0
         for variation in candidate["gvar"].variations[name]:
