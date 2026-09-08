@@ -5,8 +5,10 @@ import pytest
 from variable_gen.common import PipelineError
 from variable_gen.quadratic_reference import (
     BALANCED_ENDPOINTS,
+    REFERENCE_COUNT,
     _fit_piecewise_group,
     _pad_reference_operation,
+    _reference_count_spline,
 )
 
 
@@ -71,6 +73,77 @@ def test_default_placement_remains_exactly_the_prefix_operation_stream():
         ("qCurveTo", ((0, 0), (0, 0))),
         reference,
     ]
+
+
+def test_reference_count_fits_quadratic_without_stationary_points():
+    curve = ((0, 0), (20, 40), (50, 40), (90, 0))
+    prefix, masters = _fit_piecewise_group([[curve]], 1, 1e-9, "curve", REFERENCE_COUNT)
+    assert prefix == 0
+    assert len(masters[0]) == 1
+    control, endpoint = masters[0][0][1]
+    assert control == pytest.approx((30, 60))
+    assert endpoint == (90, 0)
+    reference = ("qCurveTo", ((30, 60), (90, 0)))
+    assert _pad_reference_operation((0, 0), reference, 0, REFERENCE_COUNT) == [reference]
+
+
+def test_reference_count_rejects_insufficient_topology_instead_of_padding():
+    curve = ((0, 0), (20, 110), (180, -110), (200, 0))
+    with pytest.raises(PipelineError, match="exceeds"):
+        _fit_piecewise_group([[curve]], 1, 0.25, "curve", REFERENCE_COUNT)
+    with pytest.raises(PipelineError, match="stationary"):
+        _pad_reference_operation((0, 0), ("qCurveTo", ((30, 60), (90, 0))), 1, REFERENCE_COUNT)
+
+
+def test_reference_count_has_independent_geometric_bound_and_translation_invariance():
+    curve = ((0, 0), (20, 110), (180, 110), (200, 0))
+    assert _reference_count_spline(curve, 3, 0.001) is None
+    fitted = _reference_count_spline(curve, 3, 2)
+    assert fitted is not None
+    shifted = _reference_count_spline(tuple((x + 2000, y - 3000) for x, y in curve), 3, 2)
+    assert shifted is not None
+    for a, b in zip(fitted, shifted, strict=True):
+        assert b == pytest.approx((a[0] + 2000, a[1] - 3000))
+
+
+def test_reference_count_rejects_unreviewed_piecewise_correspondence():
+    curve = ((0, 0), (20, 40), (50, 40), (90, 0))
+    with pytest.raises(PipelineError, match="one authored curve"):
+        _fit_piecewise_group([[curve, curve]], 3, 0.25, "curve", REFERENCE_COUNT)
+
+
+def test_reference_count_lines_preserves_real_extension_and_intact_reference():
+    from variable_gen.quadratic_reference import REFERENCE_COUNT_LINES
+
+    line = ((-30, 0), (-20, 0), (-10, 0), (0, 0))
+    curve = ((0, 0), (20, 40), (50, 40), (90, 0))
+    prefix, masters = _fit_piecewise_group(
+        [[line, curve], [curve]], 1, 1e-9, "curve", REFERENCE_COUNT_LINES
+    )
+    assert prefix == 1
+    assert masters[0][0] == ("qCurveTo", ((-15, 0), (0, 0)))
+    assert masters[1][0] == ("qCurveTo", ((0, 0), (0, 0)))
+    assert masters[0][-1] == masters[1][-1]
+    reference = ("qCurveTo", ((30, 60), (90, 0)))
+    assert _pad_reference_operation((0, 0), reference, prefix, REFERENCE_COUNT_LINES) == [
+        ("qCurveTo", ((0, 0), (0, 0))),
+        reference,
+    ]
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        ((-30, 0), (-20, 1), (-10, 0), (0, 0)),
+        ((-30, 0), (10, 0), (-10, 0), (0, 0)),
+    ],
+)
+def test_reference_count_lines_rejects_curved_or_reversing_extensions(first):
+    from variable_gen.quadratic_reference import REFERENCE_COUNT_LINES
+
+    curve = ((0, 0), (20, 40), (50, 40), (90, 0))
+    with pytest.raises(PipelineError, match="monotone straight"):
+        _fit_piecewise_group([[first, curve]], 1, 0.5, "curve", REFERENCE_COUNT_LINES)
 
 
 @pytest.mark.parametrize("groups", [[], [[]]])

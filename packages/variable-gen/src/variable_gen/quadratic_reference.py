@@ -41,6 +41,8 @@ SourceGroups = tuple[tuple[tuple[int, ...], ...], ...]
 SOURCE_GROUPS_KEY = "com.mblode.stv.quadraticSourceGroups"
 PADDING_PLACEMENT_KEY = "com.mblode.stv.quadraticPaddingPlacement"
 BALANCED_ENDPOINTS = "balanced-endpoints"
+REFERENCE_COUNT = "reference-count"
+REFERENCE_COUNT_LINES = "reference-count-lines"
 
 
 def _source_group_metadata(fonts) -> dict[str, SourceGroups]:
@@ -82,9 +84,13 @@ def _padding_placement_metadata(fonts, groups: dict[str, SourceGroups]) -> dict[
             values.append(font[name].lib[PADDING_PLACEMENT_KEY])
         if any(not isinstance(value, str) for value in values):
             raise PipelineError(f"{name}: padding placement metadata must be a string")
-        if len(set(values)) != 1 or values[0] != BALANCED_ENDPOINTS:
+        if len(set(values)) != 1 or values[0] not in {
+            BALANCED_ENDPOINTS,
+            REFERENCE_COUNT,
+            REFERENCE_COUNT_LINES,
+        }:
             raise PipelineError(
-                f"{name}: padding placement must be {BALANCED_ENDPOINTS!r} in every master"
+                f"{name}: padding placement must be a supported consistent mode in every master"
             )
         result[name] = values[0]
     return result
@@ -334,6 +340,89 @@ def _quadratic_count(points: tuple[Point | None, ...], glyph_name: str) -> int:
     return len(points) - 1
 
 
+def _reference_count_spline(curve, count: int, tolerance: float) -> list[Point] | None:
+    """Fit the existing quadratic topology, then bound every residual cubic.
+
+    Four Gauss nodes integrate the squared cubic residual exactly on each
+    segment. Endpoints stay fixed; implicit quadratic joins remain smooth.
+    The least-squares objective never substitutes for the geometric bound.
+    """
+    if count < 1 or not math.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError("Reference-count fit requires positive count and finite tolerance")
+    if len(curve) != 4 or any(len(p) != 2 or not all(math.isfinite(v) for v in p) for p in curve):
+        raise ValueError("Reference-count fit requires four finite points")
+    origin = _complex(curve[0])
+    points = [_complex(p) - origin for p in curve]
+    inner = math.sqrt((3 - 2 * math.sqrt(6 / 5)) / 7)
+    outer = math.sqrt((3 + 2 * math.sqrt(6 / 5)) / 7)
+    nodes = (-outer, -inner, inner, outer)
+    wi, wo = (18 + math.sqrt(30)) / 36, (18 - math.sqrt(30)) / 36
+    weights = (wo, wi, wi, wo)
+    gram = [[0.0] * count for _ in range(count)]
+    rhs = [0j] * count
+    for segment in range(count):
+        for node, weight in zip(nodes, weights, strict=True):
+            local = (node + 1) / 2
+            t = (segment + local) / count
+            row = [0.0] * count
+            a, b, c = (1 - local) ** 2, 2 * (1 - local) * local, local**2
+            fixed = 0j
+            if segment == 0:
+                fixed += a * points[0]
+            else:
+                row[segment - 1] += a / 2
+                row[segment] += a / 2
+            row[segment] += b
+            if segment == count - 1:
+                fixed += c * points[-1]
+            else:
+                row[segment] += c / 2
+                row[segment + 1] += c / 2
+            target = (
+                (1 - t) ** 3 * points[0]
+                + 3 * (1 - t) ** 2 * t * points[1]
+                + 3 * (1 - t) * t**2 * points[2]
+                + t**3 * points[3]
+            )
+            for i in range(count):
+                rhs[i] += weight * row[i] * (target - fixed)
+                for j in range(count):
+                    gram[i][j] += weight * row[i] * row[j]
+    # The fixed-endpoint quadratic basis is independent: its Gram matrix is
+    # positive definite. Cholesky solves both coordinates with one factor.
+    lower = [[0.0] * count for _ in range(count)]
+    for i in range(count):
+        for j in range(i + 1):
+            value = gram[i][j] - sum(lower[i][k] * lower[j][k] for k in range(j))
+            lower[i][j] = math.sqrt(value) if i == j else value / lower[j][j]
+    forward = [0j] * count
+    controls = [0j] * count
+    for i in range(count):
+        forward[i] = (rhs[i] - sum(lower[i][j] * forward[j] for j in range(i))) / lower[i][i]
+    for i in reversed(range(count)):
+        controls[i] = (
+            forward[i] - sum(lower[j][i] * controls[j] for j in range(i + 1, count))
+        ) / lower[i][i]
+    spline = [tuple(curve[0]), *[_point(p + origin) for p in controls], tuple(curve[-1])]
+    cubic = cast(tuple[complex, complex, complex, complex], tuple(_complex(p) for p in curve))
+    start = cubic[0]
+    for index, part in enumerate(_uniform_cubic_parts(cubic, count)):
+        control = _complex(spline[index + 1])
+        end = cubic[-1] if index == count - 1 else (control + _complex(spline[index + 2])) / 2
+        residual = (
+            start - part[0],
+            start + (control - start) * (2 / 3) - part[1],
+            end + (control - end) * (2 / 3) - part[2],
+            end - part[3],
+        )
+        if max(abs(residual[0]), abs(residual[-1])) > tolerance or not _inside_error(
+            *residual, tolerance
+        ):
+            return None
+        start = end
+    return spline
+
+
 def _fit_all(
     curves: list[tuple[Point, Point, Point, Point]],
     initial_count: int,
@@ -406,11 +495,13 @@ def _fit_piecewise_group(
     """
     if not groups or any(not group for group in groups):
         raise PipelineError(f"{glyph_name}: piecewise correspondence requires nonempty groups")
-    if placement not in {"prefix", BALANCED_ENDPOINTS}:
+    if placement not in {"prefix", BALANCED_ENDPOINTS, REFERENCE_COUNT, REFERENCE_COUNT_LINES}:
         raise ValueError(f"Unknown quadratic padding placement: {placement}")
-    if placement == BALANCED_ENDPOINTS and any(len(group) != 1 for group in groups):
+    if placement in {BALANCED_ENDPOINTS, REFERENCE_COUNT} and any(
+        len(group) != 1 for group in groups
+    ):
         raise PipelineError(
-            f"{glyph_name}: balanced endpoint placement requires one authored curve per group"
+            f"{glyph_name}: {placement} placement requires one authored curve per group"
         )
     if reference_count < 1 or not math.isfinite(tolerance) or tolerance <= 0:
         raise ValueError("Piecewise conversion requires positive count and finite tolerance")
@@ -423,6 +514,45 @@ def _fit_piecewise_group(
                 raise PipelineError(f"{glyph_name}: piecewise source must contain finite cubics")
         if any(left[-1] != right[0] for left, right in zip(group, group[1:], strict=False)):
             raise PipelineError(f"{glyph_name}: piecewise source has a disconnected join")
+    if placement in {REFERENCE_COUNT, REFERENCE_COUNT_LINES}:
+        # Only real straight source extensions receive extra operations. Never
+        # collapse a curved join or manufacture padding to rescue a failed fit.
+        prefix = max(len(group) - 1 for group in groups)
+        for group in groups:
+            for curve in group[:-1]:
+                start, a, b, end = map(_complex, curve)
+                direction = end - start
+                if abs(direction) == 0:
+                    valid = a == b == start
+                else:
+                    controls = ((a - start) / direction, (b - start) / direction)
+                    valid = all(abs(p.imag) <= 1e-12 for p in controls) and (
+                        0 <= controls[0].real <= controls[1].real <= 1
+                    )
+                if not valid:
+                    raise PipelineError(
+                        f"{glyph_name}: reference-count extension must be a monotone straight path"
+                    )
+        direct = [
+            _reference_count_spline(group[-1], reference_count, tolerance) for group in groups
+        ]
+        if any(spline is None for spline in direct):
+            raise PipelineError(
+                f"{glyph_name}: reference-count fit exceeds {tolerance:g}-unit bound"
+            )
+        fitted: list[list[Operation]] = []
+        for group, spline in zip(groups, direct, strict=True):
+            assert spline is not None
+            source_start = group[0][0]
+            direct_operations: list[Operation] = [("qCurveTo", (source_start, source_start))] * (
+                prefix - len(group) + 1
+            )
+            for curve in group[:-1]:
+                midpoint = ((curve[0][0] + curve[-1][0]) / 2, (curve[0][1] + curve[-1][1]) / 2)
+                direct_operations.append(("qCurveTo", (midpoint, curve[-1])))
+            direct_operations.append(("qCurveTo", tuple(spline[1:])))
+            fitted.append(direct_operations)
+        return prefix, fitted
     multiple = math.lcm(*(len(group) for group in groups))
     minimum = max(len(group) for group in groups) * reference_count
     initial = ((minimum + multiple - 1) // multiple) * multiple
@@ -559,7 +689,11 @@ def _pad_reference_operation(
     prefix_count: int,
     placement: str = "prefix",
 ) -> list[Operation]:
-    if placement == "prefix":
+    if placement == REFERENCE_COUNT:
+        if prefix_count:
+            raise PipelineError("Reference-count conversion cannot insert stationary padding")
+        return [operation]
+    if placement in {"prefix", REFERENCE_COUNT_LINES}:
         return [
             *(("qCurveTo", (start, start)) for _ in range(prefix_count)),
             operation,

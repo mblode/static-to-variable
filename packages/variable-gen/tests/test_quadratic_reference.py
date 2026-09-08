@@ -407,16 +407,37 @@ def test_source_group_metadata_cannot_be_partial_unmarked_or_overridden(tmp_path
     assert before == [[_recording(font[name]).value for name in font.keys()] for font in fonts]
 
 
-def test_balanced_padding_metadata_compiles_with_exact_protected_masters(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "mode",
+    [
+        quadratic_reference.BALANCED_ENDPOINTS,
+        quadratic_reference.REFERENCE_COUNT,
+        quadratic_reference.REFERENCE_COUNT_LINES,
+    ],
+)
+def test_balanced_padding_metadata_compiles_with_exact_protected_masters(
+    tmp_path: Path, mode: str
+) -> None:
     reference_path = tmp_path / "reference.ttf"
     _reference_font(reference_path)
     fonts = _source_set()
     groups = ((1, 1, 1, 1),)
-    for font in fonts:
-        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = groups
-        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
-            quadratic_reference.BALANCED_ENDPOINTS
+    for index, font in enumerate(fonts):
+        if mode in {quadratic_reference.REFERENCE_COUNT, quadratic_reference.REFERENCE_COUNT_LINES}:
+            glyph = font["curve"]
+            glyph.clearContours()
+            pen = glyph.getPen()
+            pen.moveTo((0, 0))
+            pen.curveTo((100 / 3, 100), (200 / 3, 100), (100, 0))
+            if mode == quadratic_reference.REFERENCE_COUNT_LINES and index == 0:
+                pen.lineTo((130, 0))
+            pen.closePath()
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = (
+            ((1, 1, 2, 1),)
+            if mode == quadratic_reference.REFERENCE_COUNT_LINES and index == 0
+            else groups
         )
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = mode
 
     preserve_quadratic_reference(
         fonts,
