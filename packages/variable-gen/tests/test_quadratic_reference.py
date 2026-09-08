@@ -9,7 +9,7 @@ from fontTools.cu2qu.ufo import fonts_to_quadratic
 from fontTools.designspaceLib import AxisDescriptor, DesignSpaceDocument, SourceDescriptor
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
-from fontTools.pens.recordingPen import DecomposingRecordingPen
+from fontTools.pens.recordingPen import DecomposingRecordingPen, RecordingPen
 from fontTools.ttLib import TTFont, newTable
 from fontTools.ttLib.tables.TupleVariation import TupleVariation
 from fontTools.ttLib.tables import otTables
@@ -513,6 +513,111 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
         recording = DecomposingRecordingPen(glyphs)
         glyphs["curve"].draw(recording)
         assert _same_filled_path(recording, _recording(reference))
+
+
+def test_semantic_partition_uses_source_bound_recipe_and_exact_carrier(
+    tmp_path: Path,
+) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 1,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 2,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "straightExtensionWeights": [],
+    }
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.SEMANTIC_PARTITION
+        )
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+
+    report = preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        protected_locations={1: {}, 2: {}},
+        glyph_max_error={"curve": 20},
+    )
+
+    assert report.carrier_glyphs == ("curve.stv-semantic16x",)
+    assert len({_signature(font["curve"]) for font in fonts}) == 1
+    reference = TTFont(reference_path).getGlyphSet()["curve"]
+    for index in (1, 2):
+        recording = DecomposingRecordingPen(fonts[index])
+        fonts[index]["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
+
+
+def test_semantic_partition_fails_without_recipe_before_mutating_sources(
+    tmp_path: Path,
+) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.SEMANTIC_PARTITION
+        )
+    before = [_recording(font["curve"]).value for font in fonts]
+    with pytest.raises(PipelineError, match="semantic partition recipe mismatch"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+        )
+    assert [_recording(font["curve"]).value for font in fonts] == before
+
+
+def test_semantic_partition_indexes_operations_after_move_sentinel() -> None:
+    def recording(*operations):
+        pen = RecordingPen()
+        pen.value = list(operations)
+        return pen
+
+    ordinary = recording(
+        ("moveTo", ((0, 0),)),
+        ("lineTo", ((100, 0),)),
+        ("curveTo", ((100, 80), (0, 80), (0, 0))),
+        ("closePath", ()),
+    )
+    extended = recording(
+        ("moveTo", ((0, 0),)),
+        ("lineTo", ((100, 0),)),
+        ("lineTo", ((100, 10),)),
+        ("curveTo", ((100, 80), (0, 80), (0, 0))),
+        ("closePath", ()),
+    )
+    protected = recording(
+        ("moveTo", ((0, 0),)),
+        ("lineTo", ((100, 0),)),
+        ("qCurveTo", ((50, 120), (0, 0))),
+        ("closePath", ()),
+    )
+    contours, _, _ = quadratic_reference._piecewise_contours(
+        "curve",
+        [extended, ordinary, ordinary],
+        (((1, 1, 2, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),)),
+        {1: protected, 2: protected},
+        1,
+        40,
+        quadratic_reference.SEMANTIC_PARTITION,
+        {
+            "defaultSubdivisions": 2,
+            "subdivisionOverrides": {},
+            "semanticSlots": [1],
+        },
+    )
+    assert len({tuple((op, len(points)) for op, points in value[0]) for value in contours}) == 1
 
 
 @pytest.mark.parametrize("failure", ["missing", "mismatch", "nonscalar", "ungrouped"])
