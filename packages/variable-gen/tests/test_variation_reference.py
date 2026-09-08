@@ -11,7 +11,9 @@ from fontTools.ttLib.tables.TupleVariation import TupleVariation
 from fontTools.varLib.iup import iup_delta
 
 from variable_gen.common import PipelineError
+from variable_gen.variation_reference import NativeIupTransport
 from variable_gen.variation_reference import restore_reference_inference
+from variable_gen.variation_reference import restore_reference_true_default
 from variable_gen.variation_reference import restore_reference_with_prefixes
 
 
@@ -151,6 +153,89 @@ def test_prefix_mapping_rejects_a_moved_protected_point_before_mutation():
     with pytest.raises(PipelineError, match="exact native prefix"):
         restore_reference_with_prefixes(
             reference, candidate, frozenset({"curve"}), {"wght": 400, "opsz": 32}
+        )
+    assert before_glyph == candidate["glyf"]["curve"].coordinates
+    assert before_variations == candidate["gvar"].variations
+
+
+def true_default_fonts():
+    reference, candidate = fonts()
+    # Keep the candidate within the recipe's explicit one-unit approximation
+    # budget while making its ordinary default distinct from the native frame.
+    candidate["glyf"]["curve"].coordinates.translate((0, -45))
+    endpoint = candidate["gvar"].variations["curve"][0]
+    endpoint.coordinates[4] = (5, 0)
+    candidate["gvar"].variations["curve"].append(
+        TupleVariation(
+            {"wght": (0, 1, 1), "opsz": (0, 1, 1)},
+            [(0, 0)] * len(endpoint.coordinates),
+        )
+    )
+    return reference, candidate
+
+
+def true_default_recipe(**changes):
+    values = {
+        "native_frame_points": frozenset({0, 1, 2}),
+        "text_adjustment_points": frozenset({3, 4, 5, 6}),
+        "text_locations": ((("wght", 950), ("opsz", 14)),),
+        "max_native_frame_residual": 1,
+    }
+    values.update(changes)
+    return NativeIupTransport(**values)
+
+
+def test_true_default_transport_preserves_native_display_without_default_tuple():
+    reference, candidate = true_default_fonts()
+    report = restore_reference_true_default(
+        reference,
+        candidate,
+        {"curve": true_default_recipe()},
+        {"wght": 400, "opsz": 32},
+    )
+    assert report == {
+        "curve": {
+            "nativeSparseRows": 1,
+            "maximumRatioError": 0,
+            "maximumNativeFrameResidual": 1,
+        }
+    }
+    binary = BytesIO()
+    candidate.save(binary)
+    binary.seek(0)
+    candidate = TTFont(binary)
+    assert all(variation.axes for variation in candidate["gvar"].variations["curve"])
+    for weight in (400, 537.25, 950):
+        assert recording(reference, weight, 32) == recording(candidate, weight, 32)
+
+
+@pytest.mark.parametrize("failure", ["ratio", "roles", "residual", "support"])
+def test_true_default_transport_rejects_before_mutation(failure):
+    reference, candidate = true_default_fonts()
+    recipe = true_default_recipe()
+    if failure == "ratio":
+        x, y = candidate["glyf"]["curve"].coordinates[0]
+        candidate["glyf"]["curve"].coordinates[0] = (x + 10, y)
+        recipe = true_default_recipe(
+            native_frame_points=frozenset({2}),
+            text_adjustment_points=frozenset({0, 1, 3, 4, 5, 6}),
+        )
+    elif failure == "roles":
+        recipe = true_default_recipe(text_adjustment_points=frozenset({4, 5, 6}))
+    elif failure == "residual":
+        recipe = true_default_recipe(max_native_frame_residual=0.5)
+    else:
+        candidate["gvar"].variations["curve"].append(
+            deepcopy(candidate["gvar"].variations["curve"][0])
+        )
+    before_glyph = deepcopy(candidate["glyf"]["curve"].coordinates)
+    before_variations = deepcopy(candidate["gvar"].variations)
+    with pytest.raises(PipelineError):
+        restore_reference_true_default(
+            reference,
+            candidate,
+            {"curve": recipe},
+            {"wght": 400, "opsz": 32},
         )
     assert before_glyph == candidate["glyf"]["curve"].coordinates
     assert before_variations == candidate["gvar"].variations

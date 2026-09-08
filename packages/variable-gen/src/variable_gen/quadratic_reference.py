@@ -49,6 +49,8 @@ PADDING_PLACEMENT_KEY = "com.mblode.stv.quadraticPaddingPlacement"
 BALANCED_ENDPOINTS = "balanced-endpoints"
 REFERENCE_COUNT = "reference-count"
 REFERENCE_COUNT_LINES = "reference-count-lines"
+NATIVE_IUP_TRANSPORT = "native-iup-transport"
+NATIVE_IUP_TRANSPORT_KEY = "com.mblode.stv.nativeIupTransport"
 CONTINUOUS_CHAIN = "continuous-chain"
 SEMANTIC_PARTITION = "semantic-partition"
 SEMANTIC_PARTITION_KEY = "com.mblode.stv.quadraticSemanticPartition"
@@ -99,6 +101,7 @@ def _padding_placement_metadata(fonts, groups: dict[str, SourceGroups]) -> dict[
             BALANCED_ENDPOINTS,
             REFERENCE_COUNT,
             REFERENCE_COUNT_LINES,
+            NATIVE_IUP_TRANSPORT,
             CONTINUOUS_CHAIN,
             SEMANTIC_PARTITION,
         }:
@@ -208,6 +211,59 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         raise PipelineError(
             f"semantic partition recipe mismatch: missing={missing}; unexpected={extra}"
         )
+    return result
+
+
+def _native_iup_transport_metadata(fonts, placements: dict[str, str]) -> dict[str, dict]:
+    """Require one identical source-bound recipe for each transport opt-in."""
+    names = {
+        name for font in fonts for name in font.keys() if NATIVE_IUP_TRANSPORT_KEY in font[name].lib
+    }
+    expected = {name for name, placement in placements.items() if placement == NATIVE_IUP_TRANSPORT}
+    if names != expected:
+        raise PipelineError("native-IUP transport placement and recipe must agree")
+    result = {}
+    required = {
+        "schemaVersion",
+        "placement",
+        "glyph",
+        "glyphRowsSha256",
+        "referenceSha256",
+        "nativeFramePoints",
+        "textAdjustmentPoints",
+        "textLocations",
+        "protectedLocation",
+        "maxNativeFrameResidual",
+    }
+    for name in sorted(names):
+        values = []
+        for index, font in enumerate(fonts):
+            if name not in font or NATIVE_IUP_TRANSPORT_KEY not in font[name].lib:
+                raise PipelineError(
+                    f"{name}: native-IUP transport metadata is missing in master {index}"
+                )
+            values.append(font[name].lib[NATIVE_IUP_TRANSPORT_KEY])
+        if any(value != values[0] for value in values[1:]):
+            raise PipelineError(
+                f"{name}: native-IUP transport metadata must be identical in every master"
+            )
+        recipe = values[0]
+        valid = (
+            isinstance(recipe, dict)
+            and set(recipe) == required
+            and recipe["schemaVersion"] == 1
+            and recipe["placement"] == NATIVE_IUP_TRANSPORT
+            and recipe["glyph"] == name
+            and all(
+                isinstance(recipe[key], str)
+                and len(recipe[key]) == 64
+                and all(character in "0123456789abcdef" for character in recipe[key])
+                for key in ("glyphRowsSha256", "referenceSha256")
+            )
+        )
+        if not valid:
+            raise PipelineError(f"{name}: native-IUP transport metadata is invalid")
+        result[name] = recipe
     return result
 
 
@@ -826,9 +882,15 @@ def _fit_piecewise_group(
     """
     if not groups or any(not group for group in groups):
         raise PipelineError(f"{glyph_name}: piecewise correspondence requires nonempty groups")
-    if placement not in {"prefix", BALANCED_ENDPOINTS, REFERENCE_COUNT, REFERENCE_COUNT_LINES}:
+    if placement not in {
+        "prefix",
+        BALANCED_ENDPOINTS,
+        REFERENCE_COUNT,
+        REFERENCE_COUNT_LINES,
+        NATIVE_IUP_TRANSPORT,
+    }:
         raise ValueError(f"Unknown quadratic padding placement: {placement}")
-    if placement in {BALANCED_ENDPOINTS, REFERENCE_COUNT} and any(
+    if placement in {BALANCED_ENDPOINTS, REFERENCE_COUNT, NATIVE_IUP_TRANSPORT} and any(
         len(group) != 1 for group in groups
     ):
         raise PipelineError(
@@ -845,7 +907,7 @@ def _fit_piecewise_group(
                 raise PipelineError(f"{glyph_name}: piecewise source must contain finite cubics")
         if any(left[-1] != right[0] for left, right in zip(group, group[1:], strict=False)):
             raise PipelineError(f"{glyph_name}: piecewise source has a disconnected join")
-    if placement in {REFERENCE_COUNT, REFERENCE_COUNT_LINES}:
+    if placement in {REFERENCE_COUNT, REFERENCE_COUNT_LINES, NATIVE_IUP_TRANSPORT}:
         # Only real straight source extensions receive extra operations. Never
         # collapse a curved join or manufacture padding to rescue a failed fit.
         prefix = max(len(group) - 1 for group in groups)
@@ -1294,7 +1356,11 @@ def _piecewise_contours(
                         assert spline is not None
                         result[index][contour_index].append(("qCurveTo", tuple(spline[1:])))
                 continue
-            effective_placement = REFERENCE_COUNT if placement == CONTINUOUS_CHAIN else placement
+            effective_placement = (
+                REFERENCE_COUNT
+                if placement in {CONTINUOUS_CHAIN, NATIVE_IUP_TRANSPORT}
+                else placement
+            )
             prefix, fitted = _fit_piecewise_group(
                 curves, reference_count, tolerance, name, effective_placement
             )
@@ -1630,6 +1696,7 @@ def preserve_quadratic_reference(
         raise PipelineError("Piecewise source correspondence requires authored glyphs")
     placements = _padding_placement_metadata(fonts, source_groups)
     semantic_recipes = _semantic_partition_metadata(fonts, placements)
+    _native_iup_transport_metadata(fonts, placements)
     errors = glyph_max_error or {}
     if set(errors) - set(authored):
         raise PipelineError("Per-glyph quadratic precision requires authored glyphs")
