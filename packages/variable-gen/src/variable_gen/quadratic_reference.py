@@ -21,6 +21,7 @@ those points away from the default location.
 from __future__ import annotations
 
 import math
+from bisect import bisect_left
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -34,6 +35,7 @@ from fontTools.varLib.instancer import instantiateVariableFont
 
 from variable_gen.authorship import OPTICAL_AUTHORSHIP_KEY
 from variable_gen.common import PipelineError
+from variable_gen.curve_certificate import certify_curve_distance
 
 Point = tuple[float, float]
 Operation = tuple[str, tuple[Point | None, ...]]
@@ -43,6 +45,9 @@ PADDING_PLACEMENT_KEY = "com.mblode.stv.quadraticPaddingPlacement"
 BALANCED_ENDPOINTS = "balanced-endpoints"
 REFERENCE_COUNT = "reference-count"
 REFERENCE_COUNT_LINES = "reference-count-lines"
+CONTINUOUS_CHAIN = "continuous-chain"
+CONTINUOUS_CHAIN_SUBDIVISIONS = 4
+CONTINUOUS_CHAIN_SCALE = 16
 
 
 def _source_group_metadata(fonts) -> dict[str, SourceGroups]:
@@ -88,6 +93,7 @@ def _padding_placement_metadata(fonts, groups: dict[str, SourceGroups]) -> dict[
             BALANCED_ENDPOINTS,
             REFERENCE_COUNT,
             REFERENCE_COUNT_LINES,
+            CONTINUOUS_CHAIN,
         }:
             raise PipelineError(
                 f"{name}: padding placement must be a supported consistent mode in every master"
@@ -103,6 +109,7 @@ class QuadraticReferenceReport:
     exact_default_glyphs: int
     expanded_operations: int
     maximum_segments: int
+    carrier_glyphs: tuple[str, ...] = ()
 
 
 def _recording(glyph) -> RecordingPen:
@@ -167,6 +174,69 @@ def _draw_contours(glyph, contours: list[list[Operation]]) -> None:
                 pen.endPath()
             else:
                 raise AssertionError(operation)
+
+
+def _scaled_contours(contours: list[list[Operation]], factor: int) -> list[list[Operation]]:
+    return [
+        [
+            (
+                operation,
+                tuple(
+                    None if point is None else (point[0] * factor, point[1] * factor)
+                    for point in points
+                ),
+            )
+            for operation, points in contour
+        ]
+        for contour in contours
+    ]
+
+
+def _install_continuous_chain_carrier(
+    font,
+    name: str,
+    contours: list[list[Operation]],
+    *,
+    protected: bool,
+    authorship: str,
+) -> str:
+    """Carry fractional compatible points without changing visible geometry.
+
+    TrueType rounds simple-glyph source points to integers. A 16x unencoded
+    helper plus a fixed 1/16 component transform preserves the exact fractional
+    subdivision used by protected outlines and keeps authored rounding below
+    one sixteenth of a source unit.
+    """
+    helper_name = f"{name}.stv-semantic16x"
+    if helper_name in font:
+        raise PipelineError(f"{name}: continuous-chain carrier glyph already exists")
+    scaled = _scaled_contours(contours, CONTINUOUS_CHAIN_SCALE)
+    finite_points = [
+        point
+        for contour in scaled
+        for _, points in contour
+        for point in points
+        if point is not None
+    ]
+    if any(not all(math.isfinite(value) for value in point) for point in finite_points):
+        raise PipelineError(f"{name}: continuous-chain carrier has non-finite coordinates")
+    if any(abs(value) > 32767.0 for point in finite_points for value in point):
+        raise PipelineError(f"{name}: continuous-chain carrier exceeds TrueType coordinate range")
+    if protected and any(value != round(value) for point in finite_points for value in point):
+        raise PipelineError(
+            f"{name}: protected continuous-chain carrier cannot represent coordinates exactly"
+        )
+    glyph = font[name]
+    helper = font.newGlyph(helper_name)
+    helper.width = glyph.width * CONTINUOUS_CHAIN_SCALE
+    helper.lib[OPTICAL_AUTHORSHIP_KEY] = authorship
+    _draw_contours(helper, scaled)
+    glyph.clearContours()
+    glyph.getPen().addComponent(
+        helper_name,
+        (1 / CONTINUOUS_CHAIN_SCALE, 0, 0, 1 / CONTINUOUS_CHAIN_SCALE, 0, 0),
+    )
+    return helper_name
 
 
 def _filled_path(recording: RecordingPen) -> pathops.Path:
@@ -423,6 +493,158 @@ def _reference_count_spline(curve, count: int, tolerance: float) -> list[Point] 
     return spline
 
 
+def _bezier_point(curve: tuple[Point, Point, Point, Point], value: float) -> complex:
+    a, b, c, d = map(_complex, curve)
+    inverse = 1 - value
+    return inverse**3 * a + 3 * inverse**2 * value * b + 3 * inverse * value**2 * c + value**3 * d
+
+
+def _quadratic_spans(spline: list[Point]) -> list[tuple[Point, Point, Point]]:
+    start, endpoint = spline[0], spline[-1]
+    controls = spline[1:-1]
+    result = []
+    for index, control in enumerate(controls):
+        end = (
+            endpoint
+            if index == len(controls) - 1
+            else (
+                (control[0] + controls[index + 1][0]) / 2,
+                (control[1] + controls[index + 1][1]) / 2,
+            )
+        )
+        result.append((start, control, end))
+        start = end
+    return result
+
+
+def _continuous_piecewise_spline(
+    curves: list[tuple[Point, Point, Point, Point]], count: int, tolerance: float
+) -> list[Point] | None:
+    """Fit one continuous quadratic chain to connected cubics by arc length.
+
+    Arc length selects correspondence only. Acceptance uses the independent,
+    symmetric geometric certificate below, so a sampled parameter fit cannot
+    hide a loop or a bad local approximation.
+    """
+    if not curves or count < 1 or not math.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError("Continuous-chain fit requires curves, count, and finite tolerance")
+    if any(left[-1] != right[0] for left, right in zip(curves, curves[1:], strict=False)):
+        raise PipelineError("Continuous-chain source has a disconnected join")
+    dense: list[complex] = []
+    cumulative = [0.0]
+    for curve in curves:
+        for index in range(1025):
+            if dense and index == 0:
+                continue
+            point = _bezier_point(curve, index / 1024)
+            if dense:
+                cumulative.append(cumulative[-1] + abs(point - dense[-1]))
+            dense.append(point)
+    total = cumulative[-1]
+    if total <= 0:
+        return None
+
+    def target_at(value: float) -> complex:
+        distance = value * total
+        high = bisect_left(cumulative, distance)
+        if high <= 0:
+            return dense[0]
+        if high >= len(dense):
+            return dense[-1]
+        low = high - 1
+        span = cumulative[high] - cumulative[low]
+        local = 0 if span == 0 else (distance - cumulative[low]) / span
+        return dense[low] + (dense[high] - dense[low]) * local
+
+    origin = _complex(curves[0][0])
+    endpoint = _complex(curves[-1][-1]) - origin
+    gram = [[0.0] * count for _ in range(count)]
+    rhs = [0j] * count
+    for sample in range(16385):
+        value = sample / 16384
+        segment = min(int(value * count), count - 1)
+        local = value * count - segment
+        row = [0.0] * count
+        base = 0j
+        if segment == 0:
+            base += (1 - local) ** 2 * 0j
+        else:
+            row[segment - 1] += 0.5 * (1 - local) ** 2
+            row[segment] += 0.5 * (1 - local) ** 2
+        row[segment] += 2 * (1 - local) * local
+        if segment == count - 1:
+            base += local**2 * endpoint
+        else:
+            row[segment] += 0.5 * local**2
+            row[segment + 1] += 0.5 * local**2
+        target = target_at(value) - origin - base
+        active = [index for index, coefficient in enumerate(row) if coefficient]
+        for i in active:
+            rhs[i] += row[i] * target
+            for j in active:
+                gram[i][j] += row[i] * row[j]
+    lower = [[0.0] * count for _ in range(count)]
+    for i in range(count):
+        for j in range(i + 1):
+            value = gram[i][j] - sum(lower[i][k] * lower[j][k] for k in range(j))
+            lower[i][j] = math.sqrt(value) if i == j else value / lower[j][j]
+    forward = [0j] * count
+    controls = [0j] * count
+    for i in range(count):
+        forward[i] = (rhs[i] - sum(lower[i][j] * forward[j] for j in range(i))) / lower[i][i]
+    for i in reversed(range(count)):
+        controls[i] = (
+            forward[i] - sum(lower[j][i] * controls[j] for j in range(i + 1, count))
+        ) / lower[i][i]
+    spline: list[Point] = [
+        curves[0][0],
+        *[_point(control + origin) for control in controls],
+        curves[-1][-1],
+    ]
+    return spline if certify_curve_distance(curves, _quadratic_spans(spline), tolerance) else None
+
+
+def _subdivide_reference_chain(start: Point, operation: Operation) -> Operation:
+    """Represent a native quadratic chain exactly with four times its controls."""
+    kind, points = operation
+    if kind != "qCurveTo":
+        raise ValueError("Continuous-chain subdivision requires qCurveTo")
+    controls = [_require_point(point, "reference", "qCurveTo control") for point in points[:-1]]
+    endpoint = _require_point(points[-1], "reference", "qCurveTo endpoint")
+    expanded: list[Point] = []
+    span_start = start
+    for index, control in enumerate(controls):
+        span_end = (
+            endpoint
+            if index == len(controls) - 1
+            else (
+                (control[0] + controls[index + 1][0]) / 2,
+                (control[1] + controls[index + 1][1]) / 2,
+            )
+        )
+        for part in range(CONTINUOUS_CHAIN_SUBDIVISIONS):
+            value = part / CONTINUOUS_CHAIN_SUBDIVISIONS
+            step = 1 / CONTINUOUS_CHAIN_SUBDIVISIONS
+            inverse = 1 - value
+            point = (
+                inverse**2 * span_start[0]
+                + 2 * inverse * value * control[0]
+                + value**2 * span_end[0],
+                inverse**2 * span_start[1]
+                + 2 * inverse * value * control[1]
+                + value**2 * span_end[1],
+            )
+            derivative = (
+                2 * (inverse * (control[0] - span_start[0]) + value * (span_end[0] - control[0])),
+                2 * (inverse * (control[1] - span_start[1]) + value * (span_end[1] - control[1])),
+            )
+            expanded.append(
+                (point[0] + step * derivative[0] / 2, point[1] + step * derivative[1] / 2)
+            )
+        span_start = span_end
+    return "qCurveTo", (*expanded, endpoint)
+
+
 def _fit_all(
     curves: list[tuple[Point, Point, Point, Point]],
     initial_count: int,
@@ -662,8 +884,34 @@ def _piecewise_contours(
                     current[index] = curve[-1]
                 curves.append(group)
             reference_count = _quadratic_count(target_points, name)
+            if placement == CONTINUOUS_CHAIN and max(map(len, curves)) > 1:
+                continuous_count = reference_count * CONTINUOUS_CHAIN_SUBDIVISIONS
+                splines = [
+                    _continuous_piecewise_spline(group, continuous_count, tolerance)
+                    for group in curves
+                ]
+                if any(spline is None for spline in splines):
+                    raise PipelineError(
+                        f"{name}: continuous-chain fit exceeds {tolerance:g}-unit bound"
+                    )
+                expanded += continuous_count - reference_count
+                maximum = max(maximum, continuous_count)
+                for index, spline in enumerate(splines):
+                    if index in references:
+                        operation = references[index][contour_index][operation_index]
+                        result[index][contour_index].append(
+                            _subdivide_reference_chain(reference_current[index], operation)
+                        )
+                        reference_current[index] = _require_point(
+                            operation[1][-1], name, "reference endpoint"
+                        )
+                    else:
+                        assert spline is not None
+                        result[index][contour_index].append(("qCurveTo", tuple(spline[1:])))
+                continue
+            effective_placement = REFERENCE_COUNT if placement == CONTINUOUS_CHAIN else placement
             prefix, fitted = _fit_piecewise_group(
-                curves, reference_count, tolerance, name, placement
+                curves, reference_count, tolerance, name, effective_placement
             )
             expanded += prefix
             maximum = max(maximum, prefix + reference_count)
@@ -672,7 +920,7 @@ def _piecewise_contours(
                     operation = references[index][contour_index][operation_index]
                     result[index][contour_index].extend(
                         _pad_reference_operation(
-                            reference_current[index], operation, prefix, placement
+                            reference_current[index], operation, prefix, effective_placement
                         )
                     )
                     reference_current[index] = _require_point(
@@ -978,6 +1226,14 @@ def preserve_quadratic_reference(
         }
     )
     originals = {name: [_reverse_recording(font[name]) for font in fonts] for name in authored}
+    authorship = {
+        name: next(
+            font[name].lib[OPTICAL_AUTHORSHIP_KEY]
+            for font in fonts
+            if font[name].lib.get(OPTICAL_AUTHORSHIP_KEY)
+        )
+        for name in authored
+    }
     metadata_groups = _source_group_metadata(fonts)
     if source_groups is not None and metadata_groups:
         raise PipelineError("Use either source group metadata or explicit source_groups")
@@ -1036,6 +1292,7 @@ def preserve_quadratic_reference(
     )
 
     converted = exact = expanded = maximum_segments = 0
+    carrier_glyphs: set[str] = set()
     for name in authored:
         if name in staged_groups:
             contours, glyph_expanded, glyph_maximum = staged_groups[name]
@@ -1048,6 +1305,16 @@ def preserve_quadratic_reference(
                         raise PipelineError(
                             f"{name}: grouped conversion moved protected reference geometry"
                         )
+                if placements.get(name) == CONTINUOUS_CHAIN:
+                    carrier_glyphs.add(
+                        _install_continuous_chain_carrier(
+                            font,
+                            name,
+                            contours[index],
+                            protected=index in protected_glyph_sets,
+                            authorship=authorship[name],
+                        )
+                    )
             converted += 1
             expanded += glyph_expanded
             maximum_segments = max(maximum_segments, glyph_maximum)
@@ -1079,4 +1346,5 @@ def preserve_quadratic_reference(
         exact_default_glyphs=exact,
         expanded_operations=expanded,
         maximum_segments=maximum_segments,
+        carrier_glyphs=tuple(sorted(carrier_glyphs)),
     )

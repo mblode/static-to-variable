@@ -9,6 +9,7 @@ from fontTools.cu2qu.ufo import fonts_to_quadratic
 from fontTools.designspaceLib import AxisDescriptor, DesignSpaceDocument, SourceDescriptor
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
+from fontTools.pens.recordingPen import DecomposingRecordingPen
 from fontTools.ttLib import TTFont, newTable
 from fontTools.ttLib.tables.TupleVariation import TupleVariation
 from fontTools.ttLib.tables import otTables
@@ -362,7 +363,10 @@ def test_piecewise_authored_source_compiles_with_exact_protected_masters(
     reference = TTFont(reference_path).getGlyphSet()["curve"]
     for optical_size in (16, 28):
         instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
-        assert _same_filled_path(_recording(instance.getGlyphSet()["curve"]), _recording(reference))
+        glyphs = instance.getGlyphSet()
+        recording = DecomposingRecordingPen(glyphs)
+        glyphs["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
         assert instance["hmtx"].metrics["curve"][0] == 500
 
 
@@ -455,6 +459,60 @@ def test_balanced_padding_metadata_compiles_with_exact_protected_masters(
     for optical_size in (16, 28):
         instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
         assert _same_filled_path(_recording(instance.getGlyphSet()["curve"]), _recording(reference))
+
+
+def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
+    tmp_path: Path,
+) -> None:
+    from fontTools.misc.bezierTools import splitCubicAtT
+
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    source = fonts[0]["curve"]
+    source.clearContours()
+    pen = source.getPen()
+    pen.moveTo((0, 0))
+    for curve in splitCubicAtT((0, 0), (0, 220), (100, 220), (100, 0), 0.5):
+        pen.curveTo(*curve[1:])
+    pen.closePath()
+    groups = (((1, 1, 2, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))
+    for font, contours in zip(fonts, groups, strict=True):
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.CONTINUOUS_CHAIN
+        )
+
+    report = preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        protected_locations={1: {}, 2: {}},
+        glyph_max_error={"curve": 20},
+    )
+
+    helper_name = "curve.stv-semantic16x"
+    assert report.carrier_glyphs == (helper_name,)
+    for font in fonts:
+        assert helper_name in font
+        assert font[helper_name].lib[OPTICAL_AUTHORSHIP_KEY] == PROVENANCE
+        assert len(font["curve"].components) == 1
+        assert font["curve"].components[0].baseGlyph == helper_name
+        assert font["curve"].components[0].transformation == pytest.approx(
+            (1 / 16, 0, 0, 1 / 16, 0, 0)
+        )
+    variable = _compile_variable(fonts, optimize_gvar=False)
+    cmap = variable.getBestCmap()
+    assert cmap is None or helper_name not in cmap.values()
+    assert variable["head"].yMax > TTFont(reference_path)["head"].yMax
+    reference = TTFont(reference_path).getGlyphSet()["curve"]
+    for optical_size in (16, 28):
+        instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
+        glyphs = instance.getGlyphSet()
+        recording = DecomposingRecordingPen(glyphs)
+        glyphs["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
 
 
 @pytest.mark.parametrize("failure", ["missing", "mismatch", "nonscalar", "ungrouped"])

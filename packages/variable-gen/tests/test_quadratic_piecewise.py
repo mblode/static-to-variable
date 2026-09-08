@@ -5,11 +5,22 @@ import pytest
 from variable_gen.common import PipelineError
 from variable_gen.quadratic_reference import (
     BALANCED_ENDPOINTS,
+    _continuous_piecewise_spline,
     REFERENCE_COUNT,
     _fit_piecewise_group,
     _pad_reference_operation,
     _reference_count_spline,
 )
+
+
+def test_continuous_chain_fits_connected_piecewise_path_without_stationary_segments():
+    first = ((0, 0), (10, 0), (20, 0), (30, 0))
+    second = ((30, 0), (40, 0), (50, 0), (60, 0))
+    spline = _continuous_piecewise_spline([first, second], 4, 0.01)
+    assert spline is not None
+    assert len(spline) == 6
+    assert spline[0] == (0, 0)
+    assert spline[-1] == (60, 0)
 
 
 def test_different_piece_counts_share_topology_without_erasing_authored_join():
