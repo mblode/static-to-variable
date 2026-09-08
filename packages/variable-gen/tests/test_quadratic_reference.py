@@ -620,6 +620,88 @@ def test_semantic_partition_indexes_operations_after_move_sentinel() -> None:
     assert len({tuple((op, len(points)) for op, points in value[0]) for value in contours}) == 1
 
 
+def test_semantic_partition_pairs_adjacent_operations_with_protected_seam_ratio() -> None:
+    def recording(*operations):
+        pen = RecordingPen()
+        pen.value = list(operations)
+        return pen
+
+    authored = recording(
+        ("moveTo", ((0, 0),)),
+        ("curveTo", ((50 / 3, 100 / 3), (100 / 3, 50), (50, 50))),
+        ("curveTo", ((200 / 3, 50), (250 / 3, 100 / 3), (100, 0))),
+        ("closePath", ()),
+    )
+    protected = recording(
+        ("moveTo", ((0, 0),)),
+        ("qCurveTo", ((25, 50), (50, 50))),
+        ("qCurveTo", ((75, 50), (100, 0))),
+        ("closePath", ()),
+    )
+    contours, _, maximum = quadratic_reference._piecewise_contours(
+        "curve",
+        [authored, authored, authored],
+        (((1, 1, 1, 1),),) * 3,
+        {1: protected, 2: protected},
+        1,
+        1,
+        quadratic_reference.SEMANTIC_PARTITION,
+        {
+            "defaultSubdivisions": 4,
+            "subdivisionOverrides": {},
+            "semanticSlots": [],
+            "pairedOperations": [[0, 1]],
+            "protectedMatchAxes": ["Weight"],
+        },
+        ({"Weight": 100}, {"Weight": 100}, {"Weight": 400}),
+    )
+    assert maximum == 4
+    assert [kind for kind, _ in contours[0][0]] == [
+        "moveTo",
+        "qCurveTo",
+        "qCurveTo",
+        "closePath",
+    ]
+    first, second = contours[0][0][1:3]
+    seam = complex(*first[1][-1])
+    incoming = seam - complex(*first[1][-2])
+    outgoing = complex(*second[1][0]) - seam
+    assert abs(incoming.real * outgoing.imag - incoming.imag * outgoing.real) < 1e-12
+    assert incoming.real * outgoing.real + incoming.imag * outgoing.imag > 0
+    assert abs(outgoing) / abs(incoming) == pytest.approx(1)
+
+
+def test_semantic_partition_rejects_nonadjacent_paired_operations(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 2,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 4,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "straightExtensionWeights": [],
+        "pairedOperations": [[0, 2]],
+        "protectedMatchAxes": ["Weight"],
+    }
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.SEMANTIC_PARTITION
+        )
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    with pytest.raises(PipelineError, match="semantic partition metadata is invalid"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+        )
+
+
 @pytest.mark.parametrize("failure", ["missing", "mismatch", "nonscalar", "ungrouped"])
 def test_balanced_padding_metadata_fails_closed_before_source_mutation(
     tmp_path: Path, failure: str
