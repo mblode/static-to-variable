@@ -407,6 +407,71 @@ def test_source_group_metadata_cannot_be_partial_unmarked_or_overridden(tmp_path
     assert before == [[_recording(font[name]).value for name in font.keys()] for font in fonts]
 
 
+def test_balanced_padding_metadata_compiles_with_exact_protected_masters(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    groups = ((1, 1, 1, 1),)
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = groups
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.BALANCED_ENDPOINTS
+        )
+
+    preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        protected_locations={1: {}, 2: {}},
+    )
+
+    assert len({_signature(font["curve"]) for font in fonts}) == 1
+    reference = TTFont(reference_path).getGlyphSet()["curve"]
+    assert _same_filled_path(_recording(fonts[1]["curve"]), _recording(reference))
+    assert _same_filled_path(_recording(fonts[2]["curve"]), _recording(reference))
+    variable = _compile_variable(fonts, optimize_gvar=False)
+    for optical_size in (16, 28):
+        instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
+        assert _same_filled_path(_recording(instance.getGlyphSet()["curve"]), _recording(reference))
+
+
+@pytest.mark.parametrize("failure", ["missing", "mismatch", "nonscalar", "ungrouped"])
+def test_balanced_padding_metadata_fails_closed_before_source_mutation(
+    tmp_path: Path, failure: str
+) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    groups = ((1, 1, 1, 1),)
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = groups
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.BALANCED_ENDPOINTS
+        )
+    if failure == "missing":
+        del fonts[1]["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY]
+    elif failure == "mismatch":
+        fonts[1]["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = "unknown"
+    elif failure == "nonscalar":
+        fonts[1]["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = {
+            "mode": quadratic_reference.BALANCED_ENDPOINTS
+        }
+    else:
+        for font in fonts:
+            del font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY]
+
+    before = [_recording(font["curve"]).value for font in fonts]
+    with pytest.raises(PipelineError, match="padding placement"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+        )
+    assert [_recording(font["curve"]).value for font in fonts] == before
+
+
 def test_reference_count_contracts_a_conservative_preliminary_conversion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

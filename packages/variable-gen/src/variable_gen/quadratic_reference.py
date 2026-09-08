@@ -39,6 +39,8 @@ Point = tuple[float, float]
 Operation = tuple[str, tuple[Point | None, ...]]
 SourceGroups = tuple[tuple[tuple[int, ...], ...], ...]
 SOURCE_GROUPS_KEY = "com.mblode.stv.quadraticSourceGroups"
+PADDING_PLACEMENT_KEY = "com.mblode.stv.quadraticPaddingPlacement"
+BALANCED_ENDPOINTS = "balanced-endpoints"
 
 
 def _source_group_metadata(fonts) -> dict[str, SourceGroups]:
@@ -59,6 +61,32 @@ def _source_group_metadata(fonts) -> dict[str, SourceGroups]:
                 raise PipelineError(f"{name}: source group metadata must contain contour counts")
             masters.append(tuple(tuple(counts) for counts in contours))
         result[name] = tuple(masters)
+    return result
+
+
+def _padding_placement_metadata(fonts, groups: dict[str, SourceGroups]) -> dict[str, str]:
+    """Read an explicit, complete opt-in for non-default compatibility placement."""
+    names = {
+        name for font in fonts for name in font.keys() if PADDING_PLACEMENT_KEY in font[name].lib
+    }
+    result = {}
+    for name in sorted(names):
+        if name not in groups:
+            raise PipelineError(f"{name}: padding placement requires source group metadata")
+        values = []
+        for index, font in enumerate(fonts):
+            if name not in font or PADDING_PLACEMENT_KEY not in font[name].lib:
+                raise PipelineError(
+                    f"{name}: padding placement metadata is missing in master {index}"
+                )
+            values.append(font[name].lib[PADDING_PLACEMENT_KEY])
+        if any(not isinstance(value, str) for value in values):
+            raise PipelineError(f"{name}: padding placement metadata must be a string")
+        if len(set(values)) != 1 or values[0] != BALANCED_ENDPOINTS:
+            raise PipelineError(
+                f"{name}: padding placement must be {BALANCED_ENDPOINTS!r} in every master"
+            )
+        result[name] = values[0]
     return result
 
 
@@ -333,22 +361,57 @@ def _partition_spline(spline: list[Point], prefix_count: int) -> list[Operation]
     return result
 
 
+def _partition_balanced_spline(
+    spline: list[Point], prefix_count: int, reference_count: int
+) -> list[Operation]:
+    controls = spline[1:-1]
+    endpoint = spline[-1]
+    before = prefix_count // 2
+    after = prefix_count - before
+    counts = [1] * before + [reference_count] + [1] * after
+    if sum(counts) != len(controls):
+        raise AssertionError("Balanced quadratic partition does not consume its spline")
+    result: list[Operation] = []
+    cursor = 0
+    for index, count in enumerate(counts):
+        chunk = controls[cursor : cursor + count]
+        cursor += count
+        operation_endpoint = (
+            endpoint
+            if index == len(counts) - 1
+            else (
+                (controls[cursor - 1][0] + controls[cursor][0]) / 2,
+                (controls[cursor - 1][1] + controls[cursor][1]) / 2,
+            )
+        )
+        result.append(("qCurveTo", (*chunk, operation_endpoint)))
+    return result
+
+
 def _fit_piecewise_group(
     groups: list[list[tuple[Point, Point, Point, Point]]],
     reference_count: int,
     tolerance: float,
     glyph_name: str,
+    placement: str = "prefix",
 ) -> tuple[int, list[list[Operation]]]:
-    """Fit explicitly corresponding cubic groups around an intact reference tail.
+    """Fit corresponding cubics around the configured intact reference operation.
 
     A reviewed source may use several cubics for one native operation. Keep
     each authored join explicit, and retain the reference operation's original
-    off-curve count in the final operation. Earlier quadratics become ordinary
-    prefixes; the protected master can use stationary prefixes in those slots.
+    off-curve count in one operation. Extra quadratics use the requested
+    explicit placement around it; the protected master uses stationary curves
+    in the corresponding slots.
     This is a conversion primitive, not an inferred correspondence policy.
     """
     if not groups or any(not group for group in groups):
         raise PipelineError(f"{glyph_name}: piecewise correspondence requires nonempty groups")
+    if placement not in {"prefix", BALANCED_ENDPOINTS}:
+        raise ValueError(f"Unknown quadratic padding placement: {placement}")
+    if placement == BALANCED_ENDPOINTS and any(len(group) != 1 for group in groups):
+        raise PipelineError(
+            f"{glyph_name}: balanced endpoint placement requires one authored curve per group"
+        )
     if reference_count < 1 or not math.isfinite(tolerance) or tolerance <= 0:
         raise ValueError("Piecewise conversion requires positive count and finite tolerance")
     for group in groups:
@@ -373,6 +436,11 @@ def _fit_piecewise_group(
         prefix_count = total - reference_count
         result: list[list[Operation]] = []
         for fitted_group in splines:
+            if placement == BALANCED_ENDPOINTS:
+                spline = fitted_group[0]
+                assert spline is not None
+                result.append(_partition_balanced_spline(spline, prefix_count, reference_count))
+                continue
             operations: list[Operation] = []
             for index, spline in enumerate(fitted_group):
                 assert spline is not None
@@ -391,6 +459,7 @@ def _piecewise_contours(
     protected: dict[int, RecordingPen],
     reference_index: int,
     tolerance: float,
+    placement: str = "prefix",
 ) -> tuple[list[list[list[Operation]]], int, int]:
     """Validate explicit per-master operation groups and stage their conversion."""
     sources = [_contours(recording, name) for recording in originals]
@@ -463,14 +532,18 @@ def _piecewise_contours(
                     current[index] = curve[-1]
                 curves.append(group)
             reference_count = _quadratic_count(target_points, name)
-            prefix, fitted = _fit_piecewise_group(curves, reference_count, tolerance, name)
+            prefix, fitted = _fit_piecewise_group(
+                curves, reference_count, tolerance, name, placement
+            )
             expanded += prefix
             maximum = max(maximum, prefix + reference_count)
             for index in range(len(sources)):
                 if index in references:
                     operation = references[index][contour_index][operation_index]
                     result[index][contour_index].extend(
-                        _pad_reference_operation(reference_current[index], operation, prefix)
+                        _pad_reference_operation(
+                            reference_current[index], operation, prefix, placement
+                        )
                     )
                     reference_current[index] = _require_point(
                         operation[1][-1], name, "reference endpoint"
@@ -484,10 +557,22 @@ def _pad_reference_operation(
     start: Point,
     operation: Operation,
     prefix_count: int,
+    placement: str = "prefix",
 ) -> list[Operation]:
+    if placement == "prefix":
+        return [
+            *(("qCurveTo", (start, start)) for _ in range(prefix_count)),
+            operation,
+        ]
+    if placement != BALANCED_ENDPOINTS:
+        raise ValueError(f"Unknown quadratic padding placement: {placement}")
+    endpoint = _require_point(operation[1][-1], "reference", "qCurveTo endpoint")
+    before = prefix_count // 2
+    after = prefix_count - before
     return [
-        *(("qCurveTo", (start, start)) for _ in range(prefix_count)),
+        *(("qCurveTo", (start, start)) for _ in range(before)),
         operation,
+        *(("qCurveTo", (endpoint, endpoint)) for _ in range(after)),
     ]
 
 
@@ -765,6 +850,7 @@ def preserve_quadratic_reference(
     source_groups = metadata_groups if source_groups is None else source_groups
     if set(source_groups) - set(authored):
         raise PipelineError("Piecewise source correspondence requires authored glyphs")
+    placements = _padding_placement_metadata(fonts, source_groups)
     errors = glyph_max_error or {}
     if set(errors) - set(authored):
         raise PipelineError("Per-glyph quadratic precision requires authored glyphs")
@@ -797,6 +883,7 @@ def preserve_quadratic_reference(
             {index: _recording(glyphs[name]) for index, glyphs in protected_glyph_sets.items()},
             reference_index,
             errors.get(name, max_error),
+            placements.get(name, "prefix"),
         )
         for name, groups in source_groups.items()
     }
