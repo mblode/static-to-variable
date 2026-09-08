@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 
 from variable_gen.common import PipelineError
-from variable_gen.quadratic_reference import _fit_piecewise_group, _pad_reference_operation
+from variable_gen.quadratic_reference import (
+    BALANCED_ENDPOINTS,
+    _fit_piecewise_group,
+    _pad_reference_operation,
+)
 
 
 def test_different_piece_counts_share_topology_without_erasing_authored_join():
@@ -27,6 +31,46 @@ def test_piecewise_straight_cubic_conversion_keeps_the_line():
     _, masters = _fit_piecewise_group([[line]], 1, 0.01, "line")
     assert all(y == 0 for _, points in masters[0] for _, y in points)
     assert masters[0][-1][1][-1] == (30, 0)
+
+
+def test_balanced_endpoint_placement_preserves_reference_and_matching_arities():
+    curve = ((0, 0), (20, 110), (180, 110), (200, 0))
+    prefix, masters = _fit_piecewise_group([[curve], [curve]], 2, 0.1, "curve", BALANCED_ENDPOINTS)
+    before = prefix // 2
+    after = prefix - before
+    signature = [("qCurveTo", 2)] * before + [("qCurveTo", 3)] + [("qCurveTo", 2)] * after
+    assert [[(op, len(points)) for op, points in master] for master in masters] == [
+        signature,
+        signature,
+    ]
+    reference = ("qCurveTo", ((10, 80), (190, 80), (200, 0)))
+    protected = _pad_reference_operation((0, 0), reference, prefix, BALANCED_ENDPOINTS)
+    assert [(op, len(points)) for op, points in protected] == signature
+    assert protected[before] == reference
+    assert protected[:before] == [("qCurveTo", ((0, 0), (0, 0)))] * before
+    assert protected[before + 1 :] == [("qCurveTo", ((200, 0), (200, 0)))] * after
+
+
+def test_balanced_endpoint_placement_rejects_ambiguous_multi_curve_groups():
+    left = ((0, 0), (10, 20), (20, 20), (30, 0))
+    right = ((30, 0), (40, 20), (50, 20), (60, 0))
+    with pytest.raises(PipelineError, match="one authored curve"):
+        _fit_piecewise_group([[left, right]], 1, 0.1, "curve", BALANCED_ENDPOINTS)
+
+
+def test_default_placement_remains_exactly_the_prefix_operation_stream():
+    curve = ((0, 0), (20, 110), (180, 110), (200, 0))
+    implicit = _fit_piecewise_group([[curve]], 2, 0.1, "curve")
+    explicit = _fit_piecewise_group([[curve]], 2, 0.1, "curve", "prefix")
+    assert implicit == explicit
+
+    reference = ("qCurveTo", ((10, 80), (190, 80), (200, 0)))
+    assert _pad_reference_operation((0, 0), reference, 3) == [
+        ("qCurveTo", ((0, 0), (0, 0))),
+        ("qCurveTo", ((0, 0), (0, 0))),
+        ("qCurveTo", ((0, 0), (0, 0))),
+        reference,
+    ]
 
 
 @pytest.mark.parametrize("groups", [[], [[]]])
