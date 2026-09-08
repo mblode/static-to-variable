@@ -1,6 +1,8 @@
 """Retain a reference's sparse interpolation with explicit integer residuals."""
 
+import math
 from copy import deepcopy
+from dataclasses import dataclass
 
 from fontTools.misc.roundTools import otRound
 from fontTools.ttLib import TTFont
@@ -10,6 +12,32 @@ from fontTools.varLib.instancer import instantiateVariableFont
 from fontTools.varLib.iup import iup_delta
 
 from variable_gen.common import PipelineError
+
+
+@dataclass(frozen=True)
+class NativeIupTransport:
+    """Point roles and endpoint locations for a true-default IUP transport."""
+
+    native_frame_points: frozenset[int]
+    text_adjustment_points: frozenset[int]
+    text_locations: tuple[tuple[tuple[str, float], ...], ...]
+    max_native_frame_residual: float
+
+
+def _font_axes(font: TTFont):
+    return [(a.axisTag, a.minValue, a.defaultValue, a.maxValue) for a in font["fvar"].axes]
+
+
+def _check_coordinate_space(reference: TTFont, candidate: TTFont) -> None:
+    if _font_axes(reference) != _font_axes(candidate):
+        raise PipelineError("Reference inference requires identical axis normalization")
+    avar = [
+        font["avar"].compile(font) if "avar" in font else None for font in (reference, candidate)
+    ]
+    if avar[0] != avar[1]:
+        raise PipelineError("Reference inference requires identical avar mapping")
+    if reference["head"].unitsPerEm != candidate["head"].unitsPerEm:
+        raise PipelineError("Reference inference requires identical units per em")
 
 
 def stationary_prefix_map(original, expanded) -> tuple[int, ...]:
@@ -145,6 +173,210 @@ def restore_reference_with_prefixes(
     return counts
 
 
+def restore_reference_true_default(
+    reference: TTFont,
+    candidate: TTFont,
+    recipes: dict[str, NativeIupTransport],
+    protected_location: dict[str, float],
+) -> dict[str, dict[str, float | int]]:
+    """Preserve sparse native IUP without a tuple active at the default.
+
+    Each recipe partitions all outline and phantom points into a native frame
+    and explicitly adjustable Text points. Native endpoint tuples operate in
+    the unchanged native frame. Paired corner tuples cancel the Text-only
+    adjustments at the protected optical location, where one final tuple
+    restores the complete native base. Validation for every glyph completes
+    before any candidate table is mutated.
+    """
+    _check_coordinate_space(reference, candidate)
+    axes = {axis.axisTag: axis for axis in candidate["fvar"].axes}
+    protected_support = {}
+    for tag, value in protected_location.items():
+        if tag not in axes:
+            raise PipelineError(f"Unknown protected axis: {tag}")
+        axis = axes[tag]
+        if value == axis.defaultValue:
+            continue
+        if value != axis.maxValue:
+            raise PipelineError("Protected location must use default or maximum axes")
+        protected_support[tag] = (0.0, 1.0, 1.0)
+    if not protected_support:
+        raise PipelineError("True-default transport requires a nondefault protected location")
+
+    staged = {}
+    reports = {}
+    for name, recipe in sorted(recipes.items()):
+        if not isinstance(recipe, NativeIupTransport):
+            raise PipelineError(f"{name}: invalid native-IUP transport recipe")
+        if (
+            not math.isfinite(recipe.max_native_frame_residual)
+            or not 0 <= recipe.max_native_frame_residual <= 1
+        ):
+            raise PipelineError(f"{name}: invalid native-frame residual bound")
+        old, new = reference["glyf"][name], candidate["glyf"][name]
+        if old.isComposite() or new.isComposite():
+            raise PipelineError(f"{name}: true-default transport requires simple contours")
+        if (list(old.endPtsOfContours), list(old.flags)) != (
+            list(new.endPtsOfContours),
+            list(new.flags),
+        ):
+            raise PipelineError(f"{name}: true-default transport requires identical point topology")
+        native_base, native_controls = reference["glyf"]._getCoordinatesAndControls(
+            name,
+            reference["hmtx"].metrics,
+            getattr(reference.get("vmtx"), "metrics", None),
+        )
+        semantic_base, semantic_controls = candidate["glyf"]._getCoordinatesAndControls(
+            name,
+            candidate["hmtx"].metrics,
+            getattr(candidate.get("vmtx"), "metrics", None),
+        )
+        if native_controls.endPts != semantic_controls.endPts:
+            raise PipelineError(f"{name}: contour endpoints changed")
+        point_count = len(semantic_base)
+        all_points = frozenset(range(point_count))
+        if recipe.native_frame_points & recipe.text_adjustment_points:
+            raise PipelineError(f"{name}: native and Text point roles overlap")
+        if recipe.native_frame_points | recipe.text_adjustment_points != all_points:
+            raise PipelineError(f"{name}: point roles must cover outline and phantom points")
+        if not recipe.native_frame_points:
+            raise PipelineError(f"{name}: native frame is empty")
+
+        base = GlyphCoordinates(
+            [
+                native_base[index] if index in recipe.native_frame_points else semantic_base[index]
+                for index in range(point_count)
+            ]
+        )
+        frame_residuals = [
+            max(
+                abs(semantic_base[index][0] - base[index][0]),
+                abs(semantic_base[index][1] - base[index][1]),
+            )
+            for index in recipe.native_frame_points
+        ]
+        reference_by_support: dict[tuple, list[TupleVariation]] = {}
+        for variation in reference["gvar"].variations[name]:
+            reference_by_support.setdefault(tuple(sorted(variation.axes.items())), []).append(
+                variation
+            )
+
+        endpoints = []
+        endpoint_supports = set()
+        for packed_location in recipe.text_locations:
+            location = dict(packed_location)
+            if len(location) != len(packed_location) or set(location) != set(axes):
+                raise PipelineError(f"{name}: Text locations must name every axis once")
+            varying = [
+                axis for axis in axes.values() if location[axis.axisTag] != axis.defaultValue
+            ]
+            if len(varying) != 1:
+                raise PipelineError(f"{name}: each Text location must select one endpoint")
+            axis = varying[0]
+            value = location[axis.axisTag]
+            if value == axis.minValue:
+                support = {axis.axisTag: (-1.0, -1.0, 0.0)}
+            elif value == axis.maxValue:
+                support = {axis.axisTag: (0.0, 1.0, 1.0)}
+            else:
+                raise PipelineError(f"{name}: Text location is not an axis endpoint")
+            support_key = tuple(sorted(support.items()))
+            matches = reference_by_support.get(support_key, [])
+            if len(matches) != 1:
+                raise PipelineError(f"{name}: missing or ambiguous native endpoint support")
+            if support_key in endpoint_supports:
+                raise PipelineError(f"{name}: duplicate Text endpoint support")
+            endpoint_supports.add(support_key)
+            endpoints.append((location, support, matches[0]))
+        if set(reference_by_support) != endpoint_supports:
+            raise PipelineError(f"{name}: native variation program has unsupported regions")
+
+        allowed_candidate_supports = set(endpoint_supports)
+        allowed_candidate_supports.add(tuple(sorted(protected_support.items())))
+        allowed_candidate_supports.update(
+            tuple(sorted({**dict(support), **protected_support}.items()))
+            for support in endpoint_supports
+        )
+        candidate_supports = [
+            tuple(sorted(variation.axes.items()))
+            for variation in candidate["gvar"].variations[name]
+        ]
+        if (
+            len(candidate_supports) != len(set(candidate_supports))
+            or set(candidate_supports) != allowed_candidate_supports
+        ):
+            raise PipelineError(f"{name}: candidate variation program has unsupported regions")
+
+        rows = []
+        ratio_errors = []
+        for location, support, native in endpoints:
+            inferred = iup_delta(native.coordinates, base, semantic_controls.endPts)
+            native_inferred = iup_delta(native.coordinates, native_base, native_controls.endPts)
+            ratio_error = max(
+                max(abs(a - b) for a, b in zip(actual, expected, strict=True))
+                for actual, expected in zip(inferred, native_inferred, strict=True)
+            )
+            if ratio_error > 1e-9:
+                raise PipelineError(f"{name}: native sparse IUP ratios changed")
+            target_font = instantiateVariableFont(candidate, location, inplace=False, optimize=True)
+            target, _ = target_font["glyf"]._getCoordinatesAndControls(
+                name,
+                target_font["hmtx"].metrics,
+                getattr(target_font.get("vmtx"), "metrics", None),
+            )
+            adjustment = []
+            for index, (origin, delta, desired) in enumerate(
+                zip(base, inferred, target, strict=True)
+            ):
+                raw = (
+                    desired[0] - origin[0] - delta[0],
+                    desired[1] - origin[1] - delta[1],
+                )
+                if index in recipe.native_frame_points:
+                    frame_residuals.append(max(abs(raw[0]), abs(raw[1])))
+                    value = (0, 0)
+                else:
+                    value = (round(raw[0]), round(raw[1]))
+                    if any(abs(a - b) > 1e-9 for a, b in zip(raw, value, strict=True)):
+                        raise PipelineError(f"{name}: Text adjustment is not integral")
+                adjustment.append(value)
+            rows.append(deepcopy(native))
+            rows.append(TupleVariation(support, adjustment))
+            rows.append(
+                TupleVariation(
+                    {**support, **protected_support},
+                    [(-x, -y) for x, y in adjustment],
+                )
+            )
+            ratio_errors.append(ratio_error)
+
+        maximum_residual = max(frame_residuals, default=0)
+        if maximum_residual > recipe.max_native_frame_residual:
+            raise PipelineError(f"{name}: Text native-frame residual exceeds its bound")
+        protected_delta = []
+        for expected, actual in zip(native_base, base, strict=True):
+            raw = (expected[0] - actual[0], expected[1] - actual[1])
+            value = (round(raw[0]), round(raw[1]))
+            if any(abs(a - b) > 1e-9 for a, b in zip(raw, value, strict=True)):
+                raise PipelineError(f"{name}: protected base adjustment is not integral")
+            protected_delta.append(value)
+        rows.append(TupleVariation(protected_support, protected_delta))
+
+        revised = deepcopy(new)
+        revised.coordinates = GlyphCoordinates(base[: len(new.coordinates)])
+        revised.recalcBounds(candidate["glyf"])
+        staged[name] = revised, rows
+        reports[name] = {
+            "nativeSparseRows": len(endpoints),
+            "maximumRatioError": max(ratio_errors, default=0),
+            "maximumNativeFrameResidual": maximum_residual,
+        }
+    for name, (glyph, variations) in staged.items():
+        candidate["glyf"][name] = glyph
+        candidate["gvar"].variations[name] = variations
+    return reports
+
+
 def restore_reference_inference(
     reference: TTFont, candidate: TTFont, glyphs: frozenset[str]
 ) -> dict[str, int]:
@@ -156,18 +388,7 @@ def restore_reference_inference(
     fidelity afterward. All validation precedes mutation.
     """
 
-    def axes(font):
-        return [(a.axisTag, a.minValue, a.defaultValue, a.maxValue) for a in font["fvar"].axes]
-
-    if axes(reference) != axes(candidate):
-        raise PipelineError("Reference inference requires identical axis normalization")
-    avar = [
-        font["avar"].compile(font) if "avar" in font else None for font in (reference, candidate)
-    ]
-    if avar[0] != avar[1]:
-        raise PipelineError("Reference inference requires identical avar mapping")
-    if reference["head"].unitsPerEm != candidate["head"].unitsPerEm:
-        raise PipelineError("Reference inference requires identical units per em")
+    _check_coordinate_space(reference, candidate)
     staged = {}
     counts = {}
     for name in sorted(glyphs):

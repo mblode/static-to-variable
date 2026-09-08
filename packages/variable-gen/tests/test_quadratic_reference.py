@@ -417,6 +417,7 @@ def test_source_group_metadata_cannot_be_partial_unmarked_or_overridden(tmp_path
         quadratic_reference.BALANCED_ENDPOINTS,
         quadratic_reference.REFERENCE_COUNT,
         quadratic_reference.REFERENCE_COUNT_LINES,
+        quadratic_reference.NATIVE_IUP_TRANSPORT,
     ],
 )
 def test_balanced_padding_metadata_compiles_with_exact_protected_masters(
@@ -427,7 +428,11 @@ def test_balanced_padding_metadata_compiles_with_exact_protected_masters(
     fonts = _source_set()
     groups = ((1, 1, 1, 1),)
     for index, font in enumerate(fonts):
-        if mode in {quadratic_reference.REFERENCE_COUNT, quadratic_reference.REFERENCE_COUNT_LINES}:
+        if mode in {
+            quadratic_reference.REFERENCE_COUNT,
+            quadratic_reference.REFERENCE_COUNT_LINES,
+            quadratic_reference.NATIVE_IUP_TRANSPORT,
+        }:
             glyph = font["curve"]
             glyph.clearContours()
             pen = glyph.getPen()
@@ -442,6 +447,19 @@ def test_balanced_padding_metadata_compiles_with_exact_protected_masters(
             else groups
         )
         font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = mode
+        if mode == quadratic_reference.NATIVE_IUP_TRANSPORT:
+            font["curve"].lib[quadratic_reference.NATIVE_IUP_TRANSPORT_KEY] = {
+                "schemaVersion": 1,
+                "placement": quadratic_reference.NATIVE_IUP_TRANSPORT,
+                "glyph": "curve",
+                "glyphRowsSha256": "a" * 64,
+                "referenceSha256": "b" * 64,
+                "nativeFramePoints": [0],
+                "textAdjustmentPoints": [1],
+                "textLocations": [{"opsz": 14, "wght": 100}],
+                "protectedLocation": {"opsz": 32, "wght": 400},
+                "maxNativeFrameResidual": 1,
+            }
 
     preserve_quadratic_reference(
         fonts,
@@ -459,6 +477,26 @@ def test_balanced_padding_metadata_compiles_with_exact_protected_masters(
     for optical_size in (16, 28):
         instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
         assert _same_filled_path(_recording(instance.getGlyphSet()["curve"]), _recording(reference))
+
+
+def test_native_iup_transport_requires_recipe_in_every_master(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.NATIVE_IUP_TRANSPORT
+        )
+    before = [[_recording(font[name]).value for name in font.keys()] for font in fonts]
+    with pytest.raises(PipelineError, match="placement and recipe must agree"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+        )
+    assert before == [[_recording(font[name]).value for name in font.keys()] for font in fonts]
 
 
 def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
