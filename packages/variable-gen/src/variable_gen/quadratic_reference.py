@@ -36,6 +36,7 @@ from fontTools.varLib.instancer import instantiateVariableFont
 from variable_gen.authorship import OPTICAL_AUTHORSHIP_KEY
 from variable_gen.common import PipelineError
 from variable_gen.curve_certificate import certify_curve_distance
+from variable_gen.quadratic_semantic_partition import partition_semantic_curve
 
 Point = tuple[float, float]
 Operation = tuple[str, tuple[Point | None, ...]]
@@ -46,6 +47,8 @@ BALANCED_ENDPOINTS = "balanced-endpoints"
 REFERENCE_COUNT = "reference-count"
 REFERENCE_COUNT_LINES = "reference-count-lines"
 CONTINUOUS_CHAIN = "continuous-chain"
+SEMANTIC_PARTITION = "semantic-partition"
+SEMANTIC_PARTITION_KEY = "com.mblode.stv.quadraticSemanticPartition"
 CONTINUOUS_CHAIN_SUBDIVISIONS = 4
 CONTINUOUS_CHAIN_SCALE = 16
 
@@ -94,11 +97,86 @@ def _padding_placement_metadata(fonts, groups: dict[str, SourceGroups]) -> dict[
             REFERENCE_COUNT,
             REFERENCE_COUNT_LINES,
             CONTINUOUS_CHAIN,
+            SEMANTIC_PARTITION,
         }:
             raise PipelineError(
                 f"{name}: padding placement must be a supported consistent mode in every master"
             )
         result[name] = values[0]
+    return result
+
+
+def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str, dict]:
+    """Read a complete, source-bound semantic partition recipe."""
+    names = {
+        name for font in fonts for name in font.keys() if SEMANTIC_PARTITION_KEY in font[name].lib
+    }
+    expected_keys = {
+        "schemaVersion",
+        "placement",
+        "glyph",
+        "glyphRowsSha256",
+        "defaultSubdivisions",
+        "subdivisionOverrides",
+        "semanticSlots",
+        "straightExtensionWeights",
+    }
+    result = {}
+    for name in sorted(names):
+        values = []
+        for index, font in enumerate(fonts):
+            if name not in font or SEMANTIC_PARTITION_KEY not in font[name].lib:
+                raise PipelineError(
+                    f"{name}: semantic partition metadata is missing in master {index}"
+                )
+            values.append(font[name].lib[SEMANTIC_PARTITION_KEY])
+        if any(not isinstance(value, dict) or set(value) != expected_keys for value in values):
+            raise PipelineError(f"{name}: semantic partition metadata has an invalid schema")
+        if any(value != values[0] for value in values[1:]):
+            raise PipelineError(
+                f"{name}: semantic partition metadata must be identical in every master"
+            )
+        recipe = values[0]
+        overrides = recipe["subdivisionOverrides"]
+        slots = recipe["semanticSlots"]
+        weights = recipe["straightExtensionWeights"]
+        valid = (
+            placements.get(name) == SEMANTIC_PARTITION
+            and recipe["schemaVersion"] == 1
+            and recipe["placement"] == SEMANTIC_PARTITION
+            and recipe["glyph"] == name
+            and isinstance(recipe["glyphRowsSha256"], str)
+            and len(recipe["glyphRowsSha256"]) == 64
+            and all(character in "0123456789abcdef" for character in recipe["glyphRowsSha256"])
+            and type(recipe["defaultSubdivisions"]) is int
+            and 1 <= recipe["defaultSubdivisions"] <= 16
+            and isinstance(overrides, dict)
+            and all(
+                isinstance(key, str) and key.isdecimal() and type(value) is int and 1 <= value <= 16
+                for key, value in overrides.items()
+            )
+            and isinstance(slots, (list, tuple))
+            and all(type(value) is int and value >= 0 for value in slots)
+            and len(set(slots)) == len(slots)
+            and isinstance(weights, (list, tuple))
+            and all(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                for value in weights
+            )
+            and len(set(weights)) == len(weights)
+        )
+        if not valid:
+            raise PipelineError(f"{name}: semantic partition metadata is invalid")
+        result[name] = recipe
+    expected = {name for name, placement in placements.items() if placement == SEMANTIC_PARTITION}
+    if names != expected:
+        missing = ", ".join(sorted(expected - names)) or "none"
+        extra = ", ".join(sorted(names - expected)) or "none"
+        raise PipelineError(
+            f"semantic partition recipe mismatch: missing={missing}; unexpected={extra}"
+        )
     return result
 
 
@@ -812,11 +890,30 @@ def _piecewise_contours(
     reference_index: int,
     tolerance: float,
     placement: str = "prefix",
+    semantic_recipe: dict | None = None,
 ) -> tuple[list[list[list[Operation]]], int, int]:
     """Validate explicit per-master operation groups and stage their conversion."""
     sources = [_contours(recording, name) for recording in originals]
     references = {index: _contours(recording, name) for index, recording in protected.items()}
     reference = references[reference_index]
+    if (placement == SEMANTIC_PARTITION) != (semantic_recipe is not None):
+        raise PipelineError(f"{name}: semantic partition placement and recipe must agree")
+    if semantic_recipe is not None:
+        if len(reference) != 1:
+            raise PipelineError(f"{name}: semantic partition currently requires one contour")
+        configured = set(semantic_recipe["semanticSlots"]) | {
+            int(index) for index in semantic_recipe["subdivisionOverrides"]
+        }
+        semantic_operations = reference[0][1:-1]
+        invalid = {
+            index
+            for index in configured
+            if index >= len(semantic_operations) or semantic_operations[index][0] != "qCurveTo"
+        }
+        if invalid:
+            raise PipelineError(
+                f"{name}: semantic partition references non-curve operations {sorted(invalid)}"
+            )
     if len(groupings) != len(sources):
         raise PipelineError(f"{name}: piecewise groups must bind every source master")
     for source, grouping in zip(sources, groupings, strict=True):
@@ -884,6 +981,81 @@ def _piecewise_contours(
                     current[index] = curve[-1]
                 curves.append(group)
             reference_count = _quadratic_count(target_points, name)
+            if placement == SEMANTIC_PARTITION:
+                assert semantic_recipe is not None
+                # Recipe indexes are semantic path operations and intentionally
+                # exclude the contour's moveTo and closePath sentinels.
+                semantic_index = operation_index - 1
+                slots = set(semantic_recipe["semanticSlots"])
+                overrides = semantic_recipe["subdivisionOverrides"]
+                subdivisions = overrides.get(
+                    str(semantic_index), semantic_recipe["defaultSubdivisions"]
+                )
+                if semantic_index in slots:
+                    if any(
+                        len(chunk) not in {1, 2}
+                        or (
+                            len(chunk) == 2 and [item[0] for item in chunk] != ["lineTo", "curveTo"]
+                        )
+                        for chunk in chunks
+                    ):
+                        raise PipelineError(
+                            f"{name}: semantic slot {operation_index} requires "
+                            "a curve or line+curve"
+                        )
+                elif any(len(chunk) != 1 for chunk in chunks):
+                    raise PipelineError(
+                        f"{name}: unconfigured semantic operation {operation_index} "
+                        "must be one curve"
+                    )
+                semantic_target = (
+                    "qCurveTo",
+                    tuple(
+                        _require_point(point, name, "semantic reference point")
+                        for point in target_points
+                    ),
+                )
+                for index, group in enumerate(curves):
+                    straight_extension = None
+                    if len(group) == 2:
+                        straight_extension = (group[0][0], group[0][-1])
+                    partition = partition_semantic_curve(
+                        group[-1],
+                        reference_current[reference_index],
+                        semantic_target,
+                        _reference_count_spline,
+                        tolerance,
+                        subdivisions=subdivisions,
+                        semantic_slot=semantic_index in slots,
+                        straight_extension=straight_extension,
+                    )
+                    if index in references:
+                        reference_operation = references[index][contour_index][operation_index]
+                        protected_operation = (
+                            "qCurveTo",
+                            tuple(
+                                _require_point(point, name, "semantic protected point")
+                                for point in reference_operation[1]
+                            ),
+                        )
+                        protected_partition = partition_semantic_curve(
+                            group[-1],
+                            reference_current[index],
+                            protected_operation,
+                            _reference_count_spline,
+                            tolerance,
+                            subdivisions=subdivisions,
+                            semantic_slot=semantic_index in slots,
+                        )
+                        result[index][contour_index].extend(protected_partition.protected)
+                        reference_current[index] = _require_point(
+                            reference_operation[1][-1], name, "reference endpoint"
+                        )
+                    else:
+                        result[index][contour_index].extend(partition.authored)
+                expanded += reference_count * subdivisions - reference_count
+                maximum = max(maximum, reference_count * subdivisions)
+                continue
             if placement == CONTINUOUS_CHAIN and max(map(len, curves)) > 1:
                 continuous_count = reference_count * CONTINUOUS_CHAIN_SUBDIVISIONS
                 splines = [
@@ -1241,6 +1413,7 @@ def preserve_quadratic_reference(
     if set(source_groups) - set(authored):
         raise PipelineError("Piecewise source correspondence requires authored glyphs")
     placements = _padding_placement_metadata(fonts, source_groups)
+    semantic_recipes = _semantic_partition_metadata(fonts, placements)
     errors = glyph_max_error or {}
     if set(errors) - set(authored):
         raise PipelineError("Per-glyph quadratic precision requires authored glyphs")
@@ -1274,6 +1447,7 @@ def preserve_quadratic_reference(
             reference_index,
             errors.get(name, max_error),
             placements.get(name, "prefix"),
+            semantic_recipes.get(name),
         )
         for name, groups in source_groups.items()
     }
@@ -1305,7 +1479,7 @@ def preserve_quadratic_reference(
                         raise PipelineError(
                             f"{name}: grouped conversion moved protected reference geometry"
                         )
-                if placements.get(name) == CONTINUOUS_CHAIN:
+                if placements.get(name) in {CONTINUOUS_CHAIN, SEMANTIC_PARTITION}:
                     carrier_glyphs.add(
                         _install_continuous_chain_carrier(
                             font,
