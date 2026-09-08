@@ -36,7 +36,10 @@ from fontTools.varLib.instancer import instantiateVariableFont
 from variable_gen.authorship import OPTICAL_AUTHORSHIP_KEY
 from variable_gen.common import PipelineError
 from variable_gen.curve_certificate import certify_curve_distance
-from variable_gen.quadratic_semantic_partition import partition_semantic_curve
+from variable_gen.quadratic_semantic_partition import (
+    partition_semantic_curve,
+    subdivide_quadratic_chain,
+)
 
 Point = tuple[float, float]
 Operation = tuple[str, tuple[Point | None, ...]]
@@ -111,7 +114,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
     names = {
         name for font in fonts for name in font.keys() if SEMANTIC_PARTITION_KEY in font[name].lib
     }
-    expected_keys = {
+    version_one_keys = {
         "schemaVersion",
         "placement",
         "glyph",
@@ -121,6 +124,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         "semanticSlots",
         "straightExtensionWeights",
     }
+    version_two_keys = version_one_keys | {"pairedOperations", "protectedMatchAxes"}
     result = {}
     for name in sorted(names):
         values = []
@@ -130,7 +134,11 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
                     f"{name}: semantic partition metadata is missing in master {index}"
                 )
             values.append(font[name].lib[SEMANTIC_PARTITION_KEY])
-        if any(not isinstance(value, dict) or set(value) != expected_keys for value in values):
+        if any(
+            not isinstance(value, dict)
+            or frozenset(value) not in {frozenset(version_one_keys), frozenset(version_two_keys)}
+            for value in values
+        ):
             raise PipelineError(f"{name}: semantic partition metadata has an invalid schema")
         if any(value != values[0] for value in values[1:]):
             raise PipelineError(
@@ -140,9 +148,30 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         overrides = recipe["subdivisionOverrides"]
         slots = recipe["semanticSlots"]
         weights = recipe["straightExtensionWeights"]
+        version = recipe["schemaVersion"]
+        pairs = recipe.get("pairedOperations", [])
+        match_axes = recipe.get("protectedMatchAxes", [])
+        valid_pairs = (
+            isinstance(pairs, (list, tuple))
+            and all(
+                isinstance(pair, (list, tuple))
+                and len(pair) == 2
+                and all(type(value) is int and value >= 0 for value in pair)
+                and pair[1] == pair[0] + 1
+                for pair in pairs
+            )
+            and len({value for pair in pairs for value in pair}) == 2 * len(pairs)
+            and isinstance(match_axes, (list, tuple))
+            and all(isinstance(value, str) and value for value in match_axes)
+            and len(set(match_axes)) == len(match_axes)
+        )
         valid = (
             placements.get(name) == SEMANTIC_PARTITION
-            and recipe["schemaVersion"] == 1
+            and version in {1, 2}
+            and (
+                (version == 1 and set(recipe) == version_one_keys)
+                or (version == 2 and set(recipe) == version_two_keys)
+            )
             and recipe["placement"] == SEMANTIC_PARTITION
             and recipe["glyph"] == name
             and isinstance(recipe["glyphRowsSha256"], str)
@@ -166,6 +195,8 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
                 for value in weights
             )
             and len(set(weights)) == len(weights)
+            and (version == 1 or valid_pairs)
+            and (version == 1 or bool(pairs and match_axes))
         )
         if not valid:
             raise PipelineError(f"{name}: semantic partition metadata is invalid")
@@ -891,6 +922,7 @@ def _piecewise_contours(
     tolerance: float,
     placement: str = "prefix",
     semantic_recipe: dict | None = None,
+    source_locations: tuple[dict[str, float], ...] = (),
 ) -> tuple[list[list[list[Operation]]], int, int]:
     """Validate explicit per-master operation groups and stage their conversion."""
     sources = [_contours(recording, name) for recording in originals]
@@ -901,9 +933,13 @@ def _piecewise_contours(
     if semantic_recipe is not None:
         if len(reference) != 1:
             raise PipelineError(f"{name}: semantic partition currently requires one contour")
-        configured = set(semantic_recipe["semanticSlots"]) | {
-            int(index) for index in semantic_recipe["subdivisionOverrides"]
-        }
+        pairs = tuple(tuple(pair) for pair in semantic_recipe.get("pairedOperations", ()))
+        paired_indexes = {value for pair in pairs for value in pair}
+        configured = (
+            set(semantic_recipe["semanticSlots"])
+            | paired_indexes
+            | {int(index) for index in semantic_recipe["subdivisionOverrides"]}
+        )
         semantic_operations = reference[0][1:-1]
         invalid = {
             index
@@ -914,6 +950,13 @@ def _piecewise_contours(
             raise PipelineError(
                 f"{name}: semantic partition references non-curve operations {sorted(invalid)}"
             )
+        if paired_indexes & (
+            set(semantic_recipe["semanticSlots"])
+            | {int(index) for index in semantic_recipe["subdivisionOverrides"]}
+        ):
+            raise PipelineError(f"{name}: paired operations cannot also be slots or overrides")
+        if pairs and not source_locations:
+            raise PipelineError(f"{name}: paired operations require source locations")
     if len(groupings) != len(sources):
         raise PipelineError(f"{name}: piecewise groups must bind every source master")
     for source, grouping in zip(sources, groupings, strict=True):
@@ -932,7 +975,14 @@ def _piecewise_contours(
         cursors = [0] * len(sources)
         current: list[Point] = [(0, 0)] * len(sources)
         reference_current: dict[int, Point] = {}
+        paired_starts = {
+            first: second for first, second in (semantic_recipe or {}).get("pairedOperations", ())
+        }
+        paired_ends = set(paired_starts.values())
         for operation_index, (kind, target_points) in enumerate(target):
+            semantic_index = operation_index - 1
+            if semantic_index in paired_ends:
+                continue
             chunks = []
             for index, source in enumerate(sources):
                 count = groupings[index][contour_index][operation_index]
@@ -985,7 +1035,170 @@ def _piecewise_contours(
                 assert semantic_recipe is not None
                 # Recipe indexes are semantic path operations and intentionally
                 # exclude the contour's moveTo and closePath sentinels.
-                semantic_index = operation_index - 1
+                if semantic_index in paired_starts:
+                    second_operation_index = operation_index + 1
+                    second_kind, second_target_points = target[second_operation_index]
+                    if second_kind != "qCurveTo":
+                        raise PipelineError(f"{name}: paired semantic operation is not quadratic")
+                    second_chunks = []
+                    second_curves = []
+                    for index, source in enumerate(sources):
+                        count = groupings[index][contour_index][second_operation_index]
+                        chunk = source[contour_index][cursors[index] : cursors[index] + count]
+                        cursors[index] += count
+                        second_chunks.append(chunk)
+                        group = []
+                        for source_kind, points in chunk:
+                            start = current[index]
+                            if source_kind == "lineTo" and len(points) == 1:
+                                end = _require_point(points[0], name, "line endpoint")
+                                controls = tuple(
+                                    (
+                                        start[0] + (end[0] - start[0]) * value,
+                                        start[1] + (end[1] - start[1]) * value,
+                                    )
+                                    for value in (1 / 3, 2 / 3)
+                                )
+                                curve = (start, controls[0], controls[1], end)
+                            elif source_kind == "curveTo" and len(points) == 3:
+                                a, b, end = (
+                                    _require_point(point, name, "cubic control") for point in points
+                                )
+                                curve = (start, a, b, end)
+                            else:
+                                raise PipelineError(
+                                    f"{name}: paired semantic group requires curves or lines"
+                                )
+                            group.append(curve)
+                            current[index] = curve[-1]
+                        second_curves.append(group)
+                    subdivisions = semantic_recipe["defaultSubdivisions"]
+                    second_reference_count = _quadratic_count(second_target_points, name)
+                    match_axes = semantic_recipe["protectedMatchAxes"]
+
+                    def protected_match(
+                        index: int, axes: tuple[str, ...] = tuple(match_axes)
+                    ) -> int:
+                        matches = [
+                            candidate
+                            for candidate in references
+                            if all(
+                                source_locations[index].get(axis)
+                                == source_locations[candidate].get(axis)
+                                for axis in axes
+                            )
+                        ]
+                        if len(matches) != 1:
+                            raise PipelineError(
+                                f"{name}: paired semantic source {index} requires exactly one "
+                                "matching protected master"
+                            )
+                        return matches[0]
+
+                    for index, (first_group, second_group) in enumerate(
+                        zip(curves, second_curves, strict=True)
+                    ):
+                        protected_index = protected_match(index)
+                        protected_contour = references[protected_index][contour_index]
+                        raw_first_protected = protected_contour[operation_index]
+                        raw_second_protected = protected_contour[second_operation_index]
+                        if (
+                            raw_first_protected[0] != "qCurveTo"
+                            or raw_second_protected[0] != "qCurveTo"
+                        ):
+                            raise PipelineError(
+                                f"{name}: protected paired operations must be quadratic"
+                            )
+                        first_protected = (
+                            "qCurveTo",
+                            tuple(
+                                _require_point(point, name, "protected paired point")
+                                for point in raw_first_protected[1]
+                            ),
+                        )
+                        second_protected = (
+                            "qCurveTo",
+                            tuple(
+                                _require_point(point, name, "protected paired point")
+                                for point in raw_second_protected[1]
+                            ),
+                        )
+                        if index in references:
+                            first_points = subdivide_quadratic_chain(
+                                reference_current[index], first_protected, subdivisions
+                            )
+                            second_points = subdivide_quadratic_chain(
+                                _require_point(first_protected[1][-1], name, "paired seam"),
+                                second_protected,
+                                subdivisions,
+                            )
+                            result[index][contour_index].extend(
+                                (("qCurveTo", first_points), ("qCurveTo", second_points))
+                            )
+                            reference_current[index] = _require_point(
+                                second_protected[1][-1], name, "reference endpoint"
+                            )
+                            continue
+                        first_spline = _continuous_piecewise_spline(
+                            first_group, reference_count * subdivisions, tolerance
+                        )
+                        second_spline = _continuous_piecewise_spline(
+                            second_group, second_reference_count * subdivisions, tolerance
+                        )
+                        if first_spline is None or second_spline is None:
+                            raise PipelineError(
+                                f"{name}: paired semantic fit exceeds {tolerance:g}-unit bound"
+                            )
+                        seam = first_spline[-1]
+                        if seam != second_spline[0]:
+                            raise PipelineError(f"{name}: paired semantic source seam disconnected")
+                        protected_seam = _require_point(
+                            first_protected[1][-1], name, "protected paired seam"
+                        )
+                        incoming = _complex(protected_seam) - _complex(
+                            _require_point(first_protected[1][-2], name, "protected control")
+                        )
+                        outgoing = _complex(
+                            _require_point(second_protected[1][0], name, "protected control")
+                        ) - _complex(protected_seam)
+                        if (
+                            abs(incoming) == 0
+                            or abs(outgoing) == 0
+                            or abs(incoming.real * outgoing.imag - incoming.imag * outgoing.real)
+                            > 1e-7 * abs(incoming) * abs(outgoing)
+                            or (incoming.real * outgoing.real + incoming.imag * outgoing.imag <= 0)
+                        ):
+                            raise PipelineError(f"{name}: protected paired seam is not smooth")
+                        ratio = abs(outgoing) / abs(incoming)
+                        endpoint = _complex(seam)
+                        previous = _complex(first_spline[-2])
+                        following = _complex(second_spline[1])
+                        vector = ((endpoint - previous) + ratio * (following - endpoint)) / (
+                            1 + ratio**2
+                        )
+                        first_spline[-2] = _point(endpoint - vector)
+                        second_spline[1] = _point(endpoint + ratio * vector)
+                        if not certify_curve_distance(
+                            first_group, _quadratic_spans(first_spline), tolerance
+                        ) or not certify_curve_distance(
+                            second_group, _quadratic_spans(second_spline), tolerance
+                        ):
+                            raise PipelineError(
+                                f"{name}: paired seam constraint exceeds {tolerance:g}-unit bound"
+                            )
+                        result[index][contour_index].extend(
+                            (
+                                ("qCurveTo", tuple(first_spline[1:])),
+                                ("qCurveTo", tuple(second_spline[1:])),
+                            )
+                        )
+                    expanded += (reference_count + second_reference_count) * (subdivisions - 1)
+                    maximum = max(
+                        maximum,
+                        reference_count * subdivisions,
+                        second_reference_count * subdivisions,
+                    )
+                    continue
                 slots = set(semantic_recipe["semanticSlots"])
                 overrides = semantic_recipe["subdivisionOverrides"]
                 subdivisions = overrides.get(
@@ -1344,6 +1557,7 @@ def preserve_quadratic_reference(
     topology_contract: dict[str, tuple[tuple[tuple[str, int], ...], ...]] | None = None,
     topology_contract_master_names: tuple[str, ...] = (),
     source_master_names: tuple[str, ...] = (),
+    source_locations: tuple[dict[str, float], ...] = (),
     protected_locations: dict[int, dict[str, float]] | None = None,
     glyph_max_error: dict[str, float] | None = None,
     source_groups: dict[str, SourceGroups] | None = None,
@@ -1358,6 +1572,8 @@ def preserve_quadratic_reference(
 
     if not 0 <= default_index < len(fonts):
         raise ValueError("default_index is outside the source font list")
+    if source_locations and len(source_locations) != len(fonts):
+        raise ValueError("source_locations must bind every input source")
     if max_error <= 0:
         raise ValueError("max_error must be positive")
     locations = (
@@ -1448,6 +1664,7 @@ def preserve_quadratic_reference(
             errors.get(name, max_error),
             placements.get(name, "prefix"),
             semantic_recipes.get(name),
+            source_locations,
         )
         for name, groups in source_groups.items()
     }
