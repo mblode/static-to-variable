@@ -131,6 +131,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
     }
     version_two_keys = version_one_keys | {"pairedOperations", "protectedMatchAxes"}
     version_three_keys = version_one_keys | {"endpointSpans"}
+    version_four_keys = version_three_keys | {"splitFraction"}
     result = {}
     for name in sorted(names):
         values = []
@@ -147,6 +148,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
                 frozenset(version_one_keys),
                 frozenset(version_two_keys),
                 frozenset(version_three_keys),
+                frozenset(version_four_keys),
             }
             for value in values
         ):
@@ -176,8 +178,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
             )
             and recipe["defaultSubdivisions"] == 1
             and not overrides
-            and not slots
-            and not weights
+            and (version == 4 or (not slots and not weights))
         )
         valid_pairs = (
             isinstance(pairs, (list, tuple))
@@ -196,11 +197,12 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         valid = (
             placements.get(name) == SEMANTIC_PARTITION
             and type(version) is int
-            and version in {1, 2, 3}
+            and version in {1, 2, 3, 4}
             and (
                 (version == 1 and set(recipe) == version_one_keys)
                 or (version == 2 and set(recipe) == version_two_keys)
                 or (version == 3 and set(recipe) == version_three_keys)
+                or (version == 4 and set(recipe) == version_four_keys)
             )
             and recipe["placement"] == SEMANTIC_PARTITION
             and recipe["glyph"] == name
@@ -226,7 +228,17 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
             )
             and len(set(weights)) == len(weights)
             and (version != 2 or (valid_pairs and bool(pairs and match_axes)))
-            and (version != 3 or valid_endpoints)
+            and (version not in {3, 4} or valid_endpoints)
+            and (
+                version != 4
+                or (
+                    set(slots) <= {int(key) for key in endpoint_spans}
+                    and isinstance(recipe["splitFraction"], (int, float))
+                    and not isinstance(recipe["splitFraction"], bool)
+                    and math.isfinite(recipe["splitFraction"])
+                    and 0 < recipe["splitFraction"] < 1
+                )
+            )
         )
         if not valid:
             raise PipelineError(f"{name}: semantic partition metadata is invalid")
@@ -1151,10 +1163,15 @@ def _piecewise_contours(
                 # exclude the contour's moveTo and closePath sentinels.
                 extra_spans = semantic_recipe.get("endpointSpans", {}).get(str(semantic_index))
                 if extra_spans is not None:
+                    leading = semantic_index in semantic_recipe["semanticSlots"]
+                    target_start = reference_current[reference_index]
                     for index, group in enumerate(curves):
                         if index in references:
                             operation = references[index][contour_index][operation_index]
                             span_endpoint = _require_point(operation[1][-1], name, "endpoint span")
+                            if leading:
+                                start = reference_current[index]
+                                result[index][contour_index].append(("qCurveTo", (start, start)))
                             result[index][contour_index].extend(
                                 (
                                     operation,
@@ -1163,6 +1180,9 @@ def _piecewise_contours(
                             )
                             reference_current[index] = span_endpoint
                         else:
+                            leading_start = group[0][0] if leading else None
+                            if leading and chunks[index][0][0] == "lineTo":
+                                group = group[1:]
                             endpoint_target = (
                                 "qCurveTo",
                                 tuple(
@@ -1176,12 +1196,15 @@ def _piecewise_contours(
                                     _reference_count_spline,
                                     tolerance,
                                     extra_spans=extra_spans,
+                                    split_fraction=semantic_recipe.get("splitFraction", 0.5),
+                                    leading_start=leading_start,
+                                    protected_start=target_start if leading else None,
                                 )
                             except ValueError as error:
                                 raise PipelineError(f"{name}: {error}") from error
                             result[index][contour_index].extend(partition.authored)
-                    expanded += extra_spans
-                    maximum = max(maximum, reference_count + extra_spans)
+                    expanded += extra_spans + int(leading)
+                    maximum = max(maximum, reference_count + extra_spans + int(leading))
                     continue
                 if semantic_index in paired_starts:
                     second_operation_index = operation_index + 1

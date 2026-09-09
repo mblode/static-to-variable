@@ -34,13 +34,18 @@ def partition_endpoint_spans(
     tolerance: float,
     *,
     extra_spans: int,
+    split_fraction: float = 0.5,
+    leading_start: Point | None = None,
+    protected_start: Point | None = None,
 ) -> SemanticPartition:
     """Add authored capacity after an intact protected quadratic operation.
 
     The extra protected spans collapse at its explicit endpoint. None of the
     original off-curves, implied points or endpoints is subdivided or refitted.
-    A single authored cubic is split at its geometric midpoint; two existing
-    authored cubics retain their seam. Sparse variation transport must still
+    A single authored cubic is split at the requested parameter (default 0.5);
+    two existing authored cubics retain their seam. An optional leading span
+    holds a straight authored extension and collapses at the protected start.
+    Sparse variation transport must still
     preserve omitted-point interpolation after compatible compilation.
     """
     kind, points = protected_operation
@@ -50,26 +55,50 @@ def partition_endpoint_spans(
         raise ValueError("extra_spans must be a positive integer")
     if not math.isfinite(tolerance) or tolerance <= 0:
         raise ValueError("endpoint span tolerance must be finite and positive")
+    if (
+        isinstance(split_fraction, bool)
+        or not isinstance(split_fraction, (int, float))
+        or not math.isfinite(split_fraction)
+        or not 0 < split_fraction < 1
+    ):
+        raise ValueError("endpoint split fraction must be finite and strictly between zero and one")
+    if len(authored_curves) == 2 and split_fraction != 0.5:
+        raise ValueError("an explicit authored seam cannot also specify a split fraction")
+    if (leading_start is None) != (protected_start is None):
+        raise ValueError("leading capacity requires both authored and protected starts")
     if len(authored_curves) not in (1, 2) or any(len(curve) != 4 for curve in authored_curves):
         raise ValueError("endpoint spans require one or two authored cubics")
-    for point in (*points, *(point for curve in authored_curves for point in curve)):
+    starts = () if leading_start is None else (leading_start, protected_start)
+    for point in (*points, *starts, *(point for curve in authored_curves for point in curve)):
         if point is None or len(point) != 2 or not all(math.isfinite(value) for value in point):
             raise ValueError("endpoint span coordinates must be finite explicit points")
     curves = list(authored_curves)
     if len(curves) == 1:
         a, b, c, d = curves[0]
 
-        def midpoint(left: Point, right: Point) -> Point:
-            return ((left[0] + right[0]) / 2, (left[1] + right[1]) / 2)
+        def interpolate(left: Point, right: Point) -> Point:
+            if split_fraction == 0.5:
+                return ((left[0] + right[0]) / 2, (left[1] + right[1]) / 2)
+            return (
+                left[0] * (1 - split_fraction) + right[0] * split_fraction,
+                left[1] * (1 - split_fraction) + right[1] * split_fraction,
+            )
 
-        ab, bc, cd = midpoint(a, b), midpoint(b, c), midpoint(c, d)
-        abc, bcd = midpoint(ab, bc), midpoint(bc, cd)
-        seam = midpoint(abc, bcd)
+        ab, bc, cd = interpolate(a, b), interpolate(b, c), interpolate(c, d)
+        abc, bcd = interpolate(ab, bc), interpolate(bc, cd)
+        seam = interpolate(abc, bcd)
         curves = [(a, ab, abc, seam), (seam, bcd, cd, d)]
     elif curves[0][-1] != curves[1][0]:
         raise ValueError("authored endpoint spans have a disconnected seam")
     native_count = len(points) - 1
     authored: list[Operation] = []
+    protected_prefix: tuple[Operation, ...] = ()
+    if leading_start is not None:
+        assert protected_start is not None
+        end = curves[0][0]
+        midpoint = ((leading_start[0] + end[0]) / 2, (leading_start[1] + end[1]) / 2)
+        authored.append(("qCurveTo", (midpoint, end)))
+        protected_prefix = (("qCurveTo", (protected_start, protected_start)),)
     for curve, count in zip(curves, (native_count, extra_spans), strict=True):
         spline = fitter(curve, count, tolerance)
         if spline is None or len(spline) != count + 2:
@@ -82,9 +111,9 @@ def partition_endpoint_spans(
     collapsed: Operation = ("qCurveTo", (points[-1],) * (extra_spans + 1))
     return SemanticPartition(
         tuple(authored),
-        (protected_operation, collapsed),
-        native_count + extra_spans,
-        native_count + extra_spans,
+        (*protected_prefix, protected_operation, collapsed),
+        native_count + extra_spans + len(protected_prefix),
+        native_count + extra_spans + len(protected_prefix),
     )
 
 

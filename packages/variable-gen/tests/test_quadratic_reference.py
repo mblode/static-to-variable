@@ -655,8 +655,8 @@ def test_semantic_partition_fails_without_recipe_before_mutating_sources(
     assert [_recording(font["curve"]).value for font in fonts] == before
 
 
-@pytest.mark.parametrize("endpoint_spans", [False, True])
-def test_semantic_partition_indexes_operations_after_move_sentinel(endpoint_spans: bool) -> None:
+@pytest.mark.parametrize("endpoint_spans", [False, True, "leading"])
+def test_semantic_partition_indexes_operations_after_move_sentinel(endpoint_spans) -> None:
     def recording(*operations):
         pen = RecordingPen()
         pen.value = list(operations)
@@ -692,15 +692,61 @@ def test_semantic_partition_indexes_operations_after_move_sentinel(endpoint_span
         {
             "defaultSubdivisions": 2,
             "subdivisionOverrides": {},
-            "semanticSlots": [] if endpoint_spans else [1],
+            "semanticSlots": [] if endpoint_spans is True else [1],
             **({"endpointSpans": {"1": 8}} if endpoint_spans else {}),
+            **({"splitFraction": 0.25} if endpoint_spans == "leading" else {}),
         },
     )
     assert len({tuple((op, len(points)) for op, points in value[0]) for value in contours}) == 1
     if endpoint_spans:
         for index in (1, 2):
-            assert contours[index][0][2] == protected.value[2]
-            assert contours[index][0][3] == ("qCurveTo", ((0, 0),) * 9)
+            offset = int(endpoint_spans == "leading")
+            assert contours[index][0][2 + offset] == protected.value[2]
+            assert contours[index][0][3 + offset] == ("qCurveTo", ((0, 0),) * 9)
+            if offset:
+                assert contours[index][0][2] == ("qCurveTo", ((100, 0),) * 2)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {},
+        {"splitFraction": 0},
+        {"splitFraction": 1},
+        {"splitFraction": True},
+        {"splitFraction": float("nan")},
+        {"splitFraction": "0.25"},
+        {"semanticSlots": [0]},
+        {"schemaVersion": 3},
+        {"extra": 1},
+    ],
+)
+def test_endpoint_v4_metadata_accepts_only_bounded_explicit_recipe(change):
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 4,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 1,
+        "subdivisionOverrides": {},
+        "semanticSlots": [1],
+        "straightExtensionWeights": [400],
+        "endpointSpans": {"1": 8},
+        "splitFraction": 0.25,
+    }
+    recipe.update(change)
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    if change:
+        with pytest.raises(PipelineError, match="semantic partition metadata"):
+            quadratic_reference._semantic_partition_metadata(
+                fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+            )
+    else:
+        assert quadratic_reference._semantic_partition_metadata(
+            fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+        ) == {"curve": recipe}
 
 
 def test_semantic_partition_pairs_adjacent_operations_with_protected_seam_ratio() -> None:
