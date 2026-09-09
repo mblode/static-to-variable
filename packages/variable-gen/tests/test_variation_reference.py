@@ -71,7 +71,7 @@ def endpoint_fonts():
         0, TupleVariation({"wght": (-1.0, -1.0, 0.0)}, [(0, 0)] * 7)
     )
     candidate = deepcopy(reference)
-    helper_name = "curve.endpoint"
+    helper_name = "curve.stv-semantic16x"
     pen = TTGlyphPen(None)
     pen.moveTo((0, 736))
     pen.qCurveTo((800, 3120), (1600, 736))
@@ -118,6 +118,151 @@ def test_endpoint_transport_keeps_text_default_and_serialized_native_display():
             pathops.op(_filled_path(ref_pen), _filled_path(actual_pen), pathops.PathOp.XOR).area
             == 0
         )
+
+
+def endpoint_recipe():
+    return {
+        "schemaVersion": 2,
+        "placement": "semantic-partition",
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "referenceSha256": "b" * 64,
+        "nativeEndpointPoints": [1],
+        "flatTextY": 46,
+        "coordinateScale": 16,
+        "maxCoordinateMove": 1000,
+    }
+
+
+@pytest.mark.parametrize("changed_reference", [False, True])
+def test_ordinary_build_restores_serialized_endpoints_before_fidelity(
+    tmp_path, monkeypatch, changed_reference
+):
+    import hashlib
+    from types import SimpleNamespace
+    from fontTools.designspaceLib import DesignSpaceDocument
+    from variable_gen import build
+    from variable_gen.variation_reference import ENDPOINT_TRANSPORTS_KEY
+
+    reference, candidate, helper = endpoint_fonts()
+    ref_path, out_path = tmp_path / "native.ttf", tmp_path / "built.ttf"
+    reference.save(ref_path)
+    candidate.save(out_path)
+    original_bytes = out_path.read_bytes()
+    recipe = endpoint_recipe()
+    recipe["referenceSha256"] = hashlib.sha256(ref_path.read_bytes()).hexdigest()
+    if changed_reference:
+        recipe["referenceSha256"] = "0" * 64
+    ds = DesignSpaceDocument()
+    ds.lib[ENDPOINT_TRANSPORTS_KEY] = {"curve": recipe}
+    ds_path = tmp_path / "fixture.designspace"
+    ds.write(ds_path)
+    style = SimpleNamespace(
+        source=ref_path,
+        output=out_path,
+        optimize_gvar=False,
+        preserve_authored_deltas=False,
+        quadratic_reference=SimpleNamespace(path=ref_path),
+    )
+    config = SimpleNamespace(styles={"roman": style}, repo_root=tmp_path)
+    monkeypatch.setattr(
+        build, "inspect_authored_source", lambda *_: SimpleNamespace(glyphs=frozenset())
+    )
+    monkeypatch.setattr(build, "fontmake_command", lambda *_: "unused")
+    monkeypatch.setattr(build, "export_designspace", lambda *_: ds_path)
+    # The claim starts with an already-compiled font; no donor rebuild is needed.
+    monkeypatch.setattr(build, "_run", lambda *_: SimpleNamespace(returncode=0))
+
+    class ReachedFidelity(Exception):
+        pass
+
+    def inspect_compiled(*_):
+        with TTFont(out_path) as actual:
+            assert len(actual["gvar"].variations[helper]) == 6
+            assert actual["glyf"][helper].coordinates == candidate["glyf"][helper].coordinates
+        raise ReachedFidelity
+
+    monkeypatch.setattr(build, "_collapse_findings", inspect_compiled)
+    if changed_reference:
+        with pytest.raises(PipelineError, match="reference changed after source export"):
+            build.build_style(config, "roman")
+        assert out_path.read_bytes() == original_bytes
+    else:
+        with pytest.raises(ReachedFidelity):
+            build.build_style(config, "roman")
+
+
+@pytest.mark.parametrize(
+    "failure", [None, "late-recipe", "caps", "boolean", "bound", "missing-helper"]
+)
+def test_endpoint_batch_matches_direct_transport_or_leaves_candidate_untouched(failure):
+    from variable_gen.variation_reference import apply_endpoint_transports
+
+    reference, candidate, helper = endpoint_fonts()
+    original = deepcopy(candidate)
+    recipe = endpoint_recipe()
+    recipes = {"curve": recipe}
+    if failure == "late-recipe":
+        recipes["zmissing"] = {**recipe, "glyph": "zmissing"}
+    elif failure == "caps":
+        recipe["flatTextY"] = 47
+    elif failure == "boolean":
+        recipe["schemaVersion"] = True
+    elif failure == "bound":
+        recipe["maxCoordinateMove"] = float("nan")
+    elif failure == "missing-helper":
+        recipes = {"missing": {**recipe, "glyph": "missing"}}
+    if failure:
+        with pytest.raises(PipelineError):
+            apply_endpoint_transports(reference, candidate, recipes)
+        assert candidate["glyf"][helper].coordinates == original["glyf"][helper].coordinates
+        assert candidate["gvar"].variations == original["gvar"].variations
+        return
+    report = apply_endpoint_transports(reference, candidate, recipes)
+    restore_endpoint_iup_default(
+        reference,
+        original,
+        "curve",
+        helper,
+        endpoint_points=frozenset({1}),
+        fixed_coordinates={
+            (i, 1): 736 for i, p in enumerate(original["glyf"][helper].coordinates) if p[1] == 736
+        },
+    )
+    assert report["curve"]["endpointPoints"] == 2
+    for tag in ("glyf", "gvar"):
+        assert candidate[tag].compile(candidate) == original[tag].compile(original)
+
+
+@pytest.mark.parametrize("failure", [None, "missing", "mismatch", "semantic", "placement"])
+def test_endpoint_metadata_must_bind_every_source_and_its_semantic_recipe(failure):
+    import ufoLib2
+    from variable_gen.quadratic_reference import (
+        NATIVE_IUP_TRANSPORT_KEY,
+        SEMANTIC_PARTITION_KEY,
+        _native_iup_transport_metadata,
+    )
+
+    recipe = endpoint_recipe()
+    fonts = [ufoLib2.Font(), ufoLib2.Font()]
+    for font in fonts:
+        glyph = font.newGlyph("curve")
+        glyph.lib[NATIVE_IUP_TRANSPORT_KEY] = deepcopy(recipe)
+        glyph.lib[SEMANTIC_PARTITION_KEY] = {"schemaVersion": 3, "glyphRowsSha256": "a" * 64}
+    placement = {"curve": "semantic-partition"}
+    if failure == "missing":
+        del fonts[1]["curve"].lib[NATIVE_IUP_TRANSPORT_KEY]
+    elif failure == "mismatch":
+        fonts[1]["curve"].lib[NATIVE_IUP_TRANSPORT_KEY]["flatTextY"] = 47
+    elif failure == "semantic":
+        fonts[1]["curve"].lib[SEMANTIC_PARTITION_KEY]["glyphRowsSha256"] = "c" * 64
+    elif failure == "placement":
+        placement["curve"] = "native-iup-transport"
+    if failure:
+        with pytest.raises(PipelineError):
+            _native_iup_transport_metadata(fonts, placement)
+    else:
+        assert _native_iup_transport_metadata(fonts, placement) == {"curve": recipe}
 
 
 @pytest.mark.parametrize(

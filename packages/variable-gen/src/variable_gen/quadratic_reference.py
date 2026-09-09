@@ -20,6 +20,7 @@ those points away from the default location.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from bisect import bisect_left
 from dataclasses import dataclass
@@ -246,7 +247,9 @@ def _native_iup_transport_metadata(fonts, placements: dict[str, str]) -> dict[st
         name for font in fonts for name in font.keys() if NATIVE_IUP_TRANSPORT_KEY in font[name].lib
     }
     expected = {name for name, placement in placements.items() if placement == NATIVE_IUP_TRANSPORT}
-    if names != expected:
+    if expected - names or any(
+        placements.get(name) not in {NATIVE_IUP_TRANSPORT, SEMANTIC_PARTITION} for name in names
+    ):
         raise PipelineError("native-IUP transport placement and recipe must agree")
     result = {}
     required = {
@@ -274,9 +277,30 @@ def _native_iup_transport_metadata(fonts, placements: dict[str, str]) -> dict[st
                 f"{name}: native-IUP transport metadata must be identical in every master"
             )
         recipe = values[0]
+        if (
+            isinstance(recipe, dict)
+            and type(recipe.get("schemaVersion")) is int
+            and recipe["schemaVersion"] == 2
+        ):
+            from variable_gen.variation_reference import validate_endpoint_transport
+
+            validate_endpoint_transport(name, recipe)
+            if placements.get(name) != SEMANTIC_PARTITION or any(
+                font[name].lib.get(SEMANTIC_PARTITION_KEY, {}).get("schemaVersion") != 3
+                or font[name].lib[SEMANTIC_PARTITION_KEY].get("glyphRowsSha256")
+                != recipe["glyphRowsSha256"]
+                for font in fonts
+            ):
+                raise PipelineError(
+                    f"{name}: endpoint transport requires matching semantic v3 metadata"
+                )
+            result[name] = recipe
+            continue
         valid = (
             isinstance(recipe, dict)
             and set(recipe) == required
+            and placements.get(name) == NATIVE_IUP_TRANSPORT
+            and type(recipe["schemaVersion"]) is int
             and recipe["schemaVersion"] == 1
             and recipe["placement"] == NATIVE_IUP_TRANSPORT
             and recipe["glyph"] == name
@@ -301,6 +325,7 @@ class QuadraticReferenceReport:
     expanded_operations: int
     maximum_segments: int
     carrier_glyphs: tuple[str, ...] = ()
+    endpoint_transports: tuple[tuple[str, dict], ...] = ()
 
 
 def _recording(glyph) -> RecordingPen:
@@ -1757,7 +1782,16 @@ def preserve_quadratic_reference(
         raise PipelineError("Piecewise source correspondence requires authored glyphs")
     placements = _padding_placement_metadata(fonts, source_groups)
     semantic_recipes = _semantic_partition_metadata(fonts, placements)
-    _native_iup_transport_metadata(fonts, placements)
+    transports = _native_iup_transport_metadata(fonts, placements)
+    endpoint_transports = {
+        name: recipe for name, recipe in transports.items() if recipe["schemaVersion"] == 2
+    }
+    if endpoint_transports:
+        reference_hash = hashlib.sha256(reference_path.read_bytes()).hexdigest()
+        if any(
+            recipe["referenceSha256"] != reference_hash for recipe in endpoint_transports.values()
+        ):
+            raise PipelineError("Endpoint transport reference bytes changed")
     errors = glyph_max_error or {}
     if set(errors) - set(authored):
         raise PipelineError("Per-glyph quadratic precision requires authored glyphs")
@@ -1830,7 +1864,11 @@ def preserve_quadratic_reference(
                             font,
                             name,
                             contours[index],
-                            protected=index in protected_glyph_sets,
+                            # Sparse native endpoint deltas need the mandatory
+                            # post-compile transport carried in the report. The
+                            # unsplit source geometry was checked exactly above.
+                            protected=index in protected_glyph_sets
+                            and name not in endpoint_transports,
                             authorship=authorship[name],
                         )
                     )
@@ -1866,4 +1904,5 @@ def preserve_quadratic_reference(
         expanded_operations=expanded,
         maximum_segments=maximum_segments,
         carrier_glyphs=tuple(sorted(carrier_glyphs)),
+        endpoint_transports=tuple(sorted(endpoint_transports.items())),
     )

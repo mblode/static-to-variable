@@ -268,6 +268,10 @@ def build_designspace(
             f"{report.exact_default_glyphs} already exact, "
             f"{report.expanded_operations} compatibility prefix(es)"
         )
+        if report.endpoint_transports:
+            from variable_gen.variation_reference import ENDPOINT_TRANSPORTS_KEY
+
+            ds.lib[ENDPOINT_TRANSPORTS_KEY] = dict(report.endpoint_transports)
 
     master_ufo_dir.mkdir(parents=True, exist_ok=True)
     dropped = 0
