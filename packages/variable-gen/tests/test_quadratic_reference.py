@@ -172,9 +172,10 @@ def test_selective_compression_keeps_authored_deltas_and_normal_unmarked_output(
     ]
 
 
-def test_authored_high_precision_carrier_is_excluded_from_iup_optimization() -> None:
+@pytest.mark.parametrize("scale", (16, 32))
+def test_authored_high_precision_carrier_is_excluded_from_iup_optimization(scale: int) -> None:
     fonts = _source_set()
-    carrier = "curve.stv-semantic16x"
+    carrier = f"curve.stv-semantic{scale}x"
     for font in fonts:
         font["unmarked"].clearContours()
         _recording(font["curve"]).replay(font["unmarked"].getPen())

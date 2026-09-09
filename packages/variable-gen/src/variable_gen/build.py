@@ -44,7 +44,14 @@ from variable_gen.outlines import donor_outline, draw_into
 
 UNDERWEIGHT_RATIO = 0.92
 AUTHORED_FIDELITY_RATIO = 0.98
-SEMANTIC_CARRIER_SUFFIX = ".stv-semantic16x"
+SEMANTIC_CARRIER_SUFFIXES = (".stv-semantic16x", ".stv-semantic32x")
+
+
+def _semantic_carrier_owner(name: str) -> str | None:
+    for suffix in SEMANTIC_CARRIER_SUFFIXES:
+        if name.endswith(suffix):
+            return name.removesuffix(suffix)
+    return None
 
 
 @dataclass(frozen=True)
@@ -203,8 +210,7 @@ def _preserved_authored_variations(font: TTFont, authored: frozenset[str]) -> fr
     carriers = {
         name
         for name in font.getGlyphOrder()
-        if name.endswith(SEMANTIC_CARRIER_SUFFIX)
-        and name.removesuffix(SEMANTIC_CARRIER_SUFFIX) in authored
+        if (owner := _semantic_carrier_owner(name)) is not None and owner in authored
     }
     return authored | carriers
 
