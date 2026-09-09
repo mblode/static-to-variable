@@ -54,6 +54,8 @@ REFERENCE_COUNT_LINES = "reference-count-lines"
 NATIVE_IUP_TRANSPORT = "native-iup-transport"
 NATIVE_IUP_TRANSPORT_KEY = "com.mblode.stv.nativeIupTransport"
 CONTINUOUS_CHAIN = "continuous-chain"
+ADAPTIVE_PIECEWISE = "adaptive-piecewise"
+ADAPTIVE_PIECEWISE_KEY = "com.mblode.stv.quadraticAdaptivePiecewise"
 SEMANTIC_PARTITION = "semantic-partition"
 SEMANTIC_PARTITION_KEY = "com.mblode.stv.quadraticSemanticPartition"
 CONTINUOUS_CHAIN_SUBDIVISIONS = 4
@@ -105,6 +107,7 @@ def _padding_placement_metadata(fonts, groups: dict[str, SourceGroups]) -> dict[
             REFERENCE_COUNT_LINES,
             NATIVE_IUP_TRANSPORT,
             CONTINUOUS_CHAIN,
+            ADAPTIVE_PIECEWISE,
             SEMANTIC_PARTITION,
         }:
             raise PipelineError(
@@ -249,6 +252,72 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         extra = ", ".join(sorted(names - expected)) or "none"
         raise PipelineError(
             f"semantic partition recipe mismatch: missing={missing}; unexpected={extra}"
+        )
+    return result
+
+
+def _adaptive_piecewise_metadata(fonts, placements: dict[str, str]) -> dict[str, dict]:
+    """Read fixed per-operation allocations for adaptive piecewise conversion."""
+    names = {
+        name for font in fonts for name in font.keys() if ADAPTIVE_PIECEWISE_KEY in font[name].lib
+    }
+    expected = {name for name, placement in placements.items() if placement == ADAPTIVE_PIECEWISE}
+    required = {
+        "schemaVersion",
+        "placement",
+        "glyph",
+        "glyphRowsSha256",
+        "subdivisions",
+        "allocations",
+    }
+    result = {}
+    for name in sorted(names):
+        values = []
+        for index, font in enumerate(fonts):
+            if name not in font or ADAPTIVE_PIECEWISE_KEY not in font[name].lib:
+                raise PipelineError(
+                    f"{name}: adaptive piecewise metadata is missing in master {index}"
+                )
+            values.append(font[name].lib[ADAPTIVE_PIECEWISE_KEY])
+        if any(value != values[0] for value in values[1:]):
+            raise PipelineError(
+                f"{name}: adaptive piecewise metadata must be identical in every master"
+            )
+        recipe = values[0]
+        allocations = recipe.get("allocations") if isinstance(recipe, dict) else None
+        valid = (
+            isinstance(recipe, dict)
+            and set(recipe) == required
+            and placements.get(name) == ADAPTIVE_PIECEWISE
+            and type(recipe["schemaVersion"]) is int
+            and recipe["schemaVersion"] == 1
+            and recipe["placement"] == ADAPTIVE_PIECEWISE
+            and recipe["glyph"] == name
+            and isinstance(recipe["glyphRowsSha256"], str)
+            and len(recipe["glyphRowsSha256"]) == 64
+            and all(character in "0123456789abcdef" for character in recipe["glyphRowsSha256"])
+            and type(recipe["subdivisions"]) is int
+            and recipe["subdivisions"] == CONTINUOUS_CHAIN_SUBDIVISIONS
+            and isinstance(allocations, dict)
+            and all(
+                isinstance(key, str)
+                and len(parts := key.split(":")) == 2
+                and all(part.isdecimal() and str(int(part)) == part for part in parts)
+                and isinstance(counts, (list, tuple))
+                and len(counts) >= 2
+                and all(type(count) is int and 1 <= count <= 64 for count in counts)
+                and sum(counts) <= 256
+                for key, counts in allocations.items()
+            )
+        )
+        if not valid:
+            raise PipelineError(f"{name}: adaptive piecewise metadata is invalid")
+        result[name] = recipe
+    if names != expected:
+        missing = ", ".join(sorted(expected - names)) or "none"
+        extra = ", ".join(sorted(names - expected)) or "none"
+        raise PipelineError(
+            f"adaptive piecewise recipe mismatch: missing={missing}; unexpected={extra}"
         )
     return result
 
@@ -745,6 +814,87 @@ def _quadratic_spans(spline: list[Point]) -> list[tuple[Point, Point, Point]]:
     return result
 
 
+def _partition_spline_by_counts(
+    spline: list[Point], allocations: tuple[int, ...]
+) -> list[Operation]:
+    controls = spline[1:-1]
+    endpoint = spline[-1]
+    if not allocations or any(type(count) is not int or count < 1 for count in allocations):
+        raise ValueError("Adaptive piecewise allocations must be positive integers")
+    if sum(allocations) != len(controls):
+        raise ValueError("Adaptive piecewise allocations must consume every quadratic span")
+    result: list[Operation] = []
+    cursor = 0
+    for index, count in enumerate(allocations):
+        chunk = controls[cursor : cursor + count]
+        cursor += count
+        operation_endpoint = (
+            endpoint
+            if index == len(allocations) - 1
+            else (
+                (controls[cursor - 1][0] + controls[cursor][0]) / 2,
+                (controls[cursor - 1][1] + controls[cursor][1]) / 2,
+            )
+        )
+        result.append(("qCurveTo", (*chunk, operation_endpoint)))
+    return result
+
+
+def fit_adaptive_piecewise_group(
+    groups: list[list[tuple[Point, Point, Point, Point]]],
+    allocations: tuple[int, ...],
+    tolerance: float,
+    glyph_name: str,
+) -> list[list[Operation]]:
+    """Fit reviewed cubic pieces to one fixed, native-derived q allocation.
+
+    A source group may contain either one cubic, which is fit as one chain and
+    split at the reviewed allocation boundaries, or one cubic per allocation.
+    The latter preserves each authored join and gives difficult pieces only the
+    native subdivision capacity assigned to them. Acceptance uses the symmetric
+    geometric certificate over the complete group.
+    """
+    if not groups:
+        raise ValueError("Adaptive piecewise conversion requires source groups")
+    if not math.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError("Adaptive piecewise conversion requires a finite tolerance")
+    if not allocations or any(type(count) is not int or count < 1 for count in allocations):
+        raise ValueError("Adaptive piecewise allocations must be positive integers")
+    fitted: list[list[Operation]] = []
+    for group in groups:
+        if len(group) == 1:
+            spline = _reference_count_spline(group[0], sum(allocations), tolerance)
+            if spline is None:
+                raise PipelineError(
+                    f"{glyph_name}: adaptive piecewise fit exceeds {tolerance:g}-unit bound"
+                )
+            operations = _partition_spline_by_counts(spline, allocations)
+            spans = _quadratic_spans(spline)
+        elif len(group) == len(allocations):
+            splines = [
+                _reference_count_spline(curve, count, tolerance)
+                for curve, count in zip(group, allocations, strict=True)
+            ]
+            if any(spline is None for spline in splines):
+                raise PipelineError(
+                    f"{glyph_name}: adaptive piecewise fit exceeds {tolerance:g}-unit bound"
+                )
+            resolved = [spline for spline in splines if spline is not None]
+            operations = [("qCurveTo", tuple(spline[1:])) for spline in resolved]
+            spans = [span for spline in resolved for span in _quadratic_spans(spline)]
+        else:
+            raise PipelineError(
+                f"{glyph_name}: adaptive piecewise group has {len(group)} curves for "
+                f"{len(allocations)} allocations"
+            )
+        if not certify_curve_distance(group, spans, tolerance):
+            raise PipelineError(
+                f"{glyph_name}: adaptive piecewise certificate exceeds {tolerance:g}-unit bound"
+            )
+        fitted.append(operations)
+    return fitted
+
+
 def _continuous_piecewise_spline(
     curves: list[tuple[Point, Point, Point, Point]], count: int, tolerance: float
 ) -> list[Point] | None:
@@ -871,6 +1021,15 @@ def _subdivide_reference_chain(start: Point, operation: Operation) -> Operation:
             )
         span_start = span_end
     return "qCurveTo", (*expanded, endpoint)
+
+
+def _partition_subdivided_reference_chain(
+    start: Point, operation: Operation, allocations: tuple[int, ...]
+) -> list[Operation]:
+    kind, points = _subdivide_reference_chain(start, operation)
+    assert kind == "qCurveTo"
+    spline = [start, *[_require_point(point, "reference", "qCurveTo point") for point in points]]
+    return _partition_spline_by_counts(spline, allocations)
 
 
 def _fit_all(
@@ -1048,6 +1207,7 @@ def _piecewise_contours(
     placement: str = "prefix",
     semantic_recipe: dict | None = None,
     source_locations: tuple[dict[str, float], ...] = (),
+    adaptive_recipe: dict | None = None,
 ) -> tuple[list[list[list[Operation]]], int, int]:
     """Validate explicit per-master operation groups and stage their conversion."""
     sources = [_contours(recording, name) for recording in originals]
@@ -1055,6 +1215,23 @@ def _piecewise_contours(
     reference = references[reference_index]
     if (placement == SEMANTIC_PARTITION) != (semantic_recipe is not None):
         raise PipelineError(f"{name}: semantic partition placement and recipe must agree")
+    if (placement == ADAPTIVE_PIECEWISE) != (adaptive_recipe is not None):
+        raise PipelineError(f"{name}: adaptive piecewise placement and recipe must agree")
+    adaptive_allocations: dict[tuple[int, int], tuple[int, ...]] = {}
+    if adaptive_recipe is not None:
+        for key, allocation in adaptive_recipe["allocations"].items():
+            contour_text, semantic_text = key.split(":")
+            contour_index = int(contour_text)
+            semantic_index = int(semantic_text)
+            if (
+                contour_index >= len(reference)
+                or semantic_index + 1 >= len(reference[contour_index])
+                or reference[contour_index][semantic_index + 1][0] != "qCurveTo"
+            ):
+                raise PipelineError(
+                    f"{name}: adaptive piecewise allocation {key} does not identify a curve"
+                )
+            adaptive_allocations[(contour_index, semantic_index)] = tuple(allocation)
     if semantic_recipe is not None:
         if len(reference) != 1:
             raise PipelineError(f"{name}: semantic partition currently requires one contour")
@@ -1157,6 +1334,43 @@ def _piecewise_contours(
                     current[index] = curve[-1]
                 curves.append(group)
             reference_count = _quadratic_count(target_points, name)
+            if placement == ADAPTIVE_PIECEWISE:
+                assert adaptive_recipe is not None
+                allocation = adaptive_allocations.get(
+                    (contour_index, semantic_index),
+                    (reference_count * CONTINUOUS_CHAIN_SUBDIVISIONS,),
+                )
+                expected = reference_count * adaptive_recipe["subdivisions"]
+                if sum(allocation) != expected:
+                    raise PipelineError(
+                        f"{name}: adaptive piecewise allocation for "
+                        f"{contour_index}:{semantic_index} totals {sum(allocation)}, "
+                        f"expected {expected}"
+                    )
+                if max(map(len, curves)) > 1 and (
+                    (contour_index, semantic_index) not in adaptive_allocations
+                ):
+                    raise PipelineError(
+                        f"{name}: adaptive piecewise multi-curve operation "
+                        f"{contour_index}:{semantic_index} needs an explicit allocation"
+                    )
+                fitted = fit_adaptive_piecewise_group(curves, allocation, tolerance, name)
+                expanded += expected - reference_count
+                maximum = max(maximum, max(allocation))
+                for index in range(len(sources)):
+                    if index in references:
+                        operation = references[index][contour_index][operation_index]
+                        result[index][contour_index].extend(
+                            _partition_subdivided_reference_chain(
+                                reference_current[index], operation, allocation
+                            )
+                        )
+                        reference_current[index] = _require_point(
+                            operation[1][-1], name, "reference endpoint"
+                        )
+                    else:
+                        result[index][contour_index].extend(fitted[index])
+                continue
             if placement == SEMANTIC_PARTITION:
                 assert semantic_recipe is not None
                 # Recipe indexes are semantic path operations and intentionally
@@ -1805,6 +2019,7 @@ def preserve_quadratic_reference(
         raise PipelineError("Piecewise source correspondence requires authored glyphs")
     placements = _padding_placement_metadata(fonts, source_groups)
     semantic_recipes = _semantic_partition_metadata(fonts, placements)
+    adaptive_recipes = _adaptive_piecewise_metadata(fonts, placements)
     transports = _native_iup_transport_metadata(fonts, placements)
     endpoint_transports = {
         name: recipe for name, recipe in transports.items() if recipe["schemaVersion"] == 2
@@ -1850,6 +2065,7 @@ def preserve_quadratic_reference(
             placements.get(name, "prefix"),
             semantic_recipes.get(name),
             source_locations,
+            adaptive_recipes.get(name),
         )
         for name, groups in source_groups.items()
     }
@@ -1881,7 +2097,11 @@ def preserve_quadratic_reference(
                         raise PipelineError(
                             f"{name}: grouped conversion moved protected reference geometry"
                         )
-                if placements.get(name) in {CONTINUOUS_CHAIN, SEMANTIC_PARTITION}:
+                if placements.get(name) in {
+                    CONTINUOUS_CHAIN,
+                    ADAPTIVE_PIECEWISE,
+                    SEMANTIC_PARTITION,
+                }:
                     carrier_glyphs.add(
                         _install_continuous_chain_carrier(
                             font,
