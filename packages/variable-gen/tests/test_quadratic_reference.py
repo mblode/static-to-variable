@@ -582,6 +582,16 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
         assert _same_filled_path(recording, _recording(reference))
 
 
+def test_continuous_chain_full_adds_exact_collapsed_reference_capacity() -> None:
+    operation = ("qCurveTo", ((50, 100), (100, 0)))
+    kind, points = quadratic_reference._subdivide_reference_chain_full((0, 0), operation)
+
+    assert kind == "qCurveTo"
+    assert len(points) == 17
+    assert all(value * 16 == round(value * 16) for point in points for value in point)
+    assert points[-13:] == ((100, 0),) * 13
+
+
 def test_adaptive_piecewise_uses_reviewed_allocations_and_explicit_deltas(
     tmp_path: Path,
 ) -> None:

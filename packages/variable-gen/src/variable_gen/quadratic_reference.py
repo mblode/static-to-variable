@@ -54,11 +54,13 @@ REFERENCE_COUNT_LINES = "reference-count-lines"
 NATIVE_IUP_TRANSPORT = "native-iup-transport"
 NATIVE_IUP_TRANSPORT_KEY = "com.mblode.stv.nativeIupTransport"
 CONTINUOUS_CHAIN = "continuous-chain"
+CONTINUOUS_CHAIN_FULL = "continuous-chain-full"
 ADAPTIVE_PIECEWISE = "adaptive-piecewise"
 ADAPTIVE_PIECEWISE_KEY = "com.mblode.stv.quadraticAdaptivePiecewise"
 SEMANTIC_PARTITION = "semantic-partition"
 SEMANTIC_PARTITION_KEY = "com.mblode.stv.quadraticSemanticPartition"
 CONTINUOUS_CHAIN_SUBDIVISIONS = 4
+CONTINUOUS_CHAIN_FULL_SUBDIVISIONS = 16
 CONTINUOUS_CHAIN_SCALE = 16
 
 
@@ -107,6 +109,7 @@ def _padding_placement_metadata(fonts, groups: dict[str, SourceGroups]) -> dict[
             REFERENCE_COUNT_LINES,
             NATIVE_IUP_TRANSPORT,
             CONTINUOUS_CHAIN,
+            CONTINUOUS_CHAIN_FULL,
             ADAPTIVE_PIECEWISE,
             SEMANTIC_PARTITION,
         }:
@@ -1023,6 +1026,16 @@ def _subdivide_reference_chain(start: Point, operation: Operation) -> Operation:
     return "qCurveTo", (*expanded, endpoint)
 
 
+def _subdivide_reference_chain_full(start: Point, operation: Operation) -> Operation:
+    """Add collapsed exact capacity after the protected fourfold chain."""
+    kind, points = _subdivide_reference_chain(start, operation)
+    assert kind == "qCurveTo"
+    endpoint = points[-1]
+    native_spans = (len(points) - 1) // CONTINUOUS_CHAIN_SUBDIVISIONS
+    extra = native_spans * (CONTINUOUS_CHAIN_FULL_SUBDIVISIONS - CONTINUOUS_CHAIN_SUBDIVISIONS)
+    return kind, (*points[:-1], *((endpoint,) * extra), endpoint)
+
+
 def _partition_subdivided_reference_chain(
     start: Point, operation: Operation, allocations: tuple[int, ...]
 ) -> list[Operation]:
@@ -1654,8 +1667,15 @@ def _piecewise_contours(
                 expanded += reference_count * subdivisions - reference_count
                 maximum = max(maximum, reference_count * subdivisions)
                 continue
-            if placement == CONTINUOUS_CHAIN and max(map(len, curves)) > 1:
-                continuous_count = reference_count * CONTINUOUS_CHAIN_SUBDIVISIONS
+            if placement in {CONTINUOUS_CHAIN, CONTINUOUS_CHAIN_FULL} and (
+                placement == CONTINUOUS_CHAIN_FULL or max(map(len, curves)) > 1
+            ):
+                subdivisions = (
+                    CONTINUOUS_CHAIN_FULL_SUBDIVISIONS
+                    if placement == CONTINUOUS_CHAIN_FULL
+                    else CONTINUOUS_CHAIN_SUBDIVISIONS
+                )
+                continuous_count = reference_count * subdivisions
                 splines = [
                     _continuous_piecewise_spline(group, continuous_count, tolerance)
                     for group in curves
@@ -1669,8 +1689,13 @@ def _piecewise_contours(
                 for index, spline in enumerate(splines):
                     if index in references:
                         operation = references[index][contour_index][operation_index]
+                        subdivision = (
+                            _subdivide_reference_chain_full
+                            if placement == CONTINUOUS_CHAIN_FULL
+                            else _subdivide_reference_chain
+                        )
                         result[index][contour_index].append(
-                            _subdivide_reference_chain(reference_current[index], operation)
+                            subdivision(reference_current[index], operation)
                         )
                         reference_current[index] = _require_point(
                             operation[1][-1], name, "reference endpoint"
@@ -1681,7 +1706,12 @@ def _piecewise_contours(
                 continue
             effective_placement = (
                 REFERENCE_COUNT
-                if placement in {CONTINUOUS_CHAIN, NATIVE_IUP_TRANSPORT}
+                if placement
+                in {
+                    CONTINUOUS_CHAIN,
+                    CONTINUOUS_CHAIN_FULL,
+                    NATIVE_IUP_TRANSPORT,
+                }
                 else placement
             )
             prefix, fitted = _fit_piecewise_group(
@@ -2099,6 +2129,7 @@ def preserve_quadratic_reference(
                         )
                 if placements.get(name) in {
                     CONTINUOUS_CHAIN,
+                    CONTINUOUS_CHAIN_FULL,
                     ADAPTIVE_PIECEWISE,
                     SEMANTIC_PARTITION,
                 }:
