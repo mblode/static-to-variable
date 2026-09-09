@@ -528,8 +528,15 @@ def test_native_iup_transport_requires_recipe_in_every_master(tmp_path: Path) ->
     assert before == [[_recording(font[name]).value for name in font.keys()] for font in fonts]
 
 
+@pytest.mark.parametrize(
+    ("mode", "scale"),
+    [
+        (quadratic_reference.CONTINUOUS_CHAIN, 16),
+        (quadratic_reference.CONTINUOUS_CHAIN_FULL, 32),
+    ],
+)
 def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
-    tmp_path: Path,
+    tmp_path: Path, mode: str, scale: int
 ) -> None:
     from fontTools.misc.bezierTools import splitCubicAtT
 
@@ -546,9 +553,7 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
     groups = (((1, 1, 2, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))
     for font, contours in zip(fonts, groups, strict=True):
         font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
-        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
-            quadratic_reference.CONTINUOUS_CHAIN
-        )
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = mode
 
     report = preserve_quadratic_reference(
         fonts,
@@ -559,7 +564,7 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
         glyph_max_error={"curve": 20},
     )
 
-    helper_name = "curve.stv-semantic16x"
+    helper_name = f"curve.stv-semantic{scale}x"
     assert report.carrier_glyphs == (helper_name,)
     for font in fonts:
         assert helper_name in font
@@ -567,7 +572,7 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
         assert len(font["curve"].components) == 1
         assert font["curve"].components[0].baseGlyph == helper_name
         assert font["curve"].components[0].transformation == pytest.approx(
-            (1 / 16, 0, 0, 1 / 16, 0, 0)
+            (1 / scale, 0, 0, 1 / scale, 0, 0)
         )
     variable = _compile_variable(fonts, optimize_gvar=False)
     cmap = variable.getBestCmap()
