@@ -15,6 +15,7 @@ from variable_gen.variation_reference import NativeIupTransport
 from variable_gen.variation_reference import restore_reference_inference
 from variable_gen.variation_reference import restore_reference_true_default
 from variable_gen.variation_reference import restore_reference_with_prefixes
+from variable_gen.variation_reference import restore_endpoint_iup_default
 
 
 def fonts():
@@ -61,6 +62,90 @@ def recording(font, weight, optical):
     pen = RecordingPen()
     font.getGlyphSet(location={"wght": weight, "opsz": optical})["curve"].draw(pen)
     return pen.value
+
+
+def endpoint_fonts():
+    reference, _ = fonts()
+    high = reference["gvar"].variations["curve"][0]
+    reference["gvar"].variations["curve"].insert(
+        0, TupleVariation({"wght": (-1.0, -1.0, 0.0)}, [(0, 0)] * 7)
+    )
+    candidate = deepcopy(reference)
+    helper_name = "curve.endpoint"
+    pen = TTGlyphPen(None)
+    pen.moveTo((0, 736))
+    pen.qCurveTo((800, 3120), (1600, 736))
+    pen.qCurveTo((1600, 736), (1600, 736))
+    pen.closePath()
+    candidate["glyf"][helper_name] = pen.glyph()
+    candidate["hmtx"].metrics[helper_name] = (3200, 0)
+    candidate.setGlyphOrder([".notdef", "curve", helper_name])
+    pen = TTGlyphPen(candidate.getGlyphSet())
+    pen.addComponent(helper_name, (0.0625, 0, 0, 0.0625, 0, 0))
+    candidate["glyf"]["curve"] = pen.glyph()
+    candidate["gvar"].variations["curve"] = []
+    candidate["gvar"].variations[helper_name] = [
+        TupleVariation(high.axes, [(0, 0), (8, 0), (16, 0), (16, 0), (16, 0)] + [(0, 0)] * 4),
+        TupleVariation({"opsz": (0.0, 1.0, 1.0)}, [(0, -736)] * 5 + [(0, 0)] * 4),
+    ]
+    return reference, candidate, helper_name
+
+
+def test_endpoint_transport_keeps_text_default_and_serialized_native_display():
+    import pathops
+    from fontTools.pens.recordingPen import DecomposingRecordingPen
+    from variable_gen.quadratic_reference import _filled_path
+
+    reference, candidate, helper = endpoint_fonts()
+    before = deepcopy(candidate["glyf"][helper].coordinates)
+    report = restore_endpoint_iup_default(
+        reference, candidate, "curve", helper, endpoint_points=frozenset({1}), fixed_coordinates={}
+    )
+    assert report["endpointPoints"] == 2
+    assert candidate["glyf"][helper].coordinates == before
+    stream = BytesIO()
+    candidate.save(stream)
+    stream.seek(0)
+    candidate = TTFont(stream)
+    for weight in (100, 400, 537.25, 949.75, 950):
+        ref_pen, actual_pen = (
+            RecordingPen(),
+            DecomposingRecordingPen(candidate.getGlyphSet(location={"wght": weight, "opsz": 32})),
+        )
+        reference.getGlyphSet(location={"wght": weight, "opsz": 32})["curve"].draw(ref_pen)
+        actual_pen.glyphSet["curve"].draw(actual_pen)
+        assert (
+            pathops.op(_filled_path(ref_pen), _filled_path(actual_pen), pathops.PathOp.XOR).area
+            == 0
+        )
+
+
+@pytest.mark.parametrize(
+    "failure", ["low-sparse", "endpoints", "transform", "moving", "native-point"]
+)
+def test_endpoint_transport_rejects_unsupported_inputs_before_mutation(failure):
+    reference, candidate, helper = endpoint_fonts()
+    endpoints = frozenset({1})
+    if failure == "low-sparse":
+        reference["gvar"].variations["curve"][0].coordinates[0] = None
+    elif failure == "endpoints":
+        endpoints = frozenset({2})
+    elif failure == "transform":
+        candidate["glyf"]["curve"].components[0].x = 1
+    elif failure == "moving":
+        candidate["gvar"].variations["curve"] = [
+            TupleVariation({"wght": (0.0, 1.0, 1.0)}, [(1, 0)] + [(0, 0)] * 4)
+        ]
+    else:
+        candidate["glyf"][helper].coordinates[0] = (1, 736)
+    before_coords = deepcopy(candidate["glyf"][helper].coordinates)
+    before_variations = deepcopy(candidate["gvar"].variations)
+    with pytest.raises(PipelineError):
+        restore_endpoint_iup_default(
+            reference, candidate, "curve", helper, endpoint_points=endpoints, fixed_coordinates={}
+        )
+    assert candidate["glyf"][helper].coordinates == before_coords
+    assert candidate["gvar"].variations == before_variations
 
 
 def test_fractional_reference_survives_serialization_and_keeps_text_default():

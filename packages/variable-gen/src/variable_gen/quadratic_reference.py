@@ -37,6 +37,7 @@ from variable_gen.authorship import OPTICAL_AUTHORSHIP_KEY
 from variable_gen.common import PipelineError
 from variable_gen.curve_certificate import certify_curve_distance
 from variable_gen.quadratic_semantic_partition import (
+    partition_endpoint_spans,
     partition_semantic_curve,
     subdivide_quadratic_chain,
 )
@@ -128,6 +129,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         "straightExtensionWeights",
     }
     version_two_keys = version_one_keys | {"pairedOperations", "protectedMatchAxes"}
+    version_three_keys = version_one_keys | {"endpointSpans"}
     result = {}
     for name in sorted(names):
         values = []
@@ -139,7 +141,12 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
             values.append(font[name].lib[SEMANTIC_PARTITION_KEY])
         if any(
             not isinstance(value, dict)
-            or frozenset(value) not in {frozenset(version_one_keys), frozenset(version_two_keys)}
+            or frozenset(value)
+            not in {
+                frozenset(version_one_keys),
+                frozenset(version_two_keys),
+                frozenset(version_three_keys),
+            }
             for value in values
         ):
             raise PipelineError(f"{name}: semantic partition metadata has an invalid schema")
@@ -154,6 +161,23 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         version = recipe["schemaVersion"]
         pairs = recipe.get("pairedOperations", [])
         match_axes = recipe.get("protectedMatchAxes", [])
+        endpoint_spans = recipe.get("endpointSpans", {})
+        valid_endpoints = (
+            isinstance(endpoint_spans, dict)
+            and bool(endpoint_spans)
+            and all(
+                isinstance(key, str)
+                and key.isdecimal()
+                and str(int(key)) == key
+                and type(value) is int
+                and 1 <= value <= 64
+                for key, value in endpoint_spans.items()
+            )
+            and recipe["defaultSubdivisions"] == 1
+            and not overrides
+            and not slots
+            and not weights
+        )
         valid_pairs = (
             isinstance(pairs, (list, tuple))
             and all(
@@ -170,10 +194,12 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         )
         valid = (
             placements.get(name) == SEMANTIC_PARTITION
-            and version in {1, 2}
+            and type(version) is int
+            and version in {1, 2, 3}
             and (
                 (version == 1 and set(recipe) == version_one_keys)
                 or (version == 2 and set(recipe) == version_two_keys)
+                or (version == 3 and set(recipe) == version_three_keys)
             )
             and recipe["placement"] == SEMANTIC_PARTITION
             and recipe["glyph"] == name
@@ -198,8 +224,8 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
                 for value in weights
             )
             and len(set(weights)) == len(weights)
-            and (version == 1 or valid_pairs)
-            and (version == 1 or bool(pairs and match_axes))
+            and (version != 2 or (valid_pairs and bool(pairs and match_axes)))
+            and (version != 3 or valid_endpoints)
         )
         if not valid:
             raise PipelineError(f"{name}: semantic partition metadata is invalid")
@@ -1001,6 +1027,7 @@ def _piecewise_contours(
             set(semantic_recipe["semanticSlots"])
             | paired_indexes
             | {int(index) for index in semantic_recipe["subdivisionOverrides"]}
+            | {int(index) for index in semantic_recipe.get("endpointSpans", {})}
         )
         semantic_operations = reference[0][1:-1]
         invalid = {
@@ -1097,6 +1124,40 @@ def _piecewise_contours(
                 assert semantic_recipe is not None
                 # Recipe indexes are semantic path operations and intentionally
                 # exclude the contour's moveTo and closePath sentinels.
+                extra_spans = semantic_recipe.get("endpointSpans", {}).get(str(semantic_index))
+                if extra_spans is not None:
+                    for index, group in enumerate(curves):
+                        if index in references:
+                            operation = references[index][contour_index][operation_index]
+                            span_endpoint = _require_point(operation[1][-1], name, "endpoint span")
+                            result[index][contour_index].extend(
+                                (
+                                    operation,
+                                    ("qCurveTo", (span_endpoint,) * (extra_spans + 1)),
+                                )
+                            )
+                            reference_current[index] = span_endpoint
+                        else:
+                            endpoint_target = (
+                                "qCurveTo",
+                                tuple(
+                                    _require_point(p, name, "endpoint span") for p in target_points
+                                ),
+                            )
+                            try:
+                                partition = partition_endpoint_spans(
+                                    group,
+                                    endpoint_target,
+                                    _reference_count_spline,
+                                    tolerance,
+                                    extra_spans=extra_spans,
+                                )
+                            except ValueError as error:
+                                raise PipelineError(f"{name}: {error}") from error
+                            result[index][contour_index].extend(partition.authored)
+                    expanded += extra_spans
+                    maximum = max(maximum, reference_count + extra_spans)
+                    continue
                 if semantic_index in paired_starts:
                     second_operation_index = operation_index + 1
                     second_kind, second_target_points = target[second_operation_index]

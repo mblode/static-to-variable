@@ -12,6 +12,7 @@ from fontTools.varLib.instancer import instantiateVariableFont
 from fontTools.varLib.iup import iup_delta
 
 from variable_gen.common import PipelineError
+from variable_gen.iup_projection import exact_iup_deltas, project_native_iup_default
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,190 @@ class NativeIupTransport:
     text_adjustment_points: frozenset[int]
     text_locations: tuple[tuple[tuple[str, float], ...], ...]
     max_native_frame_residual: float
+
+
+def restore_endpoint_iup_default(
+    reference: TTFont,
+    candidate: TTFont,
+    name: str,
+    helper_name: str,
+    *,
+    endpoint_points: frozenset[int],
+    fixed_coordinates: dict[tuple[int, int], int],
+    scale: int = 16,
+    max_move: float = 1000,
+) -> dict:
+    """Transport two native weight tuples through a single expanded helper.
+
+    The candidate owns its authored default and all six master endpoints. The
+    reference owns sparse high-weight inference at maximum optical size. The
+    supported contract is deliberately narrow: two unwarped axes, one contour,
+    fully explicit low-weight deltas, and collapsed additions at named native
+    endpoints. Unsupported shapes fail before mutating the candidate.
+    """
+    _check_coordinate_space(reference, candidate)
+    axes = {axis.axisTag: axis for axis in candidate["fvar"].axes}
+    if set(axes) != {"wght", "opsz"} or axes["opsz"].defaultValue != axes["opsz"].minValue:
+        raise PipelineError("Endpoint IUP requires weight and minimum-default optical axes")
+    if "avar" in candidate or "avar" in reference:
+        raise PipelineError("Endpoint IUP requires unwarped axes")
+    if type(scale) is not int or scale <= 0 or not endpoint_points:
+        raise PipelineError("Endpoint IUP requires an integer scale and explicit endpoints")
+    weight, optical = axes["wght"], axes["opsz"]
+    if not weight.minValue < weight.defaultValue < weight.maxValue:
+        raise PipelineError("Endpoint IUP requires an interior weight default")
+    low_support = {"wght": (-1.0, -1.0, 0.0)}
+    high_support = {"wght": (0.0, 1.0, 1.0)}
+    optical_support = {"opsz": (0.0, 1.0, 1.0)}
+    native_variations = reference["gvar"].variations[name]
+    if len(native_variations) != 2 or [v.axes for v in native_variations] != [
+        low_support,
+        high_support,
+    ]:
+        raise PipelineError("Endpoint IUP requires exactly the two native weight tuples")
+    low_tuple, high_tuple = native_variations
+    if any(point is None for point in low_tuple.coordinates):
+        raise PipelineError("Endpoint IUP requires explicit native low-weight deltas")
+    parent = candidate["glyf"][name]
+    if not parent.isComposite() or len(parent.components) != 1:
+        raise PipelineError("Endpoint IUP requires a single visible helper component")
+    component_name, transform = parent.components[0].getComponentInfo()
+    if component_name != helper_name or transform != (1 / scale, 0, 0, 1 / scale, 0, 0):
+        raise PipelineError("Endpoint IUP helper transform changed")
+    if candidate["gvar"].variations.get(name):
+        # Metrics/component variation stays owned by the enclosing font. Movement
+        # of the component itself would invalidate this helper's coordinate proof.
+        for variation in candidate["gvar"].variations[name]:
+            if variation.coordinates[0] not in (None, (0, 0)):
+                raise PipelineError("Endpoint IUP cannot transport a moving component")
+    native_glyph = reference["glyf"][name]
+    if native_glyph.isComposite() or len(native_glyph.endPtsOfContours) != 1:
+        raise PipelineError("Endpoint IUP currently requires one native contour")
+    native_coords, native_controls = reference["glyf"]._getCoordinatesAndControls(
+        name, reference["hmtx"].metrics, None
+    )
+    native_points = len(native_coords) - 4
+    if any(
+        type(index) is not int
+        or not 0 <= index < native_points
+        or not native_glyph.flags[index] & 1
+        or high_tuple.coordinates[index] is None
+        for index in endpoint_points
+    ):
+        raise PipelineError("Endpoint IUP additions require explicit native on-curve deltas")
+
+    snapshots = []
+    for optical_value in (optical.minValue, optical.maxValue):
+        for weight_value in (weight.minValue, weight.defaultValue, weight.maxValue):
+            instance = instantiateVariableFont(
+                candidate, {"wght": weight_value, "opsz": optical_value}, inplace=False
+            )
+            helper = instance["glyf"][helper_name]
+            if helper.isComposite() or len(helper.endPtsOfContours) != 1:
+                raise PipelineError("Endpoint IUP requires a single simple helper contour")
+            points, controls = instance["glyf"]._getCoordinatesAndControls(
+                helper_name, instance["hmtx"].metrics, None
+            )
+            snapshots.append((list(points), controls))
+    t_low, desired, t_high, d_low, d_default, d_high = [points for points, _ in snapshots]
+    if any(
+        controls.endPts != snapshots[0][1].endPts or controls.flags != snapshots[0][1].flags
+        for _, controls in snapshots
+    ):
+        raise PipelineError("Endpoint IUP helper topology changes across masters")
+    # Production quadratic compilation reverses this native contour. Recover
+    # original points in sequence, then permit only collapsed endpoint additions.
+    mapping, cursor = {}, 0
+    flags = snapshots[4][1].flags
+    for native_index in [0, *range(native_points - 1, 0, -1)]:
+        target = tuple(value * scale for value in native_coords[native_index])
+        while cursor < len(d_default) - 4:
+            if tuple(d_default[cursor]) == target and (flags[cursor] & 1) == (
+                native_glyph.flags[native_index] & 1
+            ):
+                break
+            cursor += 1
+        if cursor == len(d_default) - 4:
+            raise PipelineError(f"Endpoint IUP native point missing: {native_index}")
+        mapping[cursor] = native_index
+        cursor += 1
+    extra = {}
+    for index in range(len(d_default) - 4):
+        if index in mapping:
+            continue
+        matches = [
+            point
+            for point in endpoint_points
+            if tuple(value * scale for value in native_coords[point]) == tuple(d_default[index])
+        ]
+        if len(matches) != 1:
+            raise PipelineError("Endpoint IUP extra point is not an unambiguous collapsed endpoint")
+        extra[index] = matches[0]
+    inverse = {native_index: index for index, native_index in mapping.items()}
+    full_map = [inverse[index] for index in range(native_points)] + list(
+        range(len(desired) - 4, len(desired))
+    )
+    projection = project_native_iup_default(
+        list(native_coords),
+        native_controls.endPts,
+        [high_tuple.coordinates],
+        desired,
+        full_map,
+        fixed_coordinates=fixed_coordinates,
+        max_move=max_move,
+    )
+
+    def delta(start, end):
+        return [
+            tuple(b - a for a, b in zip(p, q, strict=True)) for p, q in zip(start, end, strict=True)
+        ]
+
+    low, high, optical_delta = [
+        delta(projection.coordinates, target) for target in (t_low, t_high, d_default)
+    ]
+    low_native, high_native = delta(d_default, d_low), delta(d_default, d_high)
+    for index, native_index in mapping.items():
+        if high_tuple.coordinates[native_index] is None:
+            high_native[index] = None
+    for index, native_index in extra.items():
+        high_native[index] = tuple(value * scale for value in high_tuple.coordinates[native_index])
+    # New explicit endpoints must not change inferred native deltas anywhere.
+    inferred = exact_iup_deltas(projection.coordinates, snapshots[0][1].endPts, high_native)
+    native_inferred = exact_iup_deltas(
+        native_coords, native_controls.endPts, high_tuple.coordinates
+    )
+    for index, native_index in {**mapping, **extra}.items():
+        if inferred[index] != tuple(value * scale for value in native_inferred[native_index]):
+            raise PipelineError("Expanded endpoint IUP changed native sparse inference")
+        if low_native[index] != tuple(
+            value * scale for value in low_tuple.coordinates[native_index]
+        ):
+            raise PipelineError("Expanded endpoint IUP changed the native low-weight endpoint")
+    variations = [
+        TupleVariation(low_support, low),
+        TupleVariation(high_support, high),
+        TupleVariation(optical_support, optical_delta),
+        TupleVariation({**low_support, **optical_support}, delta(low, low_native)),
+        TupleVariation({**high_support, **optical_support}, [tuple(-v for v in p) for p in high]),
+        TupleVariation({**high_support, **optical_support}, high_native),
+    ]
+    # Stage the mutation only after every mapping/projection/inference check passes.
+    glyph = deepcopy(candidate["glyf"][helper_name])
+    glyph.recalcBounds(candidate["glyf"])
+    original_x_min = glyph.xMin
+    glyph.coordinates = GlyphCoordinates(projection.coordinates[:-4])
+    glyph.recalcBounds(candidate["glyf"])
+    if glyph.xMin != original_x_min:
+        raise PipelineError("Endpoint IUP projection changed the helper phantom origin")
+    candidate["glyf"][helper_name] = glyph
+    candidate["gvar"].variations[helper_name] = variations
+    return {
+        "nativePoints": native_points,
+        "endpointPoints": len(extra),
+        "maximumCoordinateMovement": list(projection.maximum_movement),
+        "iupConstraintCounts": list(projection.constraint_counts),
+        "scale": scale,
+    }
 
 
 def _font_axes(font: TTFont):
@@ -273,10 +458,10 @@ def restore_reference_true_default(
             if len(varying) != 1:
                 raise PipelineError(f"{name}: each Text location must select one endpoint")
             axis = varying[0]
-            value = location[axis.axisTag]
-            if value == axis.minValue:
+            axis_value = location[axis.axisTag]
+            if axis_value == axis.minValue:
                 support = {axis.axisTag: (-1.0, -1.0, 0.0)}
-            elif value == axis.maxValue:
+            elif axis_value == axis.maxValue:
                 support = {axis.axisTag: (0.0, 1.0, 1.0)}
             else:
                 raise PipelineError(f"{name}: Text location is not an axis endpoint")
@@ -334,12 +519,12 @@ def restore_reference_true_default(
                 )
                 if index in recipe.native_frame_points:
                     frame_residuals.append(max(abs(raw[0]), abs(raw[1])))
-                    value = (0, 0)
+                    point_delta = (0, 0)
                 else:
-                    value = (round(raw[0]), round(raw[1]))
-                    if any(abs(a - b) > 1e-9 for a, b in zip(raw, value, strict=True)):
+                    point_delta = (round(raw[0]), round(raw[1]))
+                    if any(abs(a - b) > 1e-9 for a, b in zip(raw, point_delta, strict=True)):
                         raise PipelineError(f"{name}: Text adjustment is not integral")
-                adjustment.append(value)
+                adjustment.append(point_delta)
             rows.append(deepcopy(native))
             rows.append(TupleVariation(support, adjustment))
             rows.append(
@@ -356,10 +541,10 @@ def restore_reference_true_default(
         protected_delta = []
         for expected, actual in zip(native_base, base, strict=True):
             raw = (expected[0] - actual[0], expected[1] - actual[1])
-            value = (round(raw[0]), round(raw[1]))
-            if any(abs(a - b) > 1e-9 for a, b in zip(raw, value, strict=True)):
+            point_delta = (round(raw[0]), round(raw[1]))
+            if any(abs(a - b) > 1e-9 for a, b in zip(raw, point_delta, strict=True)):
                 raise PipelineError(f"{name}: protected base adjustment is not integral")
-            protected_delta.append(value)
+            protected_delta.append(point_delta)
         rows.append(TupleVariation(protected_support, protected_delta))
 
         revised = deepcopy(new)

@@ -68,5 +68,13 @@ warn_redundant_casts = true
 module = "variable_gen.reconstruct_compatible"
 check_untyped_defs = false
 
+# The 3.13 environment resolves newer NumPy stubs using 3.12 type syntax.
+# Keep our engine checked against its 3.11 floor; numerical calls are covered
+# by projection contract tests, without parsing third-party runtime stubs.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 [tool.pytest.ini_options]
 testpaths = ["packages/variable-gen/tests"]
