@@ -588,7 +588,7 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
         assert _same_filled_path(recording, _recording(reference))
 
 
-def test_continuous_chain_full_adds_exact_collapsed_reference_capacity() -> None:
+def test_continuous_chain_full_distributes_exact_collapsed_reference_capacity() -> None:
     operation = ("qCurveTo", ((50, 100), (100, 0)))
     operations = quadratic_reference._subdivide_reference_chain_full((0, 0), operation)
 
@@ -600,7 +600,10 @@ def test_continuous_chain_full_adds_exact_collapsed_reference_capacity() -> None
         for point in points
         for value in point
     )
-    assert operations[-12:] == [("qCurveTo", ((100, 0), (100, 0)))] * 12
+    for index in range(0, len(operations), 4):
+        endpoint = operations[index][1][-1]
+        assert operations[index + 1 : index + 4] == [("qCurveTo", (endpoint, endpoint))] * 3
+    assert sum(points[0] == points[1] for _, points in operations[:8]) == 6
 
     original = RecordingPen()
     original.moveTo((0, 0))
