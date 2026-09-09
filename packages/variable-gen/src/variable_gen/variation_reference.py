@@ -30,10 +30,12 @@ def validate_endpoint_transport(name: str, recipe: dict) -> None:
         "coordinateScale",
         "maxCoordinateMove",
     }
+    if recipe.get("schemaVersion") == 3:
+        keys.add("nativeFixedCoordinates")
     if (
         set(recipe) != keys
         or type(recipe["schemaVersion"]) is not int
-        or recipe["schemaVersion"] != 2
+        or recipe["schemaVersion"] not in (2, 3)
         or recipe["placement"] != "semantic-partition"
         or recipe["glyph"] != name
     ):
@@ -63,6 +65,26 @@ def validate_endpoint_transport(name: str, recipe: dict) -> None:
     move = recipe["maxCoordinateMove"]
     if type(move) not in (int, float) or not math.isfinite(move) or not 0 < move <= 1000:
         raise PipelineError(f"{name}: invalid endpoint movement bound")
+    _native_fixed_coordinates(recipe.get("nativeFixedCoordinates", []))
+
+
+def _native_fixed_coordinates(rows: list) -> dict[tuple[int, int], int]:
+    """Parse native point landmarks in scaled candidate coordinates."""
+    if not isinstance(rows, list):
+        raise PipelineError("Invalid native fixed coordinates")
+    result = {}
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"point", "axis", "value"}
+            or any(type(row[key]) is not int for key in row)
+            or row["point"] < 0
+            or row["axis"] not in (0, 1)
+            or (row["point"], row["axis"]) in result
+        ):
+            raise PipelineError("Invalid native fixed coordinate landmark")
+        result[row["point"], row["axis"]] = row["value"]
+    return result
 
 
 def apply_endpoint_transports(
@@ -90,6 +112,9 @@ def apply_endpoint_transports(
             fixed_coordinates=fixed,
             scale=recipe["coordinateScale"],
             max_move=recipe["maxCoordinateMove"],
+            native_fixed_coordinates=_native_fixed_coordinates(
+                recipe.get("nativeFixedCoordinates", [])
+            ),
         )
     for tag in ("glyf", "gvar"):
         candidate[tag] = staged[tag]
@@ -116,6 +141,7 @@ def restore_endpoint_iup_default(
     fixed_coordinates: dict[tuple[int, int], int],
     scale: int = 16,
     max_move: float = 1000,
+    native_fixed_coordinates: dict[tuple[int, int], int] | None = None,
 ) -> dict:
     """Transport two native weight tuples through a single expanded helper.
 
@@ -235,6 +261,14 @@ def restore_endpoint_iup_default(
     full_map = [inverse[index] for index in range(native_points)] + list(
         range(len(desired) - 4, len(desired))
     )
+    fixed_coordinates = dict(fixed_coordinates)
+    for (point, axis), value in (native_fixed_coordinates or {}).items():
+        if point not in inverse or axis not in (0, 1) or type(value) is not int:
+            raise PipelineError("Endpoint IUP fixed landmark is not a native outline coordinate")
+        key = (inverse[point], axis)
+        if key in fixed_coordinates and fixed_coordinates[key] != value:
+            raise PipelineError("Endpoint IUP fixed landmark conflicts with a flat cap")
+        fixed_coordinates[key] = value
     projection = project_native_iup_default(
         list(native_coords),
         native_controls.endPts,
