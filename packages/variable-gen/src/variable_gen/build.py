@@ -21,6 +21,7 @@ Run:  uv run python -m variable_gen.cli build --config <path> --style all
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import subprocess
@@ -30,6 +31,7 @@ from pathlib import Path
 
 import glyphsLib
 import pathops
+from fontTools.designspaceLib import DesignSpaceDocument
 from fontTools.pens.recordingPen import DecomposingRecordingPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
@@ -246,6 +248,27 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
                 with TTFont(str(out)) as explicit:
                     _optimize_unmarked_variations(explicit, authored.glyphs)
                     explicit.save(str(out))
+            from variable_gen.variation_reference import (
+                ENDPOINT_TRANSPORTS_KEY,
+                apply_endpoint_transports,
+            )
+
+            endpoint_recipes = DesignSpaceDocument.fromfile(ds_path).lib.get(
+                ENDPOINT_TRANSPORTS_KEY, {}
+            )
+            if endpoint_recipes:
+                if style.quadratic_reference is None:
+                    raise PipelineError("Endpoint transport requires a quadratic reference")
+                reference_path = style.quadratic_reference.path
+                reference_hash = hashlib.sha256(reference_path.read_bytes()).hexdigest()
+                if any(
+                    recipe["referenceSha256"] != reference_hash
+                    for recipe in endpoint_recipes.values()
+                ):
+                    raise PipelineError("Endpoint transport reference changed after source export")
+                with TTFont(reference_path) as reference, TTFont(out) as candidate:
+                    apply_endpoint_transports(reference, candidate, endpoint_recipes)
+                    candidate.save(out)
             # The build SUCCEEDED structurally, but the glyphsLib/cu2qu round-trip
             # can still leave complex glyphs that COLLAPSE at interpolated weights.
             # Detect them in the actual VF and freeze to the default donor, rebuild.

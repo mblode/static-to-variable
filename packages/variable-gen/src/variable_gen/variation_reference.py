@@ -14,6 +14,87 @@ from fontTools.varLib.iup import iup_delta
 from variable_gen.common import PipelineError
 from variable_gen.iup_projection import exact_iup_deltas, project_native_iup_default
 
+ENDPOINT_TRANSPORTS_KEY = "com.mblode.stv.endpointTransports"
+
+
+def validate_endpoint_transport(name: str, recipe: dict) -> None:
+    """Validate the source-bound endpoint finishing contract at the engine boundary."""
+    keys = {
+        "schemaVersion",
+        "placement",
+        "glyph",
+        "glyphRowsSha256",
+        "referenceSha256",
+        "nativeEndpointPoints",
+        "flatTextY",
+        "coordinateScale",
+        "maxCoordinateMove",
+    }
+    if (
+        set(recipe) != keys
+        or type(recipe["schemaVersion"]) is not int
+        or recipe["schemaVersion"] != 2
+        or recipe["placement"] != "semantic-partition"
+        or recipe["glyph"] != name
+    ):
+        raise PipelineError(f"{name}: invalid endpoint transport schema")
+    points = recipe["nativeEndpointPoints"]
+    if (
+        not isinstance(points, (list, tuple))
+        or not points
+        or any(type(i) is not int or i < 0 for i in points)
+        or len(set(points)) != len(points)
+    ):
+        raise PipelineError(f"{name}: invalid native endpoint points")
+    for key in ("glyphRowsSha256", "referenceSha256"):
+        value = recipe[key]
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(c not in "0123456789abcdef" for c in value)
+        ):
+            raise PipelineError(f"{name}: invalid endpoint transport hash")
+    if (
+        type(recipe["coordinateScale"]) is not int
+        or recipe["coordinateScale"] != 16
+        or type(recipe["flatTextY"]) is not int
+    ):
+        raise PipelineError(f"{name}: invalid endpoint coordinate contract")
+    move = recipe["maxCoordinateMove"]
+    if type(move) not in (int, float) or not math.isfinite(move) or not 0 < move <= 1000:
+        raise PipelineError(f"{name}: invalid endpoint movement bound")
+
+
+def apply_endpoint_transports(
+    reference: TTFont, candidate: TTFont, recipes: dict[str, dict]
+) -> dict:
+    """Complete declared endpoint carriers before build fidelity checks and release."""
+    staged = deepcopy(candidate)
+    results = {}
+    for name, recipe in sorted(recipes.items()):
+        validate_endpoint_transport(name, recipe)
+        helper = f"{name}.stv-semantic16x"
+        if helper not in staged["glyf"]:
+            raise PipelineError(f"{name}: endpoint helper is missing")
+        points = staged["glyf"][helper].getCoordinates(staged["glyf"])[0]
+        cap = recipe["flatTextY"] * recipe["coordinateScale"]
+        fixed = {(i, 1): cap for i, point in enumerate(points) if point[1] == cap}
+        if len(fixed) < 2:
+            raise PipelineError(f"{name}: endpoint source has no paired flat caps")
+        results[name] = restore_endpoint_iup_default(
+            reference,
+            staged,
+            name,
+            helper,
+            endpoint_points=frozenset(recipe["nativeEndpointPoints"]),
+            fixed_coordinates=fixed,
+            scale=recipe["coordinateScale"],
+            max_move=recipe["maxCoordinateMove"],
+        )
+    for tag in ("glyf", "gvar"):
+        candidate[tag] = staged[tag]
+    return results
+
 
 @dataclass(frozen=True)
 class NativeIupTransport:
