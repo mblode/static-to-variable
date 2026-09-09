@@ -44,6 +44,7 @@ from variable_gen.outlines import donor_outline, draw_into
 
 UNDERWEIGHT_RATIO = 0.92
 AUTHORED_FIDELITY_RATIO = 0.98
+SEMANTIC_CARRIER_SUFFIX = ".stv-semantic16x"
 
 
 @dataclass(frozen=True)
@@ -197,6 +198,17 @@ def _optimize_unmarked_variations(font: TTFont, preserved: frozenset[str]) -> No
             variation.optimize(coordinates, controls.endPts, tolerance=0.5)
 
 
+def _preserved_authored_variations(font: TTFont, authored: frozenset[str]) -> frozenset[str]:
+    """Keep authored wrappers and their exact high-precision carriers explicit."""
+    carriers = {
+        name
+        for name in font.getGlyphOrder()
+        if name.endswith(SEMANTIC_CARRIER_SUFFIX)
+        and name.removesuffix(SEMANTIC_CARRIER_SUFFIX) in authored
+    }
+    return authored | carriers
+
+
 def build_style(config: ProjectConfig, style_key: str) -> list[str]:
     style = config.styles[style_key]
     # From-scratch project: no .glyphs source means no masters to interpolate.
@@ -246,7 +258,9 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
         if p.returncode == 0:
             if style.optimize_gvar and style.preserve_authored_deltas and authored.glyphs:
                 with TTFont(str(out)) as explicit:
-                    _optimize_unmarked_variations(explicit, authored.glyphs)
+                    _optimize_unmarked_variations(
+                        explicit, _preserved_authored_variations(explicit, authored.glyphs)
+                    )
                     explicit.save(str(out))
             from variable_gen.variation_reference import (
                 ENDPOINT_TRANSPORTS_KEY,

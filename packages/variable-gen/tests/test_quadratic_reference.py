@@ -18,7 +18,7 @@ from fontTools.varLib.varStore import OnlineVarStoreBuilder
 from fontTools.varLib.instancer import instantiateVariableFont
 
 from variable_gen.authorship import OPTICAL_AUTHORSHIP_KEY
-from variable_gen.build import _optimize_unmarked_variations
+from variable_gen.build import _optimize_unmarked_variations, _preserved_authored_variations
 from variable_gen.common import PipelineError
 from variable_gen.quadratic_reference import (
     _fixed_quadratic_spline,
@@ -170,6 +170,35 @@ def test_selective_compression_keeps_authored_deltas_and_normal_unmarked_output(
     assert [(v.axes, list(v.coordinates)) for v in actual] == [
         (v.axes, list(v.coordinates)) for v in expected
     ]
+
+
+def test_authored_high_precision_carrier_is_excluded_from_iup_optimization() -> None:
+    fonts = _source_set()
+    carrier = "curve.stv-semantic16x"
+    for font in fonts:
+        font["unmarked"].clearContours()
+        _recording(font["curve"]).replay(font["unmarked"].getPen())
+        glyph = font.newGlyph(carrier)
+        _recording(font["unmarked"]).replay(glyph.getPen())
+
+    explicit = _compile_variable(fonts, optimize_gvar=False)
+    before = [
+        (variation.axes, list(variation.coordinates))
+        for variation in explicit["gvar"].variations[carrier]
+    ]
+    preserved = _preserved_authored_variations(explicit, frozenset({"curve"}))
+    _optimize_unmarked_variations(explicit, preserved)
+
+    assert preserved == frozenset({"curve", carrier})
+    assert [
+        (variation.axes, list(variation.coordinates))
+        for variation in explicit["gvar"].variations[carrier]
+    ] == before
+    assert any(
+        delta is None
+        for variation in explicit["gvar"].variations["unmarked"]
+        for delta in variation.coordinates
+    )
 
 
 def test_display_weight_row_is_preserved_with_text_as_the_default(tmp_path: Path) -> None:
