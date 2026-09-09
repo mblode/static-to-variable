@@ -616,6 +616,45 @@ def test_continuous_chain_origin_rejects_unrepresentable_bounds(end: float) -> N
         quadratic_reference._continuous_chain_origin("wide", masters, 32)
 
 
+def test_grouped_carrier_promotes_only_exact_protected_geometry_to_32x() -> None:
+    masters = [
+        [[("moveTo", ((0.03125, 0),)), ("lineTo", ((100, 0),))]],
+        [[("moveTo", ((0, 0),)), ("lineTo", ((100.03125, 0),))]],
+    ]
+
+    assert (
+        quadratic_reference._grouped_carrier_scale(
+            "curve",
+            masters,
+            frozenset({1}),
+            quadratic_reference.ADAPTIVE_PIECEWISE,
+        )
+        == 32
+    )
+    assert (
+        quadratic_reference._grouped_carrier_scale(
+            "curve",
+            masters,
+            frozenset(),
+            quadratic_reference.ADAPTIVE_PIECEWISE,
+        )
+        == 16
+    )
+
+
+@pytest.mark.parametrize("value", (0.02, 1024.03125))
+def test_grouped_carrier_rejects_inexact_or_out_of_range_32x(value: float) -> None:
+    masters = [[[("moveTo", ((value, 0),)), ("lineTo", ((100, 0),))]]]
+
+    with pytest.raises(PipelineError, match="cannot represent coordinates exactly"):
+        quadratic_reference._grouped_carrier_scale(
+            "curve",
+            masters,
+            frozenset({0}),
+            quadratic_reference.SEMANTIC_PARTITION,
+        )
+
+
 def test_continuous_chain_full_distributes_exact_collapsed_reference_capacity() -> None:
     operation = ("qCurveTo", ((50, 100), (100, 0)))
     operations = quadratic_reference._subdivide_reference_chain_full((0, 0), operation)

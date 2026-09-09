@@ -535,6 +535,49 @@ def _scaled_contours(
     ]
 
 
+def _grouped_carrier_scale(
+    name: str,
+    contours: list[list[list[Operation]]],
+    protected_indices: frozenset[int],
+    placement: str,
+) -> int:
+    """Choose the smallest exact carrier grid for protected grouped geometry."""
+    if placement == CONTINUOUS_CHAIN_FULL:
+        return CONTINUOUS_CHAIN_FULL_SCALE
+    if placement not in {ADAPTIVE_PIECEWISE, SEMANTIC_PARTITION}:
+        return CONTINUOUS_CHAIN_SCALE
+
+    protected_points = [
+        point
+        for index, master in enumerate(contours)
+        if index in protected_indices
+        for contour in master
+        for _, points in contour
+        for point in points
+        if point is not None
+    ]
+    for scale in (CONTINUOUS_CHAIN_SCALE, CONTINUOUS_CHAIN_FULL_SCALE):
+        if all(
+            math.isfinite(value) and value * scale == round(value * scale)
+            for point in protected_points
+            for value in point
+        ):
+            scaled_points = [
+                value * scale
+                for master in contours
+                for contour in master
+                for _, points in contour
+                for point in points
+                if point is not None
+                for value in point
+            ]
+            if all(math.isfinite(value) and abs(value) <= 32767 for value in scaled_points):
+                return scale
+    raise PipelineError(
+        f"{name}: protected continuous-chain carrier cannot represent coordinates exactly"
+    )
+
+
 def _install_continuous_chain_carrier(
     font,
     name: str,
@@ -2175,6 +2218,23 @@ def preserve_quadratic_reference(
         )
         for name, groups in source_groups.items()
     }
+    protected_indices = frozenset(protected_glyph_sets)
+    carrier_scales = {
+        name: _grouped_carrier_scale(
+            name,
+            contours,
+            protected_indices if name not in endpoint_transports else frozenset(),
+            placements[name],
+        )
+        for name, (contours, _, _) in staged_groups.items()
+        if placements.get(name)
+        in {
+            CONTINUOUS_CHAIN,
+            CONTINUOUS_CHAIN_FULL,
+            ADAPTIVE_PIECEWISE,
+            SEMANTIC_PARTITION,
+        }
+    }
     # Stage range validation before mutating any source font. Endpoint-IUP
     # recipes retain their native coordinate frame; only chain conversion
     # uses a translated carrier.
@@ -2182,9 +2242,7 @@ def preserve_quadratic_reference(
         name: _continuous_chain_origin(
             name,
             contours,
-            CONTINUOUS_CHAIN_FULL_SCALE
-            if placements[name] == CONTINUOUS_CHAIN_FULL
-            else CONTINUOUS_CHAIN_SCALE,
+            carrier_scales[name],
         )
         for name, (contours, _, _) in staged_groups.items()
         if placements.get(name) in {CONTINUOUS_CHAIN, CONTINUOUS_CHAIN_FULL}
@@ -2235,11 +2293,7 @@ def preserve_quadratic_reference(
                             and name not in endpoint_transports,
                             authorship=authorship[name],
                             origin=carrier_origins.get(name, (0, 0)),
-                            scale=(
-                                CONTINUOUS_CHAIN_FULL_SCALE
-                                if placements.get(name) == CONTINUOUS_CHAIN_FULL
-                                else CONTINUOUS_CHAIN_SCALE
-                            ),
+                            scale=carrier_scales[name],
                         )
                     )
             converted += 1
