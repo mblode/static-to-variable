@@ -144,9 +144,63 @@ def endpoint_recipe():
     }
 
 
+@pytest.mark.parametrize("value", [True, 1.5, "800"])
+def test_endpoint_landmarks_reject_noninteger_coordinates(value):
+    from variable_gen.variation_reference import validate_endpoint_transport
+
+    recipe = endpoint_recipe()
+    recipe.update(schemaVersion=3, nativeFixedCoordinates=[{"point": 2, "axis": 0, "value": value}])
+    with pytest.raises(PipelineError):
+        validate_endpoint_transport("curve", recipe)
+
+
+@pytest.mark.parametrize("failure", ["duplicate", "phantom", "cap", "axis"])
+def test_endpoint_landmarks_reject_invalid_constraints_atomically(failure):
+    from variable_gen.variation_reference import apply_endpoint_transports
+
+    reference, candidate, helper = endpoint_fonts()
+    row = {"point": 2, "axis": 0, "value": 800}
+    if failure == "phantom":
+        row["point"] = 3
+    elif failure == "cap":
+        row = {"point": 0, "axis": 1, "value": 737}
+    elif failure == "axis":
+        row["axis"] = 2
+    recipe = endpoint_recipe()
+    recipe.update(
+        schemaVersion=3, nativeFixedCoordinates=[row] * (2 if failure == "duplicate" else 1)
+    )
+    before = deepcopy(candidate["glyf"][helper].coordinates)
+    variations = deepcopy(candidate["gvar"].variations)
+    with pytest.raises(PipelineError):
+        apply_endpoint_transports(reference, candidate, {"curve": recipe})
+    assert candidate["glyf"][helper].coordinates == before
+    assert candidate["gvar"].variations == variations
+
+
+def test_endpoint_landmark_maps_native_point_and_preserves_serialized_display():
+    from variable_gen.variation_reference import apply_endpoint_transports
+
+    reference, candidate, helper = endpoint_fonts()
+    baseline = deepcopy(candidate)
+    apply_endpoint_transports(reference, baseline, {"curve": endpoint_recipe()})
+    recipe = endpoint_recipe()
+    recipe.update(schemaVersion=3, nativeFixedCoordinates=[{"point": 2, "axis": 1, "value": 3136}])
+    apply_endpoint_transports(reference, candidate, {"curve": recipe})
+    assert candidate["glyf"][helper].coordinates[1][1] == 3136
+    assert baseline["glyf"][helper].coordinates[1][1] == 3120
+    stream = BytesIO()
+    candidate.save(stream)
+    stream.seek(0)
+    saved = TTFont(stream)
+    for weight in (100, 400, 537.25, 949.75, 950):
+        assert recording(saved, weight, 32) == recording(baseline, weight, 32)
+
+
 @pytest.mark.parametrize("changed_reference", [False, True])
+@pytest.mark.parametrize("version", [2, 3])
 def test_ordinary_build_restores_serialized_endpoints_before_fidelity(
-    tmp_path, monkeypatch, changed_reference
+    tmp_path, monkeypatch, changed_reference, version
 ):
     import hashlib
     from types import SimpleNamespace
@@ -160,6 +214,8 @@ def test_ordinary_build_restores_serialized_endpoints_before_fidelity(
     candidate.save(out_path)
     original_bytes = out_path.read_bytes()
     recipe = endpoint_recipe()
+    if version == 3:
+        recipe.update(schemaVersion=3, nativeFixedCoordinates=[])
     recipe["referenceSha256"] = hashlib.sha256(ref_path.read_bytes()).hexdigest()
     if changed_reference:
         recipe["referenceSha256"] = "0" * 64
@@ -245,7 +301,8 @@ def test_endpoint_batch_matches_direct_transport_or_leaves_candidate_untouched(f
 
 
 @pytest.mark.parametrize("failure", [None, "missing", "mismatch", "semantic", "placement"])
-def test_endpoint_metadata_must_bind_every_source_and_its_semantic_recipe(failure):
+@pytest.mark.parametrize("version", [2, 3])
+def test_endpoint_metadata_must_bind_every_source_and_its_semantic_recipe(failure, version):
     import ufoLib2
     from variable_gen.quadratic_reference import (
         NATIVE_IUP_TRANSPORT_KEY,
@@ -254,6 +311,8 @@ def test_endpoint_metadata_must_bind_every_source_and_its_semantic_recipe(failur
     )
 
     recipe = endpoint_recipe()
+    if version == 3:
+        recipe.update(schemaVersion=3, nativeFixedCoordinates=[])
     fonts = [ufoLib2.Font(), ufoLib2.Font()]
     for font in fonts:
         glyph = font.newGlyph("curve")

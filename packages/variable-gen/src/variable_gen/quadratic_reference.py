@@ -365,7 +365,7 @@ def _native_iup_transport_metadata(fonts, placements: dict[str, str]) -> dict[st
         if (
             isinstance(recipe, dict)
             and type(recipe.get("schemaVersion")) is int
-            and recipe["schemaVersion"] == 2
+            and recipe["schemaVersion"] in (2, 3)
         ):
             from variable_gen.variation_reference import validate_endpoint_transport
 
@@ -2075,7 +2075,7 @@ def preserve_quadratic_reference(
     adaptive_recipes = _adaptive_piecewise_metadata(fonts, placements)
     transports = _native_iup_transport_metadata(fonts, placements)
     endpoint_transports = {
-        name: recipe for name, recipe in transports.items() if recipe["schemaVersion"] == 2
+        name: recipe for name, recipe in transports.items() if recipe["schemaVersion"] in (2, 3)
     }
     if endpoint_transports:
         reference_hash = hashlib.sha256(reference_path.read_bytes()).hexdigest()
