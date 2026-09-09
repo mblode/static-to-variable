@@ -553,8 +553,10 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
         assert _same_filled_path(recording, _recording(reference))
 
 
+@pytest.mark.parametrize("version", [1, 3])
 def test_semantic_partition_uses_source_bound_recipe_and_exact_carrier(
     tmp_path: Path,
+    version: int,
 ) -> None:
     reference_path = tmp_path / "reference.ttf"
     _reference_font(reference_path)
@@ -569,6 +571,8 @@ def test_semantic_partition_uses_source_bound_recipe_and_exact_carrier(
         "semanticSlots": [],
         "straightExtensionWeights": [],
     }
+    if version == 3:
+        recipe.update(schemaVersion=3, defaultSubdivisions=1, endpointSpans={"1": 8})
     for font in fonts:
         font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
         font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
@@ -594,6 +598,41 @@ def test_semantic_partition_uses_source_bound_recipe_and_exact_carrier(
         assert _same_filled_path(recording, _recording(reference))
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"endpointSpans": {}},
+        {"endpointSpans": {"01": 8}},
+        {"endpointSpans": {"1": True}},
+        {"endpointSpans": {"1": 65}},
+        {"defaultSubdivisions": 2},
+        {"semanticSlots": [1]},
+        {"schemaVersion": True},
+        {"pairedOperations": []},
+    ],
+)
+def test_endpoint_metadata_rejects_unbounded_or_subdivided_protected_paths(change: dict) -> None:
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 3,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 1,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "straightExtensionWeights": [],
+        "endpointSpans": {"1": 8},
+    }
+    recipe.update(change)
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    with pytest.raises(PipelineError, match="semantic partition metadata"):
+        quadratic_reference._semantic_partition_metadata(
+            fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+        )
+
+
 def test_semantic_partition_fails_without_recipe_before_mutating_sources(
     tmp_path: Path,
 ) -> None:
@@ -616,7 +655,8 @@ def test_semantic_partition_fails_without_recipe_before_mutating_sources(
     assert [_recording(font["curve"]).value for font in fonts] == before
 
 
-def test_semantic_partition_indexes_operations_after_move_sentinel() -> None:
+@pytest.mark.parametrize("endpoint_spans", [False, True])
+def test_semantic_partition_indexes_operations_after_move_sentinel(endpoint_spans: bool) -> None:
     def recording(*operations):
         pen = RecordingPen()
         pen.value = list(operations)
@@ -652,10 +692,15 @@ def test_semantic_partition_indexes_operations_after_move_sentinel() -> None:
         {
             "defaultSubdivisions": 2,
             "subdivisionOverrides": {},
-            "semanticSlots": [1],
+            "semanticSlots": [] if endpoint_spans else [1],
+            **({"endpointSpans": {"1": 8}} if endpoint_spans else {}),
         },
     )
     assert len({tuple((op, len(points)) for op, points in value[0]) for value in contours}) == 1
+    if endpoint_spans:
+        for index in (1, 2):
+            assert contours[index][0][2] == protected.value[2]
+            assert contours[index][0][3] == ("qCurveTo", ((0, 0),) * 9)
 
 
 def test_semantic_partition_pairs_adjacent_operations_with_protected_seam_ratio() -> None:

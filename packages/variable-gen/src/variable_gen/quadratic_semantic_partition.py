@@ -2,12 +2,14 @@
 
 This module does not choose glyph policy.  It builds a shared operation basis
 when an authored contour has a real straight extension at one master while
-other masters retain the corresponding curved path.  The protected quadratic
-is subdivided exactly; the authored curve is fitted with the resulting capacity.
+other masters retain the corresponding curved path. Semantic slots subdivide
+protected quadratics exactly; endpoint spans retain their original point stream
+and append collapsed capacity. Authored curves are fitted within the bound.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -23,6 +25,67 @@ class SemanticPartition:
     protected: tuple[Operation, ...]
     authored_curve_count: int
     protected_curve_count: int
+
+
+def partition_endpoint_spans(
+    authored_curves: Sequence[Cubic],
+    protected_operation: Operation,
+    fitter: SplineFitter,
+    tolerance: float,
+    *,
+    extra_spans: int,
+) -> SemanticPartition:
+    """Add authored capacity after an intact protected quadratic operation.
+
+    The extra protected spans collapse at its explicit endpoint. None of the
+    original off-curves, implied points or endpoints is subdivided or refitted.
+    A single authored cubic is split at its geometric midpoint; two existing
+    authored cubics retain their seam. Sparse variation transport must still
+    preserve omitted-point interpolation after compatible compilation.
+    """
+    kind, points = protected_operation
+    if kind != "qCurveTo" or len(points) < 2:
+        raise ValueError("endpoint spans require an explicit protected qCurveTo")
+    if type(extra_spans) is not int or extra_spans < 1:
+        raise ValueError("extra_spans must be a positive integer")
+    if not math.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError("endpoint span tolerance must be finite and positive")
+    if len(authored_curves) not in (1, 2) or any(len(curve) != 4 for curve in authored_curves):
+        raise ValueError("endpoint spans require one or two authored cubics")
+    for point in (*points, *(point for curve in authored_curves for point in curve)):
+        if point is None or len(point) != 2 or not all(math.isfinite(value) for value in point):
+            raise ValueError("endpoint span coordinates must be finite explicit points")
+    curves = list(authored_curves)
+    if len(curves) == 1:
+        a, b, c, d = curves[0]
+
+        def midpoint(left: Point, right: Point) -> Point:
+            return ((left[0] + right[0]) / 2, (left[1] + right[1]) / 2)
+
+        ab, bc, cd = midpoint(a, b), midpoint(b, c), midpoint(c, d)
+        abc, bcd = midpoint(ab, bc), midpoint(bc, cd)
+        seam = midpoint(abc, bcd)
+        curves = [(a, ab, abc, seam), (seam, bcd, cd, d)]
+    elif curves[0][-1] != curves[1][0]:
+        raise ValueError("authored endpoint spans have a disconnected seam")
+    native_count = len(points) - 1
+    authored: list[Operation] = []
+    for curve, count in zip(curves, (native_count, extra_spans), strict=True):
+        spline = fitter(curve, count, tolerance)
+        if spline is None or len(spline) != count + 2:
+            raise ValueError("authored endpoint spans exceed the conversion bound")
+        if spline[0] != curve[0] or spline[-1] != curve[-1]:
+            raise ValueError("endpoint span fitting changed an authored endpoint")
+        if any(not all(math.isfinite(value) for value in point) for point in spline):
+            raise ValueError("endpoint span fitting returned nonfinite coordinates")
+        authored.append(("qCurveTo", tuple(spline[1:])))
+    collapsed: Operation = ("qCurveTo", (points[-1],) * (extra_spans + 1))
+    return SemanticPartition(
+        tuple(authored),
+        (protected_operation, collapsed),
+        native_count + extra_spans,
+        native_count + extra_spans,
+    )
 
 
 def _point(value: Point, label: str) -> complex:
