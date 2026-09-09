@@ -553,6 +553,121 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
         assert _same_filled_path(recording, _recording(reference))
 
 
+def test_adaptive_piecewise_uses_reviewed_allocations_and_explicit_deltas(
+    tmp_path: Path,
+) -> None:
+    from fontTools.misc.bezierTools import splitCubicAtT
+
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    source = fonts[0]["curve"]
+    source.clearContours()
+    pen = source.getPen()
+    pen.moveTo((0, 0))
+    for curve in splitCubicAtT((0, 0), (0, 220), (100, 220), (100, 0), 0.25, 0.5):
+        pen.curveTo(*curve[1:])
+    pen.closePath()
+    groups = (((1, 1, 3, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))
+    recipe = {
+        "schemaVersion": 1,
+        "placement": quadratic_reference.ADAPTIVE_PIECEWISE,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "subdivisions": 4,
+        "allocations": {"0:1": [1, 1, 2]},
+    }
+    for font, contours in zip(fonts, groups, strict=True):
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.ADAPTIVE_PIECEWISE
+        )
+        font["curve"].lib[quadratic_reference.ADAPTIVE_PIECEWISE_KEY] = recipe
+
+    report = preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        protected_locations={1: {}, 2: {}},
+        glyph_max_error={"curve": 20},
+    )
+
+    assert report.carrier_glyphs == ("curve.stv-semantic16x",)
+    assert len({_signature(font["curve.stv-semantic16x"]) for font in fonts}) == 1
+    assert _signature(fonts[0]["curve.stv-semantic16x"])[1:5] == (
+        ("lineTo", 1),
+        ("qCurveTo", 2),
+        ("qCurveTo", 2),
+        ("qCurveTo", 3),
+    )
+    reference = TTFont(reference_path).getGlyphSet()["curve"]
+    for index in (1, 2):
+        recording = DecomposingRecordingPen(fonts[index])
+        fonts[index]["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
+    variable = _compile_variable(fonts, optimize_gvar=False)
+    variations = variable["gvar"].variations["curve.stv-semantic16x"]
+    assert all(delta is not None for variation in variations for delta in variation.coordinates)
+    for optical_size in (16, 28):
+        instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
+        recording = DecomposingRecordingPen(instance.getGlyphSet())
+        instance.getGlyphSet()["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
+
+
+@pytest.mark.parametrize(
+    ("recipe_change", "message"),
+    [
+        ({"allocations": {}}, "needs an explicit allocation"),
+        ({"allocations": {"0:1": [1, 1, 1]}}, "totals 3, expected 4"),
+    ],
+)
+def test_adaptive_piecewise_rejects_missing_or_incomplete_multi_curve_allocation(
+    tmp_path: Path, recipe_change: dict, message: str
+) -> None:
+    from fontTools.misc.bezierTools import splitCubicAtT
+
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    source = fonts[0]["curve"]
+    source.clearContours()
+    pen = source.getPen()
+    pen.moveTo((0, 0))
+    for curve in splitCubicAtT((0, 0), (0, 220), (100, 220), (100, 0), 0.5):
+        pen.curveTo(*curve[1:])
+    pen.closePath()
+    groups = (((1, 1, 2, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))
+    recipe = {
+        "schemaVersion": 1,
+        "placement": quadratic_reference.ADAPTIVE_PIECEWISE,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "subdivisions": 4,
+        "allocations": {"0:1": [2, 2]},
+    }
+    recipe.update(recipe_change)
+    for font, contours in zip(fonts, groups, strict=True):
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.ADAPTIVE_PIECEWISE
+        )
+        font["curve"].lib[quadratic_reference.ADAPTIVE_PIECEWISE_KEY] = recipe
+    before = [_recording(font["curve"]).value for font in fonts]
+
+    with pytest.raises(PipelineError, match=message):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+            protected_locations={1: {}, 2: {}},
+            glyph_max_error={"curve": 20},
+        )
+    assert [_recording(font["curve"]).value for font in fonts] == before
+
+
 @pytest.mark.parametrize("version", [1, 3])
 def test_semantic_partition_uses_source_bound_recipe_and_exact_carrier(
     tmp_path: Path,
