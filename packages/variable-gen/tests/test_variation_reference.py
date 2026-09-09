@@ -91,12 +91,22 @@ def endpoint_fonts():
     return reference, candidate, helper_name
 
 
-def test_endpoint_transport_keeps_text_default_and_serialized_native_display():
+@pytest.mark.parametrize("preserve_direction", [False, True])
+def test_endpoint_transport_keeps_text_default_and_serialized_native_display(preserve_direction):
     import pathops
     from fontTools.pens.recordingPen import DecomposingRecordingPen
     from variable_gen.quadratic_reference import _filled_path
 
     reference, candidate, helper = endpoint_fonts()
+    if preserve_direction:
+        glyph = candidate["glyf"][helper]
+        order = [0, *range(len(glyph.coordinates) - 1, 0, -1)]
+        glyph.coordinates = type(glyph.coordinates)([glyph.coordinates[i] for i in order])
+        glyph.flags = type(glyph.flags)("B", [glyph.flags[i] for i in order])
+        for variation in candidate["gvar"].variations[helper]:
+            variation.coordinates = [
+                variation.coordinates[i] for i in order
+            ] + variation.coordinates[-4:]
     before = deepcopy(candidate["glyf"][helper].coordinates)
     report = restore_endpoint_iup_default(
         reference, candidate, "curve", helper, endpoint_points=frozenset({1}), fixed_coordinates={}
