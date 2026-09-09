@@ -536,8 +536,9 @@ def test_native_iup_transport_requires_recipe_in_every_master(tmp_path: Path) ->
         (quadratic_reference.CONTINUOUS_CHAIN_FULL, 32),
     ],
 )
+@pytest.mark.parametrize("offset", (0, 1100))
 def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
-    tmp_path: Path, mode: str, scale: int
+    tmp_path: Path, mode: str, scale: int, offset: int
 ) -> None:
     from fontTools.misc.bezierTools import splitCubicAtT
 
@@ -555,6 +556,13 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
     for font, contours in zip(fonts, groups, strict=True):
         font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
         font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = mode
+        recording = _recording(font["curve"])
+        font["curve"].clearContours()
+        recording.replay(TransformPen(font["curve"].getPen(), (1, 0, 0, 1, offset, 0)))
+    with TTFont(reference_path) as reference_font:
+        reference_font["glyf"]["curve"].coordinates.translate((offset, 0))
+        reference_font["hmtx"].metrics["curve"] = (500, offset)
+        reference_font.save(reference_path)
 
     report = preserve_quadratic_reference(
         fonts,
@@ -572,10 +580,15 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
         assert font[helper_name].lib[OPTICAL_AUTHORSHIP_KEY] == PROVENANCE
         assert len(font["curve"].components) == 1
         assert font["curve"].components[0].baseGlyph == helper_name
+        expected_origin = 1150 if offset == 1100 and scale == 32 else 0
         assert font["curve"].components[0].transformation == pytest.approx(
-            (1 / scale, 0, 0, 1 / scale, 0, 0)
+            (1 / scale, 0, 0, 1 / scale, expected_origin, 0)
         )
     variable = _compile_variable(fonts, optimize_gvar=False)
+    saved_path = tmp_path / "variable.ttf"
+    variable.save(saved_path)
+    variable.close()
+    variable = TTFont(saved_path)
     cmap = variable.getBestCmap()
     assert cmap is None or helper_name not in cmap.values()
     assert variable["head"].yMax > TTFont(reference_path)["head"].yMax
@@ -586,6 +599,21 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
         recording = DecomposingRecordingPen(glyphs)
         glyphs["curve"].draw(recording)
         assert _same_filled_path(recording, _recording(reference))
+
+
+def test_continuous_chain_origin_uses_all_masters_and_both_axes() -> None:
+    masters = [
+        [[("moveTo", ((-1100, -1100),)), ("lineTo", ((-1000, -1000),))]],
+        [[("moveTo", ((-900, -900),)), ("lineTo", ((-800, -800),))]],
+    ]
+    assert quadratic_reference._continuous_chain_origin("wide", masters, 32) == (-950, -950)
+
+
+@pytest.mark.parametrize("end", (2050, float("inf"), float("nan")))
+def test_continuous_chain_origin_rejects_unrepresentable_bounds(end: float) -> None:
+    masters = [[[("moveTo", ((0, 0),)), ("lineTo", ((end, 0),))]]]
+    with pytest.raises(PipelineError, match="coordinate"):
+        quadratic_reference._continuous_chain_origin("wide", masters, 32)
 
 
 def test_continuous_chain_full_distributes_exact_collapsed_reference_capacity() -> None:
