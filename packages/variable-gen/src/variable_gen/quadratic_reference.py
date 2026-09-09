@@ -477,13 +477,49 @@ def _draw_contours(glyph, contours: list[list[Operation]]) -> None:
                 raise AssertionError(operation)
 
 
-def _scaled_contours(contours: list[list[Operation]], factor: int) -> list[list[Operation]]:
+def _continuous_chain_origin(
+    name: str, masters: list[list[list[Operation]]], scale: int
+) -> tuple[int, int]:
+    """Choose one integer origin for every master, retaining zero when it fits."""
+    points = [
+        point
+        for contours in masters
+        for contour in contours
+        for _, values in contour
+        for point in values
+        if point is not None
+    ]
+    if any(not all(math.isfinite(value) for value in point) for point in points):
+        raise PipelineError(f"{name}: continuous-chain carrier has non-finite coordinates")
+    origin = []
+    for axis in (0, 1):
+        low = min((point[axis] for point in points), default=0)
+        high = max((point[axis] for point in points), default=0)
+        # The component offset is itself a signed TrueType coordinate. A
+        # common integer origin preserves both interpolation and exact grids.
+        minimum = max(-32768, math.ceil(high - 32767 / scale))
+        maximum = min(32767, math.floor(low + 32767 / scale))
+        if minimum > maximum:
+            raise PipelineError(
+                f"{name}: continuous-chain carrier exceeds TrueType coordinate range"
+            )
+        origin.append(
+            0 if minimum <= 0 <= maximum else max(minimum, min(maximum, round((low + high) / 2)))
+        )
+    return origin[0], origin[1]
+
+
+def _scaled_contours(
+    contours: list[list[Operation]], factor: int, origin: tuple[int, int] = (0, 0)
+) -> list[list[Operation]]:
     return [
         [
             (
                 operation,
                 tuple(
-                    None if point is None else (point[0] * factor, point[1] * factor)
+                    None
+                    if point is None
+                    else ((point[0] - origin[0]) * factor, (point[1] - origin[1]) * factor)
                     for point in points
                 ),
             )
@@ -501,6 +537,7 @@ def _install_continuous_chain_carrier(
     protected: bool,
     authorship: str,
     scale: int = CONTINUOUS_CHAIN_SCALE,
+    origin: tuple[int, int] = (0, 0),
 ) -> str:
     """Carry fractional compatible points without changing visible geometry.
 
@@ -512,7 +549,7 @@ def _install_continuous_chain_carrier(
     helper_name = f"{name}.stv-semantic{scale}x"
     if helper_name in font:
         raise PipelineError(f"{name}: continuous-chain carrier glyph already exists")
-    scaled = _scaled_contours(contours, scale)
+    scaled = _scaled_contours(contours, scale, origin)
     finite_points = [
         point
         for contour in scaled
@@ -536,7 +573,7 @@ def _install_continuous_chain_carrier(
     glyph.clearContours()
     glyph.getPen().addComponent(
         helper_name,
-        (1 / scale, 0, 0, 1 / scale, 0, 0),
+        (1 / scale, 0, 0, 1 / scale, *origin),
     )
     return helper_name
 
@@ -2122,6 +2159,20 @@ def preserve_quadratic_reference(
         )
         for name, groups in source_groups.items()
     }
+    # Stage range validation before mutating any source font. Endpoint-IUP
+    # recipes retain their native coordinate frame; only chain conversion
+    # uses a translated carrier.
+    carrier_origins = {
+        name: _continuous_chain_origin(
+            name,
+            contours,
+            CONTINUOUS_CHAIN_FULL_SCALE
+            if placements[name] == CONTINUOUS_CHAIN_FULL
+            else CONTINUOUS_CHAIN_SCALE,
+        )
+        for name, (contours, _, _) in staged_groups.items()
+        if placements.get(name) in {CONTINUOUS_CHAIN, CONTINUOUS_CHAIN_FULL}
+    }
     # Dictionaries expose the same glyph objects while excluding explicitly
     # grouped drawings from cu2qu's one-operation-per-master requirement.
     conversion_fonts = (
@@ -2167,6 +2218,7 @@ def preserve_quadratic_reference(
                             protected=index in protected_glyph_sets
                             and name not in endpoint_transports,
                             authorship=authorship[name],
+                            origin=carrier_origins.get(name, (0, 0)),
                             scale=(
                                 CONTINUOUS_CHAIN_FULL_SCALE
                                 if placements.get(name) == CONTINUOUS_CHAIN_FULL
