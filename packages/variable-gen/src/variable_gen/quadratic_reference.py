@@ -1029,17 +1029,27 @@ def _subdivide_reference_chain(start: Point, operation: Operation) -> Operation:
 
 
 def _subdivide_reference_chain_full(start: Point, operation: Operation) -> list[Operation]:
-    """Add standalone collapsed spans after the protected fourfold chain."""
+    """Interleave collapsed capacity through the protected fourfold chain.
+
+    The authored full-chain fit distributes all of its compatible spans over
+    the source curve. Keeping every collapsed protected span at the final
+    endpoint makes most corresponding points travel across the entire curve
+    on the optical axis. Interleaving each quarter's capacity at that quarter's
+    endpoint preserves the exact protected path while keeping corresponding
+    movement local.
+    """
     kind, points = _subdivide_reference_chain(start, operation)
     assert kind == "qCurveTo"
     spline = [start, *[_require_point(point, "reference", "qCurveTo point") for point in points]]
-    operations: list[Operation] = [
+    quarters: list[Operation] = [
         ("qCurveTo", (control, end)) for _, control, end in _quadratic_spans(spline)
     ]
-    endpoint = _require_point(points[-1], "reference", "qCurveTo endpoint")
-    native_spans = (len(points) - 1) // CONTINUOUS_CHAIN_SUBDIVISIONS
-    extra = native_spans * (CONTINUOUS_CHAIN_FULL_SUBDIVISIONS - CONTINUOUS_CHAIN_SUBDIVISIONS)
-    operations.extend(("qCurveTo", (endpoint, endpoint)) for _ in range(extra))
+    collapsed_per_quarter = CONTINUOUS_CHAIN_FULL_SUBDIVISIONS // CONTINUOUS_CHAIN_SUBDIVISIONS - 1
+    operations: list[Operation] = []
+    for quarter in quarters:
+        endpoint = _require_point(quarter[1][-1], "reference", "qCurveTo endpoint")
+        operations.append(quarter)
+        operations.extend(("qCurveTo", (endpoint, endpoint)) for _ in range(collapsed_per_quarter))
     return operations
 
 
