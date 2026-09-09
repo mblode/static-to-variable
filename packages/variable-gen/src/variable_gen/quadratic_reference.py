@@ -62,6 +62,7 @@ SEMANTIC_PARTITION_KEY = "com.mblode.stv.quadraticSemanticPartition"
 CONTINUOUS_CHAIN_SUBDIVISIONS = 4
 CONTINUOUS_CHAIN_FULL_SUBDIVISIONS = 16
 CONTINUOUS_CHAIN_SCALE = 16
+CONTINUOUS_CHAIN_FULL_SCALE = 32
 
 
 def _source_group_metadata(fonts) -> dict[str, SourceGroups]:
@@ -499,18 +500,19 @@ def _install_continuous_chain_carrier(
     *,
     protected: bool,
     authorship: str,
+    scale: int = CONTINUOUS_CHAIN_SCALE,
 ) -> str:
     """Carry fractional compatible points without changing visible geometry.
 
-    TrueType rounds simple-glyph source points to integers. A 16x unencoded
-    helper plus a fixed 1/16 component transform preserves the exact fractional
-    subdivision used by protected outlines and keeps authored rounding below
-    one sixteenth of a source unit.
+    TrueType rounds simple-glyph source points to integers. A scaled unencoded
+    helper plus its inverse component transform preserves the exact fractional
+    subdivision used by protected outlines and bounds authored rounding by the
+    selected carrier scale.
     """
-    helper_name = f"{name}.stv-semantic16x"
+    helper_name = f"{name}.stv-semantic{scale}x"
     if helper_name in font:
         raise PipelineError(f"{name}: continuous-chain carrier glyph already exists")
-    scaled = _scaled_contours(contours, CONTINUOUS_CHAIN_SCALE)
+    scaled = _scaled_contours(contours, scale)
     finite_points = [
         point
         for contour in scaled
@@ -528,13 +530,13 @@ def _install_continuous_chain_carrier(
         )
     glyph = font[name]
     helper = font.newGlyph(helper_name)
-    helper.width = glyph.width * CONTINUOUS_CHAIN_SCALE
+    helper.width = glyph.width * scale
     helper.lib[OPTICAL_AUTHORSHIP_KEY] = authorship
     _draw_contours(helper, scaled)
     glyph.clearContours()
     glyph.getPen().addComponent(
         helper_name,
-        (1 / CONTINUOUS_CHAIN_SCALE, 0, 0, 1 / CONTINUOUS_CHAIN_SCALE, 0, 0),
+        (1 / scale, 0, 0, 1 / scale, 0, 0),
     )
     return helper_name
 
@@ -2155,6 +2157,11 @@ def preserve_quadratic_reference(
                             protected=index in protected_glyph_sets
                             and name not in endpoint_transports,
                             authorship=authorship[name],
+                            scale=(
+                                CONTINUOUS_CHAIN_FULL_SCALE
+                                if placements.get(name) == CONTINUOUS_CHAIN_FULL
+                                else CONTINUOUS_CHAIN_SCALE
+                            ),
                         )
                     )
             converted += 1
