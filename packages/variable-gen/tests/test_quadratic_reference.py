@@ -584,12 +584,28 @@ def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
 
 def test_continuous_chain_full_adds_exact_collapsed_reference_capacity() -> None:
     operation = ("qCurveTo", ((50, 100), (100, 0)))
-    kind, points = quadratic_reference._subdivide_reference_chain_full((0, 0), operation)
+    operations = quadratic_reference._subdivide_reference_chain_full((0, 0), operation)
 
-    assert kind == "qCurveTo"
-    assert len(points) == 17
-    assert all(value * 16 == round(value * 16) for point in points for value in point)
-    assert points[-13:] == ((100, 0),) * 13
+    assert len(operations) == 16
+    assert all(kind == "qCurveTo" and len(points) == 2 for kind, points in operations)
+    assert all(
+        value * 16 == round(value * 16)
+        for _, points in operations
+        for point in points
+        for value in point
+    )
+    assert operations[-12:] == [("qCurveTo", ((100, 0), (100, 0)))] * 12
+
+    original = RecordingPen()
+    original.moveTo((0, 0))
+    original.qCurveTo(*operation[1])
+    original.closePath()
+    expanded = RecordingPen()
+    expanded.moveTo((0, 0))
+    for kind, points in operations:
+        getattr(expanded, kind)(*points)
+    expanded.closePath()
+    assert quadratic_reference._same_filled_path(original, expanded)
 
 
 def test_adaptive_piecewise_uses_reviewed_allocations_and_explicit_deltas(

@@ -1026,14 +1026,19 @@ def _subdivide_reference_chain(start: Point, operation: Operation) -> Operation:
     return "qCurveTo", (*expanded, endpoint)
 
 
-def _subdivide_reference_chain_full(start: Point, operation: Operation) -> Operation:
-    """Add collapsed exact capacity after the protected fourfold chain."""
+def _subdivide_reference_chain_full(start: Point, operation: Operation) -> list[Operation]:
+    """Add standalone collapsed spans after the protected fourfold chain."""
     kind, points = _subdivide_reference_chain(start, operation)
     assert kind == "qCurveTo"
-    endpoint = points[-1]
+    spline = [start, *[_require_point(point, "reference", "qCurveTo point") for point in points]]
+    operations: list[Operation] = [
+        ("qCurveTo", (control, end)) for _, control, end in _quadratic_spans(spline)
+    ]
+    endpoint = _require_point(points[-1], "reference", "qCurveTo endpoint")
     native_spans = (len(points) - 1) // CONTINUOUS_CHAIN_SUBDIVISIONS
     extra = native_spans * (CONTINUOUS_CHAIN_FULL_SUBDIVISIONS - CONTINUOUS_CHAIN_SUBDIVISIONS)
-    return kind, (*points[:-1], *((endpoint,) * extra), endpoint)
+    operations.extend(("qCurveTo", (endpoint, endpoint)) for _ in range(extra))
+    return operations
 
 
 def _partition_subdivided_reference_chain(
@@ -1689,20 +1694,26 @@ def _piecewise_contours(
                 for index, spline in enumerate(splines):
                     if index in references:
                         operation = references[index][contour_index][operation_index]
-                        subdivision = (
-                            _subdivide_reference_chain_full
-                            if placement == CONTINUOUS_CHAIN_FULL
-                            else _subdivide_reference_chain
-                        )
-                        result[index][contour_index].append(
-                            subdivision(reference_current[index], operation)
-                        )
+                        if placement == CONTINUOUS_CHAIN_FULL:
+                            result[index][contour_index].extend(
+                                _subdivide_reference_chain_full(reference_current[index], operation)
+                            )
+                        else:
+                            result[index][contour_index].append(
+                                _subdivide_reference_chain(reference_current[index], operation)
+                            )
                         reference_current[index] = _require_point(
                             operation[1][-1], name, "reference endpoint"
                         )
                     else:
                         assert spline is not None
-                        result[index][contour_index].append(("qCurveTo", tuple(spline[1:])))
+                        if placement == CONTINUOUS_CHAIN_FULL:
+                            result[index][contour_index].extend(
+                                ("qCurveTo", (control, end))
+                                for _, control, end in _quadratic_spans(spline)
+                            )
+                        else:
+                            result[index][contour_index].append(("qCurveTo", tuple(spline[1:])))
                 continue
             effective_placement = (
                 REFERENCE_COUNT
