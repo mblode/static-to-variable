@@ -195,22 +195,30 @@ def restore_endpoint_iup_default(
         for _, controls in snapshots
     ):
         raise PipelineError("Endpoint IUP helper topology changes across masters")
-    # Production quadratic compilation reverses this native contour. Recover
-    # original points in sequence, then permit only collapsed endpoint additions.
-    mapping, cursor = {}, 0
+    # Fontmake can preserve native direction while direct ufo2ft compilation
+    # reverses it. Verify complete correspondence in either direction; never
+    # infer direction from a partial match or permit arbitrary point reordering.
     flags = snapshots[4][1].flags
-    for native_index in [0, *range(native_points - 1, 0, -1)]:
-        target = tuple(value * scale for value in native_coords[native_index])
-        while cursor < len(d_default) - 4:
-            if tuple(d_default[cursor]) == target and (flags[cursor] & 1) == (
-                native_glyph.flags[native_index] & 1
-            ):
+    matches_by_direction = []
+    for order in (list(range(native_points)), [0, *range(native_points - 1, 0, -1)]):
+        correspondence, cursor = {}, 0
+        for native_index in order:
+            target = tuple(value * scale for value in native_coords[native_index])
+            while cursor < len(d_default) - 4:
+                if tuple(d_default[cursor]) == target and (flags[cursor] & 1) == (
+                    native_glyph.flags[native_index] & 1
+                ):
+                    break
+                cursor += 1
+            if cursor == len(d_default) - 4:
                 break
+            correspondence[cursor] = native_index
             cursor += 1
-        if cursor == len(d_default) - 4:
-            raise PipelineError(f"Endpoint IUP native point missing: {native_index}")
-        mapping[cursor] = native_index
-        cursor += 1
+        if len(correspondence) == native_points:
+            matches_by_direction.append(correspondence)
+    if len(matches_by_direction) != 1:
+        raise PipelineError("Endpoint IUP native contour correspondence missing or ambiguous")
+    mapping = matches_by_direction[0]
     extra = {}
     for index in range(len(d_default) - 4):
         if index in mapping:
