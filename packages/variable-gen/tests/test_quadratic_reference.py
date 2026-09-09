@@ -1007,6 +1007,86 @@ def test_semantic_partition_pairs_adjacent_operations_with_protected_seam_ratio(
     assert abs(outgoing) / abs(incoming) == pytest.approx(1)
 
 
+def test_semantic_partition_can_target_one_contour_without_repartitioning_a_mark() -> None:
+    def recording(*operations):
+        pen = RecordingPen()
+        pen.value = list(operations)
+        return pen
+
+    authored = recording(
+        ("moveTo", ((200, 0),)),
+        ("curveTo", ((640 / 3, 80 / 3), (680 / 3, 80 / 3), (240, 0))),
+        ("closePath", ()),
+        ("moveTo", ((0, 0),)),
+        ("curveTo", ((50 / 3, 100 / 3), (100 / 3, 50), (50, 50))),
+        ("curveTo", ((200 / 3, 50), (250 / 3, 100 / 3), (100, 0))),
+        ("closePath", ()),
+    )
+    protected = recording(
+        ("moveTo", ((200, 0),)),
+        ("qCurveTo", ((220, 40), (240, 0))),
+        ("closePath", ()),
+        ("moveTo", ((0, 0),)),
+        ("qCurveTo", ((25, 50), (50, 50))),
+        ("qCurveTo", ((75, 50), (100, 0))),
+        ("closePath", ()),
+    )
+    contours, _, maximum = quadratic_reference._piecewise_contours(
+        "dependent",
+        [authored, authored, authored],
+        (((1, 1, 1), (1, 1, 1, 1)),) * 3,
+        {1: protected, 2: protected},
+        1,
+        1,
+        quadratic_reference.SEMANTIC_PARTITION,
+        {
+            "schemaVersion": 5,
+            "defaultSubdivisions": 4,
+            "subdivisionOverrides": {},
+            "semanticSlots": [],
+            "pairedOperations": [[0, 1]],
+            "protectedMatchAxes": ["Weight"],
+            "semanticContour": 1,
+        },
+        ({"Weight": 100}, {"Weight": 100}, {"Weight": 400}),
+    )
+
+    assert maximum == 4
+    assert contours[1][0] == protected.value[:3]
+    assert [kind for kind, _ in contours[0][1]] == [
+        "moveTo",
+        "qCurveTo",
+        "qCurveTo",
+        "closePath",
+    ]
+    assert contours[1][1] == contours[2][1]
+    assert contours[0][1] != contours[1][1]
+
+
+@pytest.mark.parametrize("semantic_contour", [-1, True])
+def test_semantic_partition_rejects_invalid_selected_contour(semantic_contour) -> None:
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 5,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 4,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "straightExtensionWeights": [],
+        "pairedOperations": [[0, 1]],
+        "protectedMatchAxes": ["Weight"],
+        "semanticContour": semantic_contour,
+    }
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    with pytest.raises(PipelineError, match="semantic partition metadata"):
+        quadratic_reference._semantic_partition_metadata(
+            fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+        )
+
+
 def test_semantic_partition_rejects_nonadjacent_paired_operations(tmp_path: Path) -> None:
     reference_path = tmp_path / "reference.ttf"
     _reference_font(reference_path)

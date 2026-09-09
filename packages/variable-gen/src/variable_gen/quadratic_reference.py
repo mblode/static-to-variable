@@ -139,6 +139,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
     version_two_keys = version_one_keys | {"pairedOperations", "protectedMatchAxes"}
     version_three_keys = version_one_keys | {"endpointSpans"}
     version_four_keys = version_three_keys | {"splitFraction"}
+    version_five_keys = version_two_keys | {"semanticContour"}
     result = {}
     for name in sorted(names):
         values = []
@@ -156,6 +157,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
                 frozenset(version_two_keys),
                 frozenset(version_three_keys),
                 frozenset(version_four_keys),
+                frozenset(version_five_keys),
             }
             for value in values
         ):
@@ -172,6 +174,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         pairs = recipe.get("pairedOperations", [])
         match_axes = recipe.get("protectedMatchAxes", [])
         endpoint_spans = recipe.get("endpointSpans", {})
+        semantic_contour = recipe.get("semanticContour", 0)
         valid_endpoints = (
             isinstance(endpoint_spans, dict)
             and bool(endpoint_spans)
@@ -204,12 +207,13 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         valid = (
             placements.get(name) == SEMANTIC_PARTITION
             and type(version) is int
-            and version in {1, 2, 3, 4}
+            and version in {1, 2, 3, 4, 5}
             and (
                 (version == 1 and set(recipe) == version_one_keys)
                 or (version == 2 and set(recipe) == version_two_keys)
                 or (version == 3 and set(recipe) == version_three_keys)
                 or (version == 4 and set(recipe) == version_four_keys)
+                or (version == 5 and set(recipe) == version_five_keys)
             )
             and recipe["placement"] == SEMANTIC_PARTITION
             and recipe["glyph"] == name
@@ -234,8 +238,10 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
                 for value in weights
             )
             and len(set(weights)) == len(weights)
-            and (version != 2 or (valid_pairs and bool(pairs and match_axes)))
+            and (version not in {2, 5} or (valid_pairs and bool(pairs and match_axes)))
             and (version not in {3, 4} or valid_endpoints)
+            and type(semantic_contour) is int
+            and semantic_contour >= 0
             and (
                 version != 4
                 or (
@@ -1300,7 +1306,10 @@ def _piecewise_contours(
                 )
             adaptive_allocations[(contour_index, semantic_index)] = tuple(allocation)
     if semantic_recipe is not None:
-        if len(reference) != 1:
+        semantic_contour = semantic_recipe.get("semanticContour", 0)
+        if semantic_contour >= len(reference):
+            raise PipelineError(f"{name}: semantic contour is outside the protected glyph")
+        if semantic_recipe.get("schemaVersion") != 5 and len(reference) != 1:
             raise PipelineError(f"{name}: semantic partition currently requires one contour")
         pairs = tuple(tuple(pair) for pair in semantic_recipe.get("pairedOperations", ()))
         paired_indexes = {value for pair in pairs for value in pair}
@@ -1310,7 +1319,7 @@ def _piecewise_contours(
             | {int(index) for index in semantic_recipe["subdivisionOverrides"]}
             | {int(index) for index in semantic_recipe.get("endpointSpans", {})}
         )
-        semantic_operations = reference[0][1:-1]
+        semantic_operations = reference[semantic_contour][1:-1]
         invalid = {
             index
             for index in configured
@@ -1345,9 +1354,14 @@ def _piecewise_contours(
         cursors = [0] * len(sources)
         current: list[Point] = [(0, 0)] * len(sources)
         reference_current: dict[int, Point] = {}
-        paired_starts = {
-            first: second for first, second in (semantic_recipe or {}).get("pairedOperations", ())
-        }
+        semantic_here = semantic_recipe is not None and contour_index == semantic_recipe.get(
+            "semanticContour", 0
+        )
+        paired_starts = (
+            {first: second for first, second in semantic_recipe.get("pairedOperations", ())}
+            if semantic_here and semantic_recipe is not None
+            else {}
+        )
         paired_ends = set(paired_starts.values())
         for operation_index, (kind, target_points) in enumerate(target):
             semantic_index = operation_index - 1
@@ -1438,7 +1452,7 @@ def _piecewise_contours(
                     else:
                         result[index][contour_index].extend(fitted[index])
                 continue
-            if placement == SEMANTIC_PARTITION:
+            if placement == SEMANTIC_PARTITION and semantic_here:
                 assert semantic_recipe is not None
                 # Recipe indexes are semantic path operations and intentionally
                 # exclude the contour's moveTo and closePath sentinels.
@@ -1772,6 +1786,8 @@ def _piecewise_contours(
                     CONTINUOUS_CHAIN_FULL,
                     NATIVE_IUP_TRANSPORT,
                 }
+                else "prefix"
+                if placement == SEMANTIC_PARTITION
                 else placement
             )
             prefix, fitted = _fit_piecewise_group(
