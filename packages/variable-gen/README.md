@@ -61,7 +61,31 @@ When adding those drawings changes cu2qu's segmentation of an already-shipped Tr
 
 During designspace export, the engine converts all masters together and reconciles only provenance-marked glyphs. The reference's filled outline and advance are retained exactly at the default location; zero-length quadratic prefixes provide compatible point structure when an authored master needs more segments. Every non-reference cubic stays within `maxError` font units. Mismatched units per em, missing glyphs, open or incompatible contours, and unrepresentable curves fail before varLib rather than weakening the reference.
 
+A style can also set `"optimizeGvar": false` to retain explicit TrueType variation deltas instead of IUP compression. This can preserve interpolated coordinates when new optical masters change the default outline used for delta inference. It may increase font size and does not preserve cubic-to-quadratic subdivision by itself. The default is `true`.
+
+To retain explicit deltas only for marked drawings, set `"preserveAuthoredDeltas": true` with the default `optimizeGvar: true`. Unmarked glyphs still receive normal IUP compression. This avoids changing their inferred coordinates as a side effect of disabling compression globally.
+
+To protect several masters while keeping a different optical row as the default, replace `location` with `protectedMasters`:
+
+```json
+"quadraticReference": {
+  "path": "release/previous-variable.ttf",
+  "protectedMasters": {
+    "Display Thin": { "wght": 100, "opsz": 32 },
+    "Display Regular": { "wght": 400, "opsz": 32 },
+    "Display ExtraBlack": { "wght": 950, "opsz": 32 }
+  },
+  "maxError": 1
+}
+```
+
+Keys identify configured masters; values locate their authority in the reference font. The engine matches exported sources by configured axis location, including when Glyphs adds an Italic suffix to a style name. All protected reference instances must have compatible topology. This preserves each specified master during conversion; verify compiled intermediate outlines separately, since variation compression and rounding occur afterward. `location` and `protectedMasters` are mutually exclusive.
+
+For matching point topology, a private coordinator can call `variation_reference.restore_reference_inference(reference, candidate, glyphs)` after compilation. It retains the reference's sparse variation tuples and adds explicit integer residuals, recovering fractional interpolation that explicit delta rounding loses. Axis normalization, `avar`, units per em, and point topology must match. This is an opt-in low-level operation, not an automatic preservation guarantee: a changed default can alter IUP interpolation. Recheck protected geometry, authored fidelity, and serialized output after calling it.
+
 `rebuild` writes a reconstruction report (read by the `repair_build` promotion gate) at `packages/variable-gen/reports/reconstruction-report.json`. `build` writes a layout report (read by the `layout` promotion gate) at `packages/variable-gen/reports/layout-report.json`.
+
+For finer fitting on selected authored drawings, add `"glyphMaxError": {"a": 0.25, "r": 0.25}` inside `quadraticReference`. These overrides force those glyphs through reference reconciliation, even if the preliminary conversion already matches the protected masters. Other glyphs retain their usual conversion. Values must be finite and positive, and named glyphs must carry authorship provenance. The error bounds describe curve approximation before integer font serialization; verify compiled stroke thickness separately.
 
 ## OpenType layout, kerning, and hinting
 

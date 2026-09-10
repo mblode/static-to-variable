@@ -9,10 +9,16 @@ from fontTools.cu2qu.ufo import fonts_to_quadratic
 from fontTools.designspaceLib import AxisDescriptor, DesignSpaceDocument, SourceDescriptor
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
-from fontTools.ttLib import TTFont
+from fontTools.pens.recordingPen import DecomposingRecordingPen, RecordingPen
+from fontTools.ttLib import TTFont, newTable
+from fontTools.ttLib.tables.TupleVariation import TupleVariation
+from fontTools.ttLib.tables import otTables
+from fontTools.pens.transformPen import TransformPen
+from fontTools.varLib.varStore import OnlineVarStoreBuilder
 from fontTools.varLib.instancer import instantiateVariableFont
 
 from variable_gen.authorship import OPTICAL_AUTHORSHIP_KEY
+from variable_gen.build import _optimize_unmarked_variations, _preserved_authored_variations
 from variable_gen.common import PipelineError
 from variable_gen.quadratic_reference import (
     _fixed_quadratic_spline,
@@ -125,7 +131,7 @@ def _signature(glyph) -> tuple[tuple[str, int], ...]:
     return tuple((operation, len(points)) for operation, points in recording.value)
 
 
-def _compile_variable(fonts: list[ufoLib2.Font]) -> TTFont:
+def _compile_variable(fonts: list[ufoLib2.Font], *, optimize_gvar: bool = True) -> TTFont:
     document = DesignSpaceDocument()
     axis = AxisDescriptor()
     axis.name = "Optical size"
@@ -142,7 +148,153 @@ def _compile_variable(fonts: list[ufoLib2.Font]) -> TTFont:
         source.location = {axis.name: optical_size}
         source.font = font
         document.addSource(source)
-    return ufo2ft.compileVariableTTF(document, useProductionNames=False)
+    return ufo2ft.compileVariableTTF(document, useProductionNames=False, optimizeGvar=optimize_gvar)
+
+
+def test_selective_compression_keeps_authored_deltas_and_normal_unmarked_output() -> None:
+    def sources():
+        fonts = _source_set()
+        for font in fonts:
+            font["unmarked"].clearContours()
+            _recording(font["curve"]).replay(font["unmarked"].getPen())
+        return fonts
+
+    explicit = _compile_variable(sources(), optimize_gvar=False)
+    standard = _compile_variable(sources())
+    before = [(v.axes, list(v.coordinates)) for v in explicit["gvar"].variations["curve"]]
+    _optimize_unmarked_variations(explicit, frozenset({"curve"}))
+    assert [(v.axes, list(v.coordinates)) for v in explicit["gvar"].variations["curve"]] == before
+    actual = explicit["gvar"].variations["unmarked"]
+    expected = standard["gvar"].variations["unmarked"]
+    assert any(delta is None for variation in actual for delta in variation.coordinates)
+    assert [(v.axes, list(v.coordinates)) for v in actual] == [
+        (v.axes, list(v.coordinates)) for v in expected
+    ]
+
+
+@pytest.mark.parametrize("scale", (16, 32))
+def test_authored_high_precision_carrier_is_excluded_from_iup_optimization(scale: int) -> None:
+    fonts = _source_set()
+    carrier = f"curve.stv-semantic{scale}x"
+    for font in fonts:
+        font["unmarked"].clearContours()
+        _recording(font["curve"]).replay(font["unmarked"].getPen())
+        glyph = font.newGlyph(carrier)
+        _recording(font["unmarked"]).replay(glyph.getPen())
+
+    explicit = _compile_variable(fonts, optimize_gvar=False)
+    before = [
+        (variation.axes, list(variation.coordinates))
+        for variation in explicit["gvar"].variations[carrier]
+    ]
+    preserved = _preserved_authored_variations(explicit, frozenset({"curve"}))
+    _optimize_unmarked_variations(explicit, preserved)
+
+    assert preserved == frozenset({"curve", carrier})
+    assert [
+        (variation.axes, list(variation.coordinates))
+        for variation in explicit["gvar"].variations[carrier]
+    ] == before
+    assert any(
+        delta is None
+        for variation in explicit["gvar"].variations["unmarked"]
+        for delta in variation.coordinates
+    )
+
+
+def test_display_weight_row_is_preserved_with_text_as_the_default(tmp_path: Path) -> None:
+    path = tmp_path / "reference.ttf"
+    _reference_font(path)
+    reference = TTFont(path)
+    FontBuilder(font=reference).setupFvar(
+        [("wght", 100, 400, 900, "Weight"), ("opsz", 14, 14, 32, "Optical size")], []
+    )
+    reference["gvar"] = newTable("gvar")
+    reference["gvar"].variations = {name: [] for name in reference.getGlyphOrder()}
+    coordinates, _, _ = reference["glyf"]["curve"].getCoordinates(reference["glyf"])
+    for support, height_delta, advance_delta in [((-1, -1, 0), -24, -20), ((0, 1, 1), 30, 40)]:
+        deltas = [(0, height_delta if y else 0) for _, y in coordinates] + [(0, 0)] * 4
+        deltas[len(coordinates) + 1] = (advance_delta, 0)
+        reference["gvar"].variations["curve"].append(TupleVariation({"wght": support}, deltas))
+    store = OnlineVarStoreBuilder(["wght", "opsz"])
+    store.setSupports([{"wght": (-1, -1, 0)}, {"wght": (0, 1, 1)}])
+    indices = {
+        name: store.storeDeltas([-20, 40] if name == "curve" else [0, 0])
+        for name in reference.getGlyphOrder()
+    }
+    reference["HVAR"] = newTable("HVAR")
+    hvar = reference["HVAR"].table = otTables.HVAR()
+    hvar.Version = 0x10000
+    hvar.VarStore = store.finish()
+    hvar.AdvWidthMap = otTables.VarIdxMap()
+    hvar.AdvWidthMap.mapping = indices
+    hvar.LsbMap = hvar.RsbMap = None
+    reference.save(path)
+
+    fonts = [_source_font(height=220 + i * 20, width=520 + i * 20, marked=True) for i in range(3)]
+    for scale, width in [(0.84, 480), (1, 500), (1.2, 540)]:
+        font = _exact_reference_source(marked=False)
+        old = _recording(font["curve"])
+        font["curve"].clearContours()
+        old.replay(TransformPen(font["curve"].getPen(), (1, 0, 0, scale, 0, 0)))
+        font["curve"].width = width
+        fonts.append(font)
+    preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=path,
+        reference_location={},
+        protected_locations={
+            3 + i: {"wght": weight, "opsz": 32} for i, weight in enumerate((100, 400, 900))
+        },
+    )
+    document = DesignSpaceDocument()
+    for name, tag, minimum, default, maximum in [
+        ("Weight", "wght", 100, 400, 900),
+        ("Optical size", "opsz", 14, 14, 32),
+    ]:
+        axis = AxisDescriptor()
+        axis.name, axis.tag = name, tag
+        axis.minimum, axis.default, axis.maximum = minimum, default, maximum
+        document.addAxis(axis)
+    locations = [(weight, opsz) for opsz in (14, 32) for weight in (100, 400, 900)]
+    for index, (font, (weight, opsz)) in enumerate(zip(fonts, locations, strict=True)):
+        source = SourceDescriptor()
+        source.name = f"master-{index}"
+        source.font = font
+        source.familyName, source.styleName = font.info.familyName, font.info.styleName
+        source.location = {"Weight": weight, "Optical size": opsz}
+        document.addSource(source)
+    variable = ufo2ft.compileVariableTTF(document, useProductionNames=False, optimizeGvar=False)
+    assert {axis.axisTag: axis.defaultValue for axis in variable["fvar"].axes} == {
+        "wght": 400,
+        "opsz": 14,
+    }
+    for weight in (100, 237, 400, 625, 900):
+        expected = reference.getGlyphSet(location={"wght": weight, "opsz": 32})["curve"]
+        actual = variable.getGlyphSet(location={"wght": weight, "opsz": 32})["curve"]
+        assert _same_filled_path(_recording(actual), _recording(expected))
+        assert actual.width == pytest.approx(expected.width, abs=1e-9)
+    text = variable.getGlyphSet()["curve"]
+    assert text.width == 540
+    assert not _same_filled_path(_recording(text), _recording(reference.getGlyphSet()["curve"]))
+
+
+@pytest.mark.parametrize("locations", [{}, {3: {}}, {True: {}}])
+def test_protected_master_indices_fail_before_source_mutation(tmp_path, locations) -> None:
+    path = tmp_path / "reference.ttf"
+    _reference_font(path)
+    fonts = _source_set()
+    before = [_recording(font["curve"]).value for font in fonts]
+    with pytest.raises(ValueError, match="existing source masters"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=path,
+            reference_location={},
+            protected_locations=locations,
+        )
+    assert [_recording(font["curve"]).value for font in fonts] == before
 
 
 def _cubic_point(curve: tuple[complex, complex, complex, complex], t: float) -> complex:
@@ -202,6 +354,843 @@ def test_reference_geometry_survives_compatible_closed_variable_build(tmp_path: 
     assert ui["hmtx"].metrics["curve"][0] == 500
     assert display["hmtx"].metrics["curve"][0] == 500
     assert text["hmtx"].metrics["curve"][0] == 520
+
+
+@pytest.mark.parametrize("metadata", [False, True])
+def test_piecewise_authored_source_compiles_with_exact_protected_masters(
+    tmp_path: Path, metadata
+) -> None:
+    from fontTools.misc.bezierTools import splitCubicAtT
+
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    glyph = fonts[0]["curve"]
+    glyph.clearContours()
+    pen = glyph.getPen()
+    pen.moveTo((0, 0))
+    for curve in splitCubicAtT((0, 0), (0, 220), (100, 220), (100, 0), 0.5):
+        pen.curveTo(*curve[1:])
+    pen.closePath()
+    untouched = _source_set()
+    fonts_to_quadratic(untouched, max_err=1, reverse_direction=True, remember_curve_type=False)
+    groups = (((1, 1, 2, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))
+    if metadata:
+        for font, contours in zip(fonts, groups, strict=True):
+            font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
+    preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        protected_locations={1: {}, 2: {}},
+        source_groups=None if metadata else {"curve": groups},
+    )
+    assert len({_signature(font["curve"]) for font in fonts}) == 1
+    for actual, expected in zip(fonts, untouched, strict=True):
+        assert _recording(actual["unmarked"]).value == _recording(expected["unmarked"]).value
+    variable = _compile_variable(fonts, optimize_gvar=False)
+    reference = TTFont(reference_path).getGlyphSet()["curve"]
+    for optical_size in (16, 28):
+        instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
+        glyphs = instance.getGlyphSet()
+        recording = DecomposingRecordingPen(glyphs)
+        glyphs["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
+        assert instance["hmtx"].metrics["curve"][0] == 500
+
+
+def test_incomplete_piecewise_contract_fails_before_any_source_mutation(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    before = [[_recording(font[name]).value for name in font.keys()] for font in fonts]
+    with pytest.raises(PipelineError, match="every source master"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+            source_groups={"curve": (((1, 1, 1, 1),),)},
+        )
+    assert before == [[_recording(font[name]).value for name in font.keys()] for font in fonts]
+
+
+@pytest.mark.parametrize("failure", ["missing", "unmarked", "conflict"])
+def test_source_group_metadata_cannot_be_partial_unmarked_or_overridden(tmp_path, failure):
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    for font in fonts:
+        font["curve"].lib[OPTICAL_AUTHORSHIP_KEY] = PROVENANCE
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
+    if failure == "missing":
+        del fonts[1]["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY]
+    elif failure == "unmarked":
+        for font in fonts:
+            del font["curve"].lib[OPTICAL_AUTHORSHIP_KEY]
+    before = [[_recording(font[name]).value for name in font.keys()] for font in fonts]
+    with pytest.raises(PipelineError):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+            source_groups={} if failure == "conflict" else None,
+        )
+    assert before == [[_recording(font[name]).value for name in font.keys()] for font in fonts]
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        quadratic_reference.BALANCED_ENDPOINTS,
+        quadratic_reference.REFERENCE_COUNT,
+        quadratic_reference.REFERENCE_COUNT_LINES,
+        quadratic_reference.NATIVE_IUP_TRANSPORT,
+    ],
+)
+def test_balanced_padding_metadata_compiles_with_exact_protected_masters(
+    tmp_path: Path, mode: str
+) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    groups = ((1, 1, 1, 1),)
+    for index, font in enumerate(fonts):
+        if mode in {
+            quadratic_reference.REFERENCE_COUNT,
+            quadratic_reference.REFERENCE_COUNT_LINES,
+            quadratic_reference.NATIVE_IUP_TRANSPORT,
+        }:
+            glyph = font["curve"]
+            glyph.clearContours()
+            pen = glyph.getPen()
+            pen.moveTo((0, 0))
+            pen.curveTo((100 / 3, 100), (200 / 3, 100), (100, 0))
+            if mode == quadratic_reference.REFERENCE_COUNT_LINES and index == 0:
+                pen.lineTo((130, 0))
+            pen.closePath()
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = (
+            ((1, 1, 2, 1),)
+            if mode == quadratic_reference.REFERENCE_COUNT_LINES and index == 0
+            else groups
+        )
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = mode
+        if mode == quadratic_reference.NATIVE_IUP_TRANSPORT:
+            font["curve"].lib[quadratic_reference.NATIVE_IUP_TRANSPORT_KEY] = {
+                "schemaVersion": 1,
+                "placement": quadratic_reference.NATIVE_IUP_TRANSPORT,
+                "glyph": "curve",
+                "glyphRowsSha256": "a" * 64,
+                "referenceSha256": "b" * 64,
+                "nativeFramePoints": [0],
+                "textAdjustmentPoints": [1],
+                "textLocations": [{"opsz": 14, "wght": 100}],
+                "protectedLocation": {"opsz": 32, "wght": 400},
+                "maxNativeFrameResidual": 1,
+            }
+
+    preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        protected_locations={1: {}, 2: {}},
+    )
+
+    assert len({_signature(font["curve"]) for font in fonts}) == 1
+    reference = TTFont(reference_path).getGlyphSet()["curve"]
+    assert _same_filled_path(_recording(fonts[1]["curve"]), _recording(reference))
+    assert _same_filled_path(_recording(fonts[2]["curve"]), _recording(reference))
+    variable = _compile_variable(fonts, optimize_gvar=False)
+    for optical_size in (16, 28):
+        instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
+        assert _same_filled_path(_recording(instance.getGlyphSet()["curve"]), _recording(reference))
+
+
+def test_native_iup_transport_requires_recipe_in_every_master(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.NATIVE_IUP_TRANSPORT
+        )
+    before = [[_recording(font[name]).value for name in font.keys()] for font in fonts]
+    with pytest.raises(PipelineError, match="placement and recipe must agree"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+        )
+    assert before == [[_recording(font[name]).value for name in font.keys()] for font in fonts]
+
+
+@pytest.mark.parametrize(
+    ("mode", "scale"),
+    [
+        (quadratic_reference.CONTINUOUS_CHAIN, 16),
+        (quadratic_reference.CONTINUOUS_CHAIN_FULL, 32),
+    ],
+)
+@pytest.mark.parametrize("offset", (0, 1100))
+def test_continuous_chain_uses_explicit_scaled_carrier_and_preserves_reference(
+    tmp_path: Path, mode: str, scale: int, offset: int
+) -> None:
+    from fontTools.misc.bezierTools import splitCubicAtT
+
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    source = fonts[0]["curve"]
+    source.clearContours()
+    pen = source.getPen()
+    pen.moveTo((0, 0))
+    for curve in splitCubicAtT((0, 0), (0, 220), (100, 220), (100, 0), 0.5):
+        pen.curveTo(*curve[1:])
+    pen.closePath()
+    groups = (((1, 1, 2, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))
+    for font, contours in zip(fonts, groups, strict=True):
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = mode
+        recording = _recording(font["curve"])
+        font["curve"].clearContours()
+        recording.replay(TransformPen(font["curve"].getPen(), (1, 0, 0, 1, offset, 0)))
+    with TTFont(reference_path) as reference_font:
+        reference_font["glyf"]["curve"].coordinates.translate((offset, 0))
+        reference_font["hmtx"].metrics["curve"] = (500, offset)
+        reference_font.save(reference_path)
+
+    report = preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        protected_locations={1: {}, 2: {}},
+        glyph_max_error={"curve": 20},
+    )
+
+    helper_name = f"curve.stv-semantic{scale}x"
+    assert report.carrier_glyphs == (helper_name,)
+    for font in fonts:
+        assert helper_name in font
+        assert font[helper_name].lib[OPTICAL_AUTHORSHIP_KEY] == PROVENANCE
+        assert len(font["curve"].components) == 1
+        assert font["curve"].components[0].baseGlyph == helper_name
+        expected_origin = 1150 if offset == 1100 and scale == 32 else 0
+        assert font["curve"].components[0].transformation == pytest.approx(
+            (1 / scale, 0, 0, 1 / scale, expected_origin, 0)
+        )
+    variable = _compile_variable(fonts, optimize_gvar=False)
+    saved_path = tmp_path / "variable.ttf"
+    variable.save(saved_path)
+    variable.close()
+    variable = TTFont(saved_path)
+    cmap = variable.getBestCmap()
+    assert cmap is None or helper_name not in cmap.values()
+    assert variable["head"].yMax > TTFont(reference_path)["head"].yMax
+    reference = TTFont(reference_path).getGlyphSet()["curve"]
+    for optical_size in (16, 28):
+        instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
+        glyphs = instance.getGlyphSet()
+        recording = DecomposingRecordingPen(glyphs)
+        glyphs["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
+
+
+def test_continuous_chain_origin_uses_all_masters_and_both_axes() -> None:
+    masters = [
+        [[("moveTo", ((-1100, -1100),)), ("lineTo", ((-1000, -1000),))]],
+        [[("moveTo", ((-900, -900),)), ("lineTo", ((-800, -800),))]],
+    ]
+    assert quadratic_reference._continuous_chain_origin("wide", masters, 32) == (-950, -950)
+
+
+@pytest.mark.parametrize("end", (2050, float("inf"), float("nan")))
+def test_continuous_chain_origin_rejects_unrepresentable_bounds(end: float) -> None:
+    masters = [[[("moveTo", ((0, 0),)), ("lineTo", ((end, 0),))]]]
+    with pytest.raises(PipelineError, match="coordinate"):
+        quadratic_reference._continuous_chain_origin("wide", masters, 32)
+
+
+def test_grouped_carrier_promotes_only_exact_protected_geometry_to_32x() -> None:
+    masters = [
+        [[("moveTo", ((0.03125, 0),)), ("lineTo", ((100, 0),))]],
+        [[("moveTo", ((0, 0),)), ("lineTo", ((100.03125, 0),))]],
+    ]
+
+    assert (
+        quadratic_reference._grouped_carrier_scale(
+            "curve",
+            masters,
+            frozenset({1}),
+            quadratic_reference.ADAPTIVE_PIECEWISE,
+        )
+        == 32
+    )
+    assert (
+        quadratic_reference._grouped_carrier_scale(
+            "curve",
+            masters,
+            frozenset(),
+            quadratic_reference.ADAPTIVE_PIECEWISE,
+        )
+        == 16
+    )
+
+
+@pytest.mark.parametrize("value", (0.02, 1024.03125))
+def test_grouped_carrier_rejects_inexact_or_out_of_range_32x(value: float) -> None:
+    masters = [[[("moveTo", ((value, 0),)), ("lineTo", ((100, 0),))]]]
+
+    with pytest.raises(PipelineError, match="cannot represent coordinates exactly"):
+        quadratic_reference._grouped_carrier_scale(
+            "curve",
+            masters,
+            frozenset({0}),
+            quadratic_reference.SEMANTIC_PARTITION,
+        )
+
+
+def test_continuous_chain_full_distributes_exact_collapsed_reference_capacity() -> None:
+    operation = ("qCurveTo", ((50, 100), (100, 0)))
+    operations = quadratic_reference._subdivide_reference_chain_full((0, 0), operation)
+
+    assert len(operations) == 16
+    assert all(kind == "qCurveTo" and len(points) == 2 for kind, points in operations)
+    assert all(
+        value * 16 == round(value * 16)
+        for _, points in operations
+        for point in points
+        for value in point
+    )
+    for index in range(0, len(operations), 4):
+        endpoint = operations[index][1][-1]
+        assert operations[index + 1 : index + 4] == [("qCurveTo", (endpoint, endpoint))] * 3
+    assert sum(points[0] == points[1] for _, points in operations[:8]) == 6
+
+    original = RecordingPen()
+    original.moveTo((0, 0))
+    original.qCurveTo(*operation[1])
+    original.closePath()
+    expanded = RecordingPen()
+    expanded.moveTo((0, 0))
+    for kind, points in operations:
+        getattr(expanded, kind)(*points)
+    expanded.closePath()
+    assert quadratic_reference._same_filled_path(original, expanded)
+
+
+def test_adaptive_piecewise_uses_reviewed_allocations_and_explicit_deltas(
+    tmp_path: Path,
+) -> None:
+    from fontTools.misc.bezierTools import splitCubicAtT
+
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    source = fonts[0]["curve"]
+    source.clearContours()
+    pen = source.getPen()
+    pen.moveTo((0, 0))
+    for curve in splitCubicAtT((0, 0), (0, 220), (100, 220), (100, 0), 0.25, 0.5):
+        pen.curveTo(*curve[1:])
+    pen.closePath()
+    groups = (((1, 1, 3, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))
+    recipe = {
+        "schemaVersion": 1,
+        "placement": quadratic_reference.ADAPTIVE_PIECEWISE,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "subdivisions": 4,
+        "allocations": {"0:1": [1, 1, 2]},
+    }
+    for font, contours in zip(fonts, groups, strict=True):
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.ADAPTIVE_PIECEWISE
+        )
+        font["curve"].lib[quadratic_reference.ADAPTIVE_PIECEWISE_KEY] = recipe
+
+    report = preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        protected_locations={1: {}, 2: {}},
+        glyph_max_error={"curve": 20},
+    )
+
+    assert report.carrier_glyphs == ("curve.stv-semantic16x",)
+    assert len({_signature(font["curve.stv-semantic16x"]) for font in fonts}) == 1
+    assert _signature(fonts[0]["curve.stv-semantic16x"])[1:5] == (
+        ("lineTo", 1),
+        ("qCurveTo", 2),
+        ("qCurveTo", 2),
+        ("qCurveTo", 3),
+    )
+    reference = TTFont(reference_path).getGlyphSet()["curve"]
+    for index in (1, 2):
+        recording = DecomposingRecordingPen(fonts[index])
+        fonts[index]["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
+    variable = _compile_variable(fonts, optimize_gvar=False)
+    variations = variable["gvar"].variations["curve.stv-semantic16x"]
+    assert all(delta is not None for variation in variations for delta in variation.coordinates)
+    for optical_size in (16, 28):
+        instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
+        recording = DecomposingRecordingPen(instance.getGlyphSet())
+        instance.getGlyphSet()["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
+
+
+@pytest.mark.parametrize(
+    ("recipe_change", "message"),
+    [
+        ({"allocations": {}}, "needs an explicit allocation"),
+        ({"allocations": {"0:1": [1, 1, 1]}}, "totals 3, expected 4"),
+    ],
+)
+def test_adaptive_piecewise_rejects_missing_or_incomplete_multi_curve_allocation(
+    tmp_path: Path, recipe_change: dict, message: str
+) -> None:
+    from fontTools.misc.bezierTools import splitCubicAtT
+
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    source = fonts[0]["curve"]
+    source.clearContours()
+    pen = source.getPen()
+    pen.moveTo((0, 0))
+    for curve in splitCubicAtT((0, 0), (0, 220), (100, 220), (100, 0), 0.5):
+        pen.curveTo(*curve[1:])
+    pen.closePath()
+    groups = (((1, 1, 2, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))
+    recipe = {
+        "schemaVersion": 1,
+        "placement": quadratic_reference.ADAPTIVE_PIECEWISE,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "subdivisions": 4,
+        "allocations": {"0:1": [2, 2]},
+    }
+    recipe.update(recipe_change)
+    for font, contours in zip(fonts, groups, strict=True):
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.ADAPTIVE_PIECEWISE
+        )
+        font["curve"].lib[quadratic_reference.ADAPTIVE_PIECEWISE_KEY] = recipe
+    before = [_recording(font["curve"]).value for font in fonts]
+
+    with pytest.raises(PipelineError, match=message):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+            protected_locations={1: {}, 2: {}},
+            glyph_max_error={"curve": 20},
+        )
+    assert [_recording(font["curve"]).value for font in fonts] == before
+
+
+@pytest.mark.parametrize("version", [1, 3])
+def test_semantic_partition_uses_source_bound_recipe_and_exact_carrier(
+    tmp_path: Path,
+    version: int,
+) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 1,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 2,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "straightExtensionWeights": [],
+    }
+    if version == 3:
+        recipe.update(schemaVersion=3, defaultSubdivisions=1, endpointSpans={"1": 8})
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.SEMANTIC_PARTITION
+        )
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+
+    report = preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        protected_locations={1: {}, 2: {}},
+        glyph_max_error={"curve": 20},
+    )
+
+    assert report.carrier_glyphs == ("curve.stv-semantic16x",)
+    assert len({_signature(font["curve"]) for font in fonts}) == 1
+    reference = TTFont(reference_path).getGlyphSet()["curve"]
+    for index in (1, 2):
+        recording = DecomposingRecordingPen(fonts[index])
+        fonts[index]["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"endpointSpans": {}},
+        {"endpointSpans": {"01": 8}},
+        {"endpointSpans": {"1": True}},
+        {"endpointSpans": {"1": 65}},
+        {"defaultSubdivisions": 2},
+        {"semanticSlots": [1]},
+        {"schemaVersion": True},
+        {"pairedOperations": []},
+    ],
+)
+def test_endpoint_metadata_rejects_unbounded_or_subdivided_protected_paths(change: dict) -> None:
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 3,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 1,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "straightExtensionWeights": [],
+        "endpointSpans": {"1": 8},
+    }
+    recipe.update(change)
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    with pytest.raises(PipelineError, match="semantic partition metadata"):
+        quadratic_reference._semantic_partition_metadata(
+            fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+        )
+
+
+def test_semantic_partition_fails_without_recipe_before_mutating_sources(
+    tmp_path: Path,
+) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.SEMANTIC_PARTITION
+        )
+    before = [_recording(font["curve"]).value for font in fonts]
+    with pytest.raises(PipelineError, match="semantic partition recipe mismatch"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+        )
+    assert [_recording(font["curve"]).value for font in fonts] == before
+
+
+@pytest.mark.parametrize("endpoint_spans", [False, True, "leading"])
+def test_semantic_partition_indexes_operations_after_move_sentinel(endpoint_spans) -> None:
+    def recording(*operations):
+        pen = RecordingPen()
+        pen.value = list(operations)
+        return pen
+
+    ordinary = recording(
+        ("moveTo", ((0, 0),)),
+        ("lineTo", ((100, 0),)),
+        ("curveTo", ((100, 80), (0, 80), (0, 0))),
+        ("closePath", ()),
+    )
+    extended = recording(
+        ("moveTo", ((0, 0),)),
+        ("lineTo", ((100, 0),)),
+        ("lineTo", ((100, 10),)),
+        ("curveTo", ((100, 80), (0, 80), (0, 0))),
+        ("closePath", ()),
+    )
+    protected = recording(
+        ("moveTo", ((0, 0),)),
+        ("lineTo", ((100, 0),)),
+        ("qCurveTo", ((50, 120), (0, 0))),
+        ("closePath", ()),
+    )
+    contours, _, _ = quadratic_reference._piecewise_contours(
+        "curve",
+        [extended, ordinary, ordinary],
+        (((1, 1, 2, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),)),
+        {1: protected, 2: protected},
+        1,
+        40,
+        quadratic_reference.SEMANTIC_PARTITION,
+        {
+            "defaultSubdivisions": 2,
+            "subdivisionOverrides": {},
+            "semanticSlots": [] if endpoint_spans is True else [1],
+            **({"endpointSpans": {"1": 8}} if endpoint_spans else {}),
+            **({"splitFraction": 0.25} if endpoint_spans == "leading" else {}),
+        },
+    )
+    assert len({tuple((op, len(points)) for op, points in value[0]) for value in contours}) == 1
+    if endpoint_spans:
+        for index in (1, 2):
+            offset = int(endpoint_spans == "leading")
+            assert contours[index][0][2 + offset] == protected.value[2]
+            assert contours[index][0][3 + offset] == ("qCurveTo", ((0, 0),) * 9)
+            if offset:
+                assert contours[index][0][2] == ("qCurveTo", ((100, 0),) * 2)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {},
+        {"splitFraction": 0},
+        {"splitFraction": 1},
+        {"splitFraction": True},
+        {"splitFraction": float("nan")},
+        {"splitFraction": "0.25"},
+        {"semanticSlots": [0]},
+        {"schemaVersion": 3},
+        {"extra": 1},
+    ],
+)
+def test_endpoint_v4_metadata_accepts_only_bounded_explicit_recipe(change):
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 4,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 1,
+        "subdivisionOverrides": {},
+        "semanticSlots": [1],
+        "straightExtensionWeights": [400],
+        "endpointSpans": {"1": 8},
+        "splitFraction": 0.25,
+    }
+    recipe.update(change)
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    if change:
+        with pytest.raises(PipelineError, match="semantic partition metadata"):
+            quadratic_reference._semantic_partition_metadata(
+                fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+            )
+    else:
+        assert quadratic_reference._semantic_partition_metadata(
+            fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+        ) == {"curve": recipe}
+
+
+def test_semantic_partition_pairs_adjacent_operations_with_protected_seam_ratio() -> None:
+    def recording(*operations):
+        pen = RecordingPen()
+        pen.value = list(operations)
+        return pen
+
+    authored = recording(
+        ("moveTo", ((0, 0),)),
+        ("curveTo", ((50 / 3, 100 / 3), (100 / 3, 50), (50, 50))),
+        ("curveTo", ((200 / 3, 50), (250 / 3, 100 / 3), (100, 0))),
+        ("closePath", ()),
+    )
+    protected = recording(
+        ("moveTo", ((0, 0),)),
+        ("qCurveTo", ((25, 50), (50, 50))),
+        ("qCurveTo", ((75, 50), (100, 0))),
+        ("closePath", ()),
+    )
+    contours, _, maximum = quadratic_reference._piecewise_contours(
+        "curve",
+        [authored, authored, authored],
+        (((1, 1, 1, 1),),) * 3,
+        {1: protected, 2: protected},
+        1,
+        1,
+        quadratic_reference.SEMANTIC_PARTITION,
+        {
+            "defaultSubdivisions": 4,
+            "subdivisionOverrides": {},
+            "semanticSlots": [],
+            "pairedOperations": [[0, 1]],
+            "protectedMatchAxes": ["Weight"],
+        },
+        ({"Weight": 100}, {"Weight": 100}, {"Weight": 400}),
+    )
+    assert maximum == 4
+    assert [kind for kind, _ in contours[0][0]] == [
+        "moveTo",
+        "qCurveTo",
+        "qCurveTo",
+        "closePath",
+    ]
+    first, second = contours[0][0][1:3]
+    seam = complex(*first[1][-1])
+    incoming = seam - complex(*first[1][-2])
+    outgoing = complex(*second[1][0]) - seam
+    assert abs(incoming.real * outgoing.imag - incoming.imag * outgoing.real) < 1e-12
+    assert incoming.real * outgoing.real + incoming.imag * outgoing.imag > 0
+    assert abs(outgoing) / abs(incoming) == pytest.approx(1)
+
+
+def test_semantic_partition_can_target_one_contour_without_repartitioning_a_mark() -> None:
+    def recording(*operations):
+        pen = RecordingPen()
+        pen.value = list(operations)
+        return pen
+
+    authored = recording(
+        ("moveTo", ((200, 0),)),
+        ("curveTo", ((640 / 3, 80 / 3), (680 / 3, 80 / 3), (240, 0))),
+        ("closePath", ()),
+        ("moveTo", ((0, 0),)),
+        ("curveTo", ((50 / 3, 100 / 3), (100 / 3, 50), (50, 50))),
+        ("curveTo", ((200 / 3, 50), (250 / 3, 100 / 3), (100, 0))),
+        ("closePath", ()),
+    )
+    protected = recording(
+        ("moveTo", ((200, 0),)),
+        ("qCurveTo", ((220, 40), (240, 0))),
+        ("closePath", ()),
+        ("moveTo", ((0, 0),)),
+        ("qCurveTo", ((25, 50), (50, 50))),
+        ("qCurveTo", ((75, 50), (100, 0))),
+        ("closePath", ()),
+    )
+    contours, _, maximum = quadratic_reference._piecewise_contours(
+        "dependent",
+        [authored, authored, authored],
+        (((1, 1, 1), (1, 1, 1, 1)),) * 3,
+        {1: protected, 2: protected},
+        1,
+        1,
+        quadratic_reference.SEMANTIC_PARTITION,
+        {
+            "schemaVersion": 5,
+            "defaultSubdivisions": 4,
+            "subdivisionOverrides": {},
+            "semanticSlots": [],
+            "pairedOperations": [[0, 1]],
+            "protectedMatchAxes": ["Weight"],
+            "semanticContour": 1,
+        },
+        ({"Weight": 100}, {"Weight": 100}, {"Weight": 400}),
+    )
+
+    assert maximum == 4
+    assert contours[1][0] == protected.value[:3]
+    assert [kind for kind, _ in contours[0][1]] == [
+        "moveTo",
+        "qCurveTo",
+        "qCurveTo",
+        "closePath",
+    ]
+    assert contours[1][1] == contours[2][1]
+    assert contours[0][1] != contours[1][1]
+
+
+@pytest.mark.parametrize("semantic_contour", [-1, True])
+def test_semantic_partition_rejects_invalid_selected_contour(semantic_contour) -> None:
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 5,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 4,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "straightExtensionWeights": [],
+        "pairedOperations": [[0, 1]],
+        "protectedMatchAxes": ["Weight"],
+        "semanticContour": semantic_contour,
+    }
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    with pytest.raises(PipelineError, match="semantic partition metadata"):
+        quadratic_reference._semantic_partition_metadata(
+            fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+        )
+
+
+def test_semantic_partition_rejects_nonadjacent_paired_operations(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 2,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 4,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "straightExtensionWeights": [],
+        "pairedOperations": [[0, 2]],
+        "protectedMatchAxes": ["Weight"],
+    }
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.SEMANTIC_PARTITION
+        )
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    with pytest.raises(PipelineError, match="semantic partition metadata is invalid"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+        )
+
+
+@pytest.mark.parametrize("failure", ["missing", "mismatch", "nonscalar", "ungrouped"])
+def test_balanced_padding_metadata_fails_closed_before_source_mutation(
+    tmp_path: Path, failure: str
+) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    groups = ((1, 1, 1, 1),)
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = groups
+        font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
+            quadratic_reference.BALANCED_ENDPOINTS
+        )
+    if failure == "missing":
+        del fonts[1]["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY]
+    elif failure == "mismatch":
+        fonts[1]["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = "unknown"
+    elif failure == "nonscalar":
+        fonts[1]["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = {
+            "mode": quadratic_reference.BALANCED_ENDPOINTS
+        }
+    else:
+        for font in fonts:
+            del font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY]
+
+    before = [_recording(font["curve"]).value for font in fonts]
+    with pytest.raises(PipelineError, match="padding placement"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+        )
+    assert [_recording(font["curve"]).value for font in fonts] == before
 
 
 def test_reference_count_contracts_a_conservative_preliminary_conversion(
@@ -270,6 +1259,46 @@ def test_authored_cubic_fit_stays_within_one_unit() -> None:
     )
 
     assert 0 < maximum_error <= 1
+
+
+def test_per_glyph_precision_preserves_unmarked_conversion_and_reference(tmp_path):
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    ordinary, precise = _source_set(), _source_set()
+    preserve_quadratic_reference(
+        ordinary, default_index=1, reference_path=reference_path, reference_location={}
+    )
+    preserve_quadratic_reference(
+        precise,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        glyph_max_error={"curve": 0.1},
+    )
+    assert _recording(ordinary[0]["curve"]).value != _recording(precise[0]["curve"]).value
+    assert [_recording(font["unmarked"]).value for font in ordinary] == [
+        _recording(font["unmarked"]).value for font in precise
+    ]
+    with TTFont(reference_path) as reference:
+        assert _same_filled_path(
+            _recording(precise[1]["curve"]), _recording(reference.getGlyphSet()["curve"])
+        )
+
+
+def test_unmarked_precision_override_fails_before_conversion(tmp_path):
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    before = [_recording(font["curve"]).value for font in fonts]
+    with pytest.raises(PipelineError, match="requires authored glyphs"):
+        preserve_quadratic_reference(
+            fonts,
+            default_index=1,
+            reference_path=reference_path,
+            reference_location={},
+            glyph_max_error={"unmarked": 0.25},
+        )
+    assert [_recording(font["curve"]).value for font in fonts] == before
 
 
 def test_topology_contract_binds_every_authored_master_before_cu2qu(tmp_path: Path) -> None:

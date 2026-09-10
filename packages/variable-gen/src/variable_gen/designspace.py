@@ -190,6 +190,9 @@ def build_designspace(
     quadratic_reference_path: Path | None = None,
     quadratic_reference_location: dict[str, float] | None = None,
     quadratic_reference_max_error: float = 1.0,
+    quadratic_reference_masters: dict[str, dict[str, float]] | None = None,
+    configured_master_locations: dict[str, dict[str, float]] | None = None,
+    quadratic_glyph_max_error: dict[str, float] | None = None,
     quadratic_topology: dict[str, tuple[tuple[tuple[str, int], ...], ...]] | None = None,
     quadratic_topology_master_names: tuple[str, ...] = (),
     default_master_name: str | None = None,
@@ -220,16 +223,29 @@ def build_designspace(
     if quadratic_reference_path is not None:
         from variable_gen.quadratic_reference import preserve_quadratic_reference
 
-        default_indices = [
-            index
-            for index, source in enumerate(ds.sources)
-            if source.styleName == default_master_name
-        ]
+        def source_indices(name: str | None) -> list[int]:
+            if configured_master_locations is not None and name in configured_master_locations:
+                location = configured_master_locations[name]
+                expected = {axis.name: axis.map_forward(location[axis.tag]) for axis in ds.axes}
+                return [
+                    index for index, source in enumerate(ds.sources) if source.location == expected
+                ]
+            return [index for index, source in enumerate(ds.sources) if source.styleName == name]
+
+        default_indices = source_indices(default_master_name)
         if len(default_indices) != 1:
             raise ValueError(
                 "quadratic reference requires exactly one source named "
                 f"{default_master_name!r}; found {len(default_indices)}"
             )
+        protected_locations = None
+        if quadratic_reference_masters is not None:
+            protected_locations = {}
+            for name, location in quadratic_reference_masters.items():
+                indices = source_indices(name)
+                if len(indices) != 1:
+                    raise ValueError(f"Protected master {name!r} must match exactly one source")
+                protected_locations[indices[0]] = location
         report = preserve_quadratic_reference(
             [source.font for source in ds.sources],
             default_index=default_indices[0],
@@ -242,6 +258,9 @@ def build_designspace(
             # ``Text Regular``); designspace source names include the family
             # prefix (for example ``Glide Text Regular``).
             source_master_names=tuple(source.styleName for source in ds.sources),
+            source_locations=tuple(dict(source.location) for source in ds.sources),
+            protected_locations=protected_locations,
+            glyph_max_error=quadratic_glyph_max_error,
         )
         print(
             "  Preserved quadratic reference: "
@@ -249,6 +268,10 @@ def build_designspace(
             f"{report.exact_default_glyphs} already exact, "
             f"{report.expanded_operations} compatibility prefix(es)"
         )
+        if report.endpoint_transports:
+            from variable_gen.variation_reference import ENDPOINT_TRANSPORTS_KEY
+
+            ds.lib[ENDPOINT_TRANSPORTS_KEY] = dict(report.endpoint_transports)
 
     master_ufo_dir.mkdir(parents=True, exist_ok=True)
     dropped = 0
@@ -315,11 +338,22 @@ def export_designspace(config: ProjectConfig, style_key: str) -> Path:
         quadratic_reference_max_error=(
             quadratic_reference.max_error if quadratic_reference is not None else 1.0
         ),
+        quadratic_glyph_max_error=(
+            quadratic_reference.glyph_max_error if quadratic_reference is not None else None
+        ),
+        quadratic_reference_masters=(
+            quadratic_reference.protected_masters or None
+            if quadratic_reference is not None
+            else None
+        ),
         quadratic_topology=(quadratic_topology.glyphs if quadratic_topology is not None else None),
         quadratic_topology_master_names=(
             quadratic_topology.master_names if quadratic_topology is not None else ()
         ),
         default_master_name=default_master.name,
+        configured_master_locations={
+            master.name: dict(master.location) for master in style.masters
+        },
     )
     if len(config.axes) > 1:
         _configure_multi_axis_designspace(
