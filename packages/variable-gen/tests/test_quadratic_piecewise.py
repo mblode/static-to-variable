@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from fontTools.pens.recordingPen import RecordingPen
+
 from variable_gen.common import PipelineError
 from variable_gen.quadratic_reference import (
     BALANCED_ENDPOINTS,
@@ -10,6 +12,7 @@ from variable_gen.quadratic_reference import (
     _fit_piecewise_group,
     _pad_reference_operation,
     _reference_count_spline,
+    _same_filled_path,
 )
 
 
@@ -23,6 +26,23 @@ def test_continuous_chain_fits_connected_piecewise_path_without_stationary_segme
     assert spline[-1] == (60, 0)
 
 
+def _closed_quadratic(start, operation):
+    recording = RecordingPen()
+    recording.moveTo(start)
+    recording.qCurveTo(*operation[1])
+    recording.closePath()
+    return recording
+
+
+def _closed_operations(start, operations):
+    recording = RecordingPen()
+    recording.moveTo(start)
+    for kind, points in operations:
+        getattr(recording, kind)(*points)
+    recording.closePath()
+    return recording
+
+
 def test_different_piece_counts_share_topology_without_erasing_authored_join():
     single = ((0, 0), (20, 110), (180, 110), (200, 0))
     left = ((0, 0), (15, 95), (85, 90), (100, 60))
@@ -34,8 +54,10 @@ def test_different_piece_counts_share_topology_without_erasing_authored_join():
     assert all(master[-1][1][-1] == (200, 0) for master in masters)
     reference = ("qCurveTo", ((10, 80), (190, 80), (200, 0)))
     protected = _pad_reference_operation((0, 0), reference, prefix)
-    assert protected[-1] == reference
-    assert protected[:-1] == [("qCurveTo", ((0, 0), (0, 0)))] * prefix
+    assert ("qCurveTo", ((0, 0), (0, 0))) not in protected
+    assert _same_filled_path(
+        _closed_quadratic((0, 0), reference), _closed_operations((0, 0), protected)
+    )
     assert [(op, len(points)) for op, points in protected] == signatures[0]
 
 
@@ -71,19 +93,47 @@ def test_balanced_endpoint_placement_rejects_ambiguous_multi_curve_groups():
         _fit_piecewise_group([[left, right]], 1, 0.1, "curve", BALANCED_ENDPOINTS)
 
 
-def test_default_placement_remains_exactly_the_prefix_operation_stream():
+def test_default_placement_subdivides_display_instead_of_stationary_prefixes():
     curve = ((0, 0), (20, 110), (180, 110), (200, 0))
     implicit = _fit_piecewise_group([[curve]], 2, 0.1, "curve")
     explicit = _fit_piecewise_group([[curve]], 2, 0.1, "curve", "prefix")
     assert implicit == explicit
 
     reference = ("qCurveTo", ((10, 80), (190, 80), (200, 0)))
-    assert _pad_reference_operation((0, 0), reference, 3) == [
-        ("qCurveTo", ((0, 0), (0, 0))),
-        ("qCurveTo", ((0, 0), (0, 0))),
-        ("qCurveTo", ((0, 0), (0, 0))),
-        reference,
-    ]
+    protected = _pad_reference_operation((0, 0), reference, 2)
+    assert ("qCurveTo", ((0, 0), (0, 0))) not in protected
+    assert len(protected) == 3
+    assert _same_filled_path(
+        _closed_quadratic((0, 0), reference), _closed_operations((0, 0), protected)
+    )
+    assert all(
+        value * 16 == round(value * 16)
+        for _, points in protected
+        for point in points
+        for value in point
+    )
+
+
+def test_extra_text_segments_are_not_collapsed_display_prefixes():
+    """Regression: mid-opsz lobes came from (start, start) Display prefixes."""
+    curve = ((0, 0), (0, 220), (100, 220), (100, 0))
+    prefix, masters = _fit_piecewise_group([[curve]], 1, 0.25, "curve")
+    assert prefix > 0
+    reference = ("qCurveTo", ((50, 150), (100, 0)))
+    protected = _pad_reference_operation((0, 0), reference, prefix)
+    assert all(points != ((0, 0), (0, 0)) for _, points in protected)
+    assert _same_filled_path(
+        _closed_quadratic((0, 0), reference), _closed_operations((0, 0), protected)
+    )
+    start = masters[0][0][1][0]
+    assert start != (0, 0)
+    mid = (
+        (start[0] + protected[0][1][0][0]) / 2,
+        (start[1] + protected[0][1][0][1]) / 2,
+    )
+    # Stationary Display prefixes interpolated this first off-curve toward the
+    # shared start, forming a lobe. On-curve Display extras keep it away.
+    assert (mid[0] ** 2 + mid[1] ** 2) ** 0.5 > 10
 
 
 def test_reference_count_fits_quadratic_without_stationary_points():
