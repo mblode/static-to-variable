@@ -272,12 +272,16 @@ def test_display_weight_row_is_preserved_with_text_as_the_default(tmp_path: Path
     }
     for weight in (100, 237, 400, 625, 900):
         expected = reference.getGlyphSet(location={"wght": weight, "opsz": 32})["curve"]
-        actual = variable.getGlyphSet(location={"wght": weight, "opsz": 32})["curve"]
-        assert _same_filled_path(_recording(actual), _recording(expected))
-        assert actual.width == pytest.approx(expected.width, abs=1e-9)
-    text = variable.getGlyphSet()["curve"]
-    assert text.width == 540
-    assert not _same_filled_path(_recording(text), _recording(reference.getGlyphSet()["curve"]))
+        glyphs = variable.getGlyphSet(location={"wght": weight, "opsz": 32})
+        drawn = DecomposingRecordingPen(glyphs)
+        glyphs["curve"].draw(drawn)
+        assert _same_filled_path(drawn, _recording(expected))
+        assert glyphs["curve"].width == pytest.approx(expected.width, abs=1e-9)
+    text_glyphs = variable.getGlyphSet()
+    text_drawn = DecomposingRecordingPen(text_glyphs)
+    text_glyphs["curve"].draw(text_drawn)
+    assert text_glyphs["curve"].width == 540
+    assert not _same_filled_path(text_drawn, _recording(reference.getGlyphSet()["curve"]))
 
 
 @pytest.mark.parametrize("locations", [{}, {3: {}}, {True: {}}])
@@ -326,7 +330,10 @@ def test_reference_geometry_survives_compatible_closed_variable_build(tmp_path: 
     assert report.exact_default_glyphs == 0
     assert report.expanded_operations == 3
     assert report.maximum_segments == 4
-    signatures = {_signature(font["curve"]) for font in fonts}
+    assert len(report.carrier_glyphs) == 1
+    helper = report.carrier_glyphs[0]
+    assert helper.startswith("curve.stv-semantic") and helper.endswith("x")
+    signatures = {_signature(font[helper]) for font in fonts}
     assert signatures == {
         (
             ("moveTo", 1),
@@ -340,8 +347,10 @@ def test_reference_geometry_survives_compatible_closed_variable_build(tmp_path: 
     }
 
     reference = TTFont(reference_path).getGlyphSet()["curve"]
-    assert _same_filled_path(_recording(fonts[1]["curve"]), _recording(reference))
-    assert _same_filled_path(_recording(fonts[2]["curve"]), _recording(reference))
+    for index in (1, 2):
+        recording = DecomposingRecordingPen(fonts[index])
+        fonts[index]["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
     assert fonts[1]["curve"].width == fonts[2]["curve"].width == 500
     assert fonts[0]["curve"].width == 520
 
@@ -349,8 +358,10 @@ def test_reference_geometry_survives_compatible_closed_variable_build(tmp_path: 
     ui = instantiateVariableFont(variable, {"opsz": 16}, inplace=False)
     display = instantiateVariableFont(variable, {"opsz": 28}, inplace=False)
     text = instantiateVariableFont(variable, {"opsz": 12}, inplace=False)
-    assert _same_filled_path(_recording(ui.getGlyphSet()["curve"]), _recording(reference))
-    assert _same_filled_path(_recording(display.getGlyphSet()["curve"]), _recording(reference))
+    for instance in (ui, display):
+        recording = DecomposingRecordingPen(instance.getGlyphSet())
+        instance.getGlyphSet()["curve"].draw(recording)
+        assert _same_filled_path(recording, _recording(reference))
     assert ui["hmtx"].metrics["curve"][0] == 500
     assert display["hmtx"].metrics["curve"][0] == 500
     assert text["hmtx"].metrics["curve"][0] == 520
@@ -398,6 +409,52 @@ def test_piecewise_authored_source_compiles_with_exact_protected_masters(
         glyphs["curve"].draw(recording)
         assert _same_filled_path(recording, _recording(reference))
         assert instance["hmtx"].metrics["curve"][0] == 500
+
+
+def test_piecewise_prefix_keeps_compiled_display_native_without_stationary_lobes(
+    tmp_path: Path,
+) -> None:
+    reference_path = tmp_path / "reference.ttf"
+    _reference_font(reference_path)
+    fonts = _source_set()
+    groups = (((1, 1, 1, 1),), ((1, 1, 1, 1),), ((1, 1, 1, 1),))
+    for font, contours in zip(fonts, groups, strict=True):
+        font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
+
+    report = preserve_quadratic_reference(
+        fonts,
+        default_index=1,
+        reference_path=reference_path,
+        reference_location={},
+        protected_locations={1: {}, 2: {}},
+        max_error=0.25,
+    )
+
+    helper = report.carrier_glyphs[0] if report.carrier_glyphs else "curve"
+    outline = fonts[1][helper]
+    recording = _recording(outline)
+    assert ("qCurveTo", ((0.0, 0.0), (0.0, 0.0))) not in recording.value
+    assert ("qCurveTo", ((0, 0), (0, 0))) not in recording.value
+    reference = TTFont(reference_path).getGlyphSet()["curve"]
+    for index in (1, 2):
+        drawn = DecomposingRecordingPen(fonts[index])
+        fonts[index]["curve"].draw(drawn)
+        assert _same_filled_path(drawn, _recording(reference))
+    variable = _compile_variable(fonts, optimize_gvar=False)
+    areas = []
+    for optical_size in (12, 16, 20, 24, 28):
+        instance = instantiateVariableFont(variable, {"opsz": optical_size}, inplace=False)
+        glyphs = instance.getGlyphSet()
+        drawn = DecomposingRecordingPen(glyphs)
+        glyphs["curve"].draw(drawn)
+        if optical_size in (16, 28):
+            assert _same_filled_path(drawn, _recording(reference))
+        areas.append(quadratic_reference._filled_path(drawn).area)
+    # Stationary prefixes add extra mid-opsz lobes, so midpoint area overshoots
+    # both endpoints. Compatible Display subdivision stays between them.
+    text_area, mid_area, display_area = areas[0], areas[2], areas[-1]
+    low, high = sorted((text_area, display_area))
+    assert low <= mid_area <= high or abs(mid_area - high) / max(high, 1) < 0.05
 
 
 def test_incomplete_piecewise_contract_fails_before_any_source_mutation(tmp_path: Path) -> None:
@@ -1275,14 +1332,18 @@ def test_per_glyph_precision_preserves_unmarked_conversion_and_reference(tmp_pat
         reference_location={},
         glyph_max_error={"curve": 0.1},
     )
-    assert _recording(ordinary[0]["curve"]).value != _recording(precise[0]["curve"]).value
+    ordinary_text = DecomposingRecordingPen(ordinary[0])
+    ordinary[0]["curve"].draw(ordinary_text)
+    precise_text = DecomposingRecordingPen(precise[0])
+    precise[0]["curve"].draw(precise_text)
+    assert ordinary_text.value != precise_text.value
     assert [_recording(font["unmarked"]).value for font in ordinary] == [
         _recording(font["unmarked"]).value for font in precise
     ]
+    drawn = DecomposingRecordingPen(precise[1])
+    precise[1]["curve"].draw(drawn)
     with TTFont(reference_path) as reference:
-        assert _same_filled_path(
-            _recording(precise[1]["curve"]), _recording(reference.getGlyphSet()["curve"])
-        )
+        assert _same_filled_path(drawn, _recording(reference.getGlyphSet()["curve"]))
 
 
 def test_unmarked_precision_override_fails_before_conversion(tmp_path):
