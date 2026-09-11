@@ -59,7 +59,7 @@ When adding those drawings changes cu2qu's segmentation of an already-shipped Tr
 }
 ```
 
-During designspace export, the engine converts all masters together and reconciles only provenance-marked glyphs. The reference's filled outline and advance are retained exactly at the default location; zero-length quadratic prefixes provide compatible point structure when an authored master needs more segments. Every non-reference cubic stays within `maxError` font units. Mismatched units per em, missing glyphs, open or incompatible contours, and unrepresentable curves fail before varLib rather than weakening the reference.
+During designspace export, the engine converts all masters together and reconciles only provenance-marked glyphs. The reference's filled outline and advance are retained exactly at the default location; extra quadratic spans subdivide the protected curve along its path (carried at 16× or 32× so compiled Display stays native) when an authored master needs more segments. Every non-reference cubic stays within `maxError` font units. Mismatched units per em, missing glyphs, open or incompatible contours, and unrepresentable curves fail before varLib rather than weakening the reference.
 
 A style can also set `"optimizeGvar": false` to retain explicit TrueType variation deltas instead of IUP compression. This can preserve interpolated coordinates when new optical masters change the default outline used for delta inference. It may increase font size and does not preserve cubic-to-quadratic subdivision by itself. The default is `true`.
 

@@ -44,14 +44,12 @@ from variable_gen.outlines import donor_outline, draw_into
 
 UNDERWEIGHT_RATIO = 0.92
 AUTHORED_FIDELITY_RATIO = 0.98
-SEMANTIC_CARRIER_SUFFIXES = (".stv-semantic16x", ".stv-semantic32x")
+SEMANTIC_CARRIER_SUFFIX = re.compile(r"^(?P<owner>.+)\.stv-semantic\d+x$")
 
 
 def _semantic_carrier_owner(name: str) -> str | None:
-    for suffix in SEMANTIC_CARRIER_SUFFIXES:
-        if name.endswith(suffix):
-            return name.removesuffix(suffix)
-    return None
+    matched = SEMANTIC_CARRIER_SUFFIX.fullmatch(name)
+    return matched.group("owner") if matched else None
 
 
 @dataclass(frozen=True)
