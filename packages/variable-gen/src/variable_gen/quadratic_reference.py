@@ -1105,7 +1105,7 @@ def preserve_quadratic_reference(
                         font,
                         name,
                         contours[index],
-                        protected=index in protected_indices,
+                        protected=index in protected_glyph_sets,
                         authorship=authorship[name],
                         origin=origin,
                         scale=scale,
