@@ -40,6 +40,7 @@ from variable_gen.curve_certificate import certify_curve_distance
 from variable_gen.quadratic_semantic_partition import (
     partition_endpoint_spans,
     partition_semantic_curve,
+    partition_startpoint_spans,
     subdivide_quadratic_chain,
 )
 
@@ -140,6 +141,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
     version_three_keys = version_one_keys | {"endpointSpans"}
     version_four_keys = version_three_keys | {"splitFraction"}
     version_five_keys = version_two_keys | {"semanticContour"}
+    version_six_keys = version_three_keys | {"endpointSpanStarts"}
     result = {}
     for name in sorted(names):
         values = []
@@ -158,6 +160,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
                 frozenset(version_three_keys),
                 frozenset(version_four_keys),
                 frozenset(version_five_keys),
+                frozenset(version_six_keys),
             }
             for value in values
         ):
@@ -174,6 +177,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         pairs = recipe.get("pairedOperations", [])
         match_axes = recipe.get("protectedMatchAxes", [])
         endpoint_spans = recipe.get("endpointSpans", {})
+        endpoint_starts = recipe.get("endpointSpanStarts", [])
         semantic_contour = recipe.get("semanticContour", 0)
         valid_endpoints = (
             isinstance(endpoint_spans, dict)
@@ -207,13 +211,14 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         valid = (
             placements.get(name) == SEMANTIC_PARTITION
             and type(version) is int
-            and version in {1, 2, 3, 4, 5}
+            and version in {1, 2, 3, 4, 5, 6}
             and (
                 (version == 1 and set(recipe) == version_one_keys)
                 or (version == 2 and set(recipe) == version_two_keys)
                 or (version == 3 and set(recipe) == version_three_keys)
                 or (version == 4 and set(recipe) == version_four_keys)
                 or (version == 5 and set(recipe) == version_five_keys)
+                or (version == 6 and set(recipe) == version_six_keys)
             )
             and recipe["placement"] == SEMANTIC_PARTITION
             and recipe["glyph"] == name
@@ -239,7 +244,17 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
             )
             and len(set(weights)) == len(weights)
             and (version not in {2, 5} or (valid_pairs and bool(pairs and match_axes)))
-            and (version not in {3, 4} or valid_endpoints)
+            and (version not in {3, 4, 6} or valid_endpoints)
+            and (
+                version != 6
+                or (
+                    isinstance(endpoint_starts, (list, tuple))
+                    and bool(endpoint_starts)
+                    and all(type(index) is int and index >= 0 for index in endpoint_starts)
+                    and len(set(endpoint_starts)) == len(endpoint_starts)
+                    and set(endpoint_starts) <= {int(key) for key in endpoint_spans}
+                )
+            )
             and type(semantic_contour) is int
             and semantic_contour >= 0
             and (
@@ -377,13 +392,13 @@ def _native_iup_transport_metadata(fonts, placements: dict[str, str]) -> dict[st
 
             validate_endpoint_transport(name, recipe)
             if placements.get(name) != SEMANTIC_PARTITION or any(
-                font[name].lib.get(SEMANTIC_PARTITION_KEY, {}).get("schemaVersion") != 3
+                font[name].lib.get(SEMANTIC_PARTITION_KEY, {}).get("schemaVersion") not in (3, 6)
                 or font[name].lib[SEMANTIC_PARTITION_KEY].get("glyphRowsSha256")
                 != recipe["glyphRowsSha256"]
                 for font in fonts
             ):
                 raise PipelineError(
-                    f"{name}: endpoint transport requires matching semantic v3 metadata"
+                    f"{name}: endpoint transport requires matching semantic v3 or v6 metadata"
                 )
             result[name] = recipe
             continue
@@ -1502,6 +1517,7 @@ def _piecewise_contours(
                 extra_spans = semantic_recipe.get("endpointSpans", {}).get(str(semantic_index))
                 if extra_spans is not None:
                     leading = semantic_index in semantic_recipe["semanticSlots"]
+                    at_start = semantic_index in semantic_recipe.get("endpointSpanStarts", [])
                     target_start = reference_current[reference_index]
                     for index, group in enumerate(curves):
                         if index in references:
@@ -1512,9 +1528,11 @@ def _piecewise_contours(
                                 result[index][contour_index].append(("qCurveTo", (start, start)))
                             result[index][contour_index].extend(
                                 (
+                                    ("qCurveTo", (reference_current[index],) * (extra_spans + 1)),
                                     operation,
-                                    ("qCurveTo", (span_endpoint,) * (extra_spans + 1)),
                                 )
+                                if at_start
+                                else (operation, ("qCurveTo", (span_endpoint,) * (extra_spans + 1)))
                             )
                             reference_current[index] = span_endpoint
                         else:
@@ -1528,15 +1546,26 @@ def _piecewise_contours(
                                 ),
                             )
                             try:
-                                partition = partition_endpoint_spans(
-                                    group,
-                                    endpoint_target,
-                                    _reference_count_spline,
-                                    tolerance,
-                                    extra_spans=extra_spans,
-                                    split_fraction=semantic_recipe.get("splitFraction", 0.5),
-                                    leading_start=leading_start,
-                                    protected_start=target_start if leading else None,
+                                partition = (
+                                    partition_startpoint_spans(
+                                        group,
+                                        endpoint_target,
+                                        _reference_count_spline,
+                                        tolerance,
+                                        extra_spans=extra_spans,
+                                        protected_start=target_start,
+                                    )
+                                    if at_start
+                                    else partition_endpoint_spans(
+                                        group,
+                                        endpoint_target,
+                                        _reference_count_spline,
+                                        tolerance,
+                                        extra_spans=extra_spans,
+                                        split_fraction=semantic_recipe.get("splitFraction", 0.5),
+                                        leading_start=leading_start,
+                                        protected_start=target_start if leading else None,
+                                    )
                                 )
                             except ValueError as error:
                                 raise PipelineError(f"{name}: {error}") from error

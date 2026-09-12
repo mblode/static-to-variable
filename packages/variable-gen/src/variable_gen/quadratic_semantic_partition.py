@@ -4,7 +4,8 @@ This module does not choose glyph policy.  It builds a shared operation basis
 when an authored contour has a real straight extension at one master while
 other masters retain the corresponding curved path. Semantic slots subdivide
 protected quadratics exactly; endpoint spans retain their original point stream
-and append collapsed capacity. Authored curves are fitted within the bound.
+and add collapsed capacity at the declared start or end. Authored curves are
+fitted within the bound.
 """
 
 from __future__ import annotations
@@ -25,6 +26,48 @@ class SemanticPartition:
     protected: tuple[Operation, ...]
     authored_curve_count: int
     protected_curve_count: int
+
+
+def partition_startpoint_spans(
+    authored_curves: Sequence[Cubic],
+    protected_operation: Operation,
+    fitter: SplineFitter,
+    tolerance: float,
+    *,
+    extra_spans: int,
+    protected_start: Point,
+) -> SemanticPartition:
+    """Fit extra capacity before the intact native operation, by exact reversal.
+
+    This preserves every protected point, with collapsed duplicates only at its
+    start. The caller must authenticate that start's sparse native delta.
+    """
+    if len(authored_curves) not in (1, 2) or any(len(c) != 4 for c in authored_curves):
+        raise ValueError("endpoint spans require one or two authored cubics")
+    kind, points = protected_operation
+    if kind != "qCurveTo" or len(points) < 2:
+        raise ValueError("endpoint spans require an explicit protected qCurveTo")
+    reversed_result = partition_endpoint_spans(
+        [(curve[3], curve[2], curve[1], curve[0]) for curve in reversed(authored_curves)],
+        (kind, (*reversed(points[:-1]), protected_start)),
+        fitter,
+        tolerance,
+        extra_spans=extra_spans,
+    )
+
+    def reverse_operations(operations: tuple[Operation, ...], start: Point):
+        reversed_operations = []
+        for operation, coordinates in operations:
+            reversed_operations.append((operation, (*reversed(coordinates[:-1]), start)))
+            start = coordinates[-1]
+        return tuple(reversed(reversed_operations))
+
+    return SemanticPartition(
+        reverse_operations(reversed_result.authored, authored_curves[-1][-1]),
+        reverse_operations(reversed_result.protected, points[-1]),
+        reversed_result.authored_curve_count,
+        reversed_result.protected_curve_count,
+    )
 
 
 def partition_endpoint_spans(

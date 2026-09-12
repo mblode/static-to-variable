@@ -4,10 +4,53 @@ import pytest
 
 from variable_gen.quadratic_reference import _reference_count_spline
 from variable_gen.quadratic_semantic_partition import partition_endpoint_spans
+from variable_gen.quadratic_semantic_partition import partition_startpoint_spans
 
 
 CURVE = ((0.0, 0.0), (0.0, 200 / 3), (100 / 3, 100.0), (100.0, 100.0))
 PROTECTED = ("qCurveTo", ((0.0, 40.0), (45.0, 90.0), (100.0, 100.0)))
+
+
+def test_start_capacity_preserves_protected_stream_and_authored_direction():
+    result = partition_startpoint_spans(
+        [CURVE],
+        PROTECTED,
+        _reference_count_spline,
+        1e-7,
+        extra_spans=8,
+        protected_start=CURVE[0],
+    )
+    assert result.protected == (("qCurveTo", (CURVE[0],) * 9), PROTECTED)
+    assert result.authored[0][1][-1] == pytest.approx((25.0, 75.0))
+    assert result.authored[-1][1][-1] == CURVE[-1]
+    assert [len(points) for _, points in result.authored] == [9, 3]
+    assert result.authored_curve_count == result.protected_curve_count == 10
+
+
+def test_start_capacity_keeps_existing_authored_seam():
+    second = tuple((x + 100, y + 100) for x, y in CURVE)
+    result = partition_startpoint_spans(
+        [CURVE, second],
+        PROTECTED,
+        _reference_count_spline,
+        0.01,
+        extra_spans=8,
+        protected_start=CURVE[0],
+    )
+    assert result.authored[0][1][-1] == CURVE[-1]
+    assert result.authored[-1][1][-1] == second[-1]
+
+
+def test_start_capacity_does_not_relax_fitting_budget():
+    with pytest.raises(ValueError, match="exceed"):
+        partition_startpoint_spans(
+            [CURVE],
+            PROTECTED,
+            lambda *_: None,
+            0.1,
+            extra_spans=8,
+            protected_start=CURVE[0],
+        )
 
 
 def test_native_point_stream_survives_without_subdivision():
