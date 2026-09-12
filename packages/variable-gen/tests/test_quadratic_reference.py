@@ -799,7 +799,7 @@ def test_adaptive_piecewise_rejects_missing_or_incomplete_multi_curve_allocation
     assert [_recording(font["curve"]).value for font in fonts] == before
 
 
-@pytest.mark.parametrize("version", [1, 3])
+@pytest.mark.parametrize("version", [1, 3, 6])
 def test_semantic_partition_uses_source_bound_recipe_and_exact_carrier(
     tmp_path: Path,
     version: int,
@@ -817,8 +817,10 @@ def test_semantic_partition_uses_source_bound_recipe_and_exact_carrier(
         "semanticSlots": [],
         "straightExtensionWeights": [],
     }
-    if version == 3:
-        recipe.update(schemaVersion=3, defaultSubdivisions=1, endpointSpans={"1": 8})
+    if version in (3, 6):
+        recipe.update(schemaVersion=version, defaultSubdivisions=1, endpointSpans={"1": 8})
+        if version == 6:
+            recipe["endpointSpanStarts"] = [1]
     for font in fonts:
         font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
         font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
@@ -871,6 +873,29 @@ def test_endpoint_metadata_rejects_unbounded_or_subdivided_protected_paths(chang
         "endpointSpans": {"1": 8},
     }
     recipe.update(change)
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    with pytest.raises(PipelineError, match="semantic partition metadata"):
+        quadratic_reference._semantic_partition_metadata(
+            fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+        )
+
+
+@pytest.mark.parametrize("starts", [[], [True], [-1], [1, 1], [2], {"1": True}, ["1"]])
+def test_start_capacity_metadata_rejects_unknown_or_ambiguous_operations(starts):
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 6,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 1,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "straightExtensionWeights": [],
+        "endpointSpans": {"1": 8},
+        "endpointSpanStarts": starts,
+    }
     for font in fonts:
         font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
     with pytest.raises(PipelineError, match="semantic partition metadata"):

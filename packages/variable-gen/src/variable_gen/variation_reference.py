@@ -258,9 +258,6 @@ def restore_endpoint_iup_default(
             raise PipelineError("Endpoint IUP extra point is not an unambiguous collapsed endpoint")
         extra[index] = matches[0]
     inverse = {native_index: index for index, native_index in mapping.items()}
-    full_map = [inverse[index] for index in range(native_points)] + list(
-        range(len(desired) - 4, len(desired))
-    )
     fixed_coordinates = dict(fixed_coordinates)
     for (point, axis), value in (native_fixed_coordinates or {}).items():
         if point not in inverse or axis not in (0, 1) or type(value) is not int:
@@ -270,11 +267,17 @@ def restore_endpoint_iup_default(
             raise PipelineError("Endpoint IUP fixed landmark conflicts with a flat cap")
         fixed_coordinates[key] = value
     projection = project_native_iup_default(
-        list(native_coords),
-        native_controls.endPts,
-        [high_tuple.coordinates],
+        # Include collapsed additions in the native constraint frame. They
+        # become explicit IUP anchors after transport; projecting only original
+        # points overlooks the changed brackets around those new anchors.
+        [tuple(value / scale for value in point) for point in d_default],
+        snapshots[0][1].endPts,
+        [
+            [high_tuple.coordinates[{**mapping, **extra}[i]] for i in range(len(desired) - 4)]
+            + list(high_tuple.coordinates[-4:])
+        ],
         desired,
-        full_map,
+        list(range(len(desired))),
         fixed_coordinates=fixed_coordinates,
         max_move=max_move,
     )

@@ -144,6 +144,53 @@ def endpoint_recipe():
     }
 
 
+def test_start_duplicates_participate_in_native_iup_projection():
+    """A new explicit anchor changes the following omitted point's bracket."""
+    reference, candidate, helper = endpoint_fonts()
+    pen = TTGlyphPen(None)
+    pen.moveTo((0, 736))
+    pen.qCurveTo((0, 736), (200, 736))
+    pen.qCurveTo((800, 3120), (1600, 736))
+    pen.closePath()
+    candidate["glyf"][helper] = pen.glyph()
+    candidate["gvar"].variations[helper] = [
+        TupleVariation(
+            {"wght": (0, 1, 1)}, [(0, 0), (0, 0), (0, 0), (8, 0), (16, 0)] + [(0, 0)] * 4
+        ),
+        TupleVariation(
+            {"opsz": (0, 1, 1)},
+            [(0, -736), (0, -736), (-200, -736), (0, -736), (0, -736)] + [(0, 0)] * 4,
+        ),
+    ]
+    report = restore_endpoint_iup_default(
+        reference,
+        candidate,
+        "curve",
+        helper,
+        endpoint_points=frozenset({0}),
+        fixed_coordinates={(0, 0): 0, (2, 0): 200, (4, 0): 1600},
+        max_move=1000,
+    )
+    # Native-only projection incorrectly leaves 800, causing changed sparse
+    # inference. The new bracket starts at the final duplicate, x=200.
+    assert candidate["glyf"][helper].coordinates[3][0] == 900
+    assert report["maximumCoordinateMovement"][0] == 100
+    stream = BytesIO()
+    candidate.save(stream)
+    stream.seek(0)
+    saved = TTFont(stream)
+    from fontTools.pens.recordingPen import DecomposingRecordingPen
+    import pathops
+    from variable_gen.quadratic_reference import _filled_path
+
+    for weight in (100, 237.25, 400, 537.25, 949.75, 950):
+        old = RecordingPen()
+        reference.getGlyphSet(location={"wght": weight, "opsz": 32})["curve"].draw(old)
+        new = DecomposingRecordingPen(saved.getGlyphSet(location={"wght": weight, "opsz": 32}))
+        new.glyphSet["curve"].draw(new)
+        assert pathops.op(_filled_path(old), _filled_path(new), pathops.PathOp.XOR).area == 0
+
+
 @pytest.mark.parametrize("value", [True, 1.5, "800"])
 def test_endpoint_landmarks_reject_noninteger_coordinates(value):
     from variable_gen.variation_reference import validate_endpoint_transport
@@ -302,7 +349,10 @@ def test_endpoint_batch_matches_direct_transport_or_leaves_candidate_untouched(f
 
 @pytest.mark.parametrize("failure", [None, "missing", "mismatch", "semantic", "placement"])
 @pytest.mark.parametrize("version", [2, 3])
-def test_endpoint_metadata_must_bind_every_source_and_its_semantic_recipe(failure, version):
+@pytest.mark.parametrize("semantic_version", [3, 6])
+def test_endpoint_metadata_must_bind_every_source_and_its_semantic_recipe(
+    failure, version, semantic_version
+):
     import ufoLib2
     from variable_gen.quadratic_reference import (
         NATIVE_IUP_TRANSPORT_KEY,
@@ -317,7 +367,10 @@ def test_endpoint_metadata_must_bind_every_source_and_its_semantic_recipe(failur
     for font in fonts:
         glyph = font.newGlyph("curve")
         glyph.lib[NATIVE_IUP_TRANSPORT_KEY] = deepcopy(recipe)
-        glyph.lib[SEMANTIC_PARTITION_KEY] = {"schemaVersion": 3, "glyphRowsSha256": "a" * 64}
+        glyph.lib[SEMANTIC_PARTITION_KEY] = {
+            "schemaVersion": semantic_version,
+            "glyphRowsSha256": "a" * 64,
+        }
     placement = {"curve": "semantic-partition"}
     if failure == "missing":
         del fonts[1]["curve"].lib[NATIVE_IUP_TRANSPORT_KEY]
