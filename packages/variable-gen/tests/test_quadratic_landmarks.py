@@ -147,3 +147,22 @@ def test_quarter_partition_rejects_unequal_native_region_counts():
         prepare_landmark_basis([master(), a, changed], native_partition="quarters")
     with pytest.raises(ValueError, match="unknown native"):
         prepare_landmark_basis([master(), a], native_partition="approximate")
+
+
+def test_dyadic_capacity_balances_native_counts_with_exact_quarters_first():
+    from variable_gen.quadratic_reference_templates import exact_reference_template
+
+    a = master(True)
+    curves = tuple(line((x, 0), (x + 20, 0)) for x in range(0, 100, 20)) + a.curves[1:]
+    b = replace(
+        a,
+        curves=curves,
+        recording_sha256=curves_sha256(curves),
+        landmarks=(("start", 0), ("right", 5), ("top", 6), ("left", 7), ("end", 8)),
+    )
+    result = prepare_landmark_basis([master(), a, b], native_partition="dyadic")
+    assert result.slots == (5, 1, 1, 1)
+    points = [p[-1] for op, p in result.protected[1] if op == "qCurveTo"]
+    assert points[:5] == [(25, 0), (50, 0), (75, 0), (100, 0), (100, 0)]
+    assert exact_reference_template(result.protected[1], result.protected[2])
+    assert area(result.sources[0]) == pytest.approx(8000)
