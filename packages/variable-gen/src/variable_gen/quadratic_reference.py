@@ -37,6 +37,10 @@ from fontTools.varLib.instancer import instantiateVariableFont
 from variable_gen.authorship import OPTICAL_AUTHORSHIP_KEY
 from variable_gen.common import PipelineError
 from variable_gen.curve_certificate import certify_curve_distance
+from variable_gen.quadratic_reference_templates import (
+    REFERENCE_TEMPLATE,
+    load_reference_templates,
+)
 from variable_gen.quadratic_semantic_partition import (
     partition_endpoint_spans,
     partition_semantic_curve,
@@ -114,6 +118,7 @@ def _padding_placement_metadata(fonts, groups: dict[str, SourceGroups]) -> dict[
             CONTINUOUS_CHAIN_FULL,
             ADAPTIVE_PIECEWISE,
             SEMANTIC_PARTITION,
+            REFERENCE_TEMPLATE,
         }:
             raise PipelineError(
                 f"{name}: padding placement must be a supported consistent mode in every master"
@@ -559,7 +564,7 @@ def _grouped_carrier_scale(
     """Choose the smallest exact carrier grid for protected grouped geometry."""
     if placement == CONTINUOUS_CHAIN_FULL:
         return CONTINUOUS_CHAIN_FULL_SCALE
-    if placement not in {ADAPTIVE_PIECEWISE, SEMANTIC_PARTITION}:
+    if placement not in {ADAPTIVE_PIECEWISE, SEMANTIC_PARTITION, REFERENCE_TEMPLATE}:
         return CONTINUOUS_CHAIN_SCALE
 
     protected_points = [
@@ -1859,7 +1864,7 @@ def _piecewise_contours(
                     NATIVE_IUP_TRANSPORT,
                 }
                 else "prefix"
-                if placement == SEMANTIC_PARTITION
+                if placement in {SEMANTIC_PARTITION, REFERENCE_TEMPLATE}
                 else placement
             )
             prefix, fitted = _fit_piecewise_group(
@@ -2220,6 +2225,18 @@ def preserve_quadratic_reference(
         raise ValueError("Per-glyph quadratic precision must be finite and positive")
     protected_glyph_sets = {index: font.getGlyphSet() for index, font in reference_fonts.items()}
     reference_glyphs = protected_glyph_sets[reference_index]
+    protected_recordings = {
+        name: {
+            index: _recording(glyphs[name])
+            for index, glyphs in protected_glyph_sets.items()
+            if name in glyphs
+        }
+        for name in authored
+    }
+    templates = load_reference_templates(
+        fonts, placements, protected_recordings, reference_path, locations
+    )
+    protected_recordings.update(templates)
     for name in authored:
         if any(name not in font for font in fonts) or any(
             name not in glyphs for glyphs in protected_glyph_sets.values()
@@ -2228,7 +2245,7 @@ def preserve_quadratic_reference(
         for recording in originals[name]:
             _contours(recording, name)
         signatures = {
-            _topology(_recording(glyphs[name]), name) for glyphs in protected_glyph_sets.values()
+            _topology(recording, name) for recording in protected_recordings[name].values()
         }
         if len(signatures) != 1:
             raise PipelineError(f"{name}: protected reference masters have incompatible topology")
@@ -2237,7 +2254,7 @@ def preserve_quadratic_reference(
             name,
             originals[name],
             groups,
-            {index: _recording(glyphs[name]) for index, glyphs in protected_glyph_sets.items()},
+            protected_recordings[name],
             reference_index,
             errors.get(name, max_error),
             placements.get(name, "prefix"),
@@ -2262,6 +2279,7 @@ def preserve_quadratic_reference(
             CONTINUOUS_CHAIN_FULL,
             ADAPTIVE_PIECEWISE,
             SEMANTIC_PARTITION,
+            REFERENCE_TEMPLATE,
         }
     }
     # Stage range validation before mutating any source font. Endpoint-IUP
@@ -2309,6 +2327,7 @@ def preserve_quadratic_reference(
                     CONTINUOUS_CHAIN_FULL,
                     ADAPTIVE_PIECEWISE,
                     SEMANTIC_PARTITION,
+                    REFERENCE_TEMPLATE,
                 }:
                     carrier_glyphs.add(
                         _install_continuous_chain_carrier(
