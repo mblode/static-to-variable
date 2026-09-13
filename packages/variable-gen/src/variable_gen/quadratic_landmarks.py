@@ -160,12 +160,16 @@ def _authored_slots(curves, count):
     return pieces, groups
 
 
-def prepare_landmark_basis(masters) -> LandmarkBasis:
+def prepare_landmark_basis(masters, *, native_partition="stationary") -> LandmarkBasis:
     """Return grouped exact source subdivisions and protected quadratic slots.
 
-    Additional native slots collapse at an endpoint. Existing native spans are
-    never fitted, moved, or resampled. Named roles bind the entire master set.
+    By default additional native slots collapse at an endpoint. The explicit
+    quarters mode instead subdivides each protected span exactly four times;
+    it requires matching native span counts in every semantic region. Native
+    spans are never fitted or moved. Named roles bind the entire master set.
     """
+    if native_partition not in ("stationary", "quarters"):
+        raise ValueError("unknown native landmark partition")
     if (
         len(masters) < 2
         or not any(m.protected for m in masters)
@@ -180,17 +184,27 @@ def prepare_landmark_basis(masters) -> LandmarkBasis:
         raise ValueError("landmark masters require finite cubic contours")
     winding = _area(masters[0].curves)
     curves = [_validate(m, roles, winding) for m in masters]
-    slots = tuple(
-        2 * max(m.landmarks[j + 1][1] - m.landmarks[j][1] for m in masters if m.protected)
+    native_counts = [
+        [m.landmarks[j + 1][1] - m.landmarks[j][1] for m in masters if m.protected]
         for j in range(len(roles) - 1)
-    )
+    ]
+    if native_partition == "quarters" and any(len(set(counts)) != 1 for counts in native_counts):
+        raise ValueError("quarter partition requires matching protected landmark span counts")
+    multiplier = 4 if native_partition == "quarters" else 2
+    slots = tuple(multiplier * max(counts) for counts in native_counts)
     sources, groups, protected = [], [], {}
     for mi, master in enumerate(masters):
-        output, grouping = [], [1]
+        output: list[np.ndarray] = []
+        grouping = [1]
         for j, count in enumerate(slots):
             region = curves[mi][master.landmarks[j][1] : master.landmarks[j + 1][1]]
             if master.protected:
-                pieces, counts = _native_slots(region, count), [1] * count
+                pieces = (
+                    [_section(c, j / 4, (j + 1) / 4) for c in region for j in range(4)]
+                    if native_partition == "quarters"
+                    else _native_slots(region, count)
+                )
+                counts = [1] * count
             else:
                 pieces, counts = _authored_slots(region, count)
             output.extend(pieces)

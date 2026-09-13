@@ -108,3 +108,42 @@ def test_authored_master_cannot_drop_required_corner_roles():
         prepare_landmark_basis(
             [master(), replace(master(), corner_roles=frozenset()), master(True)]
         )
+
+
+def test_quarter_partition_preserves_curves_without_stationary_slots():
+    from variable_gen.quadratic_reference_templates import exact_reference_template
+
+    source, protected = master(), master(True)
+    quadratic = ((0, 0), (100 / 3, -100 / 3), (200 / 3, -100 / 3), (100, 0))
+    curves = (quadratic, *protected.curves[1:])
+    protected = replace(
+        protected, curves=curves, recording_sha256=curves_sha256(curves), corner_roles=frozenset()
+    )
+    result = prepare_landmark_basis([source, protected], native_partition="quarters")
+    assert result.slots == (4, 4, 4, 4)
+    original = [
+        ("moveTo", ((0, 0),)),
+        ("qCurveTo", ((50, -50), (100, 0))),
+        ("lineTo", ((100, 80),)),
+        ("lineTo", ((0, 80),)),
+        ("lineTo", ((0, 0),)),
+        ("closePath", ()),
+    ]
+    assert exact_reference_template(original, result.protected[1])
+    ends = [points[-1] for op, points in result.protected[1] if op == "qCurveTo"]
+    assert all(a != b for a, b in zip(ends, ends[1:], strict=False))
+
+
+def test_quarter_partition_rejects_unequal_native_region_counts():
+    a = master(True)
+    curves = (line((0, 0), (50, 0)), line((50, 0), (100, 0)), *a.curves[1:])
+    changed = replace(
+        a,
+        curves=curves,
+        recording_sha256=curves_sha256(curves),
+        landmarks=(("start", 0), ("right", 2), ("top", 3), ("left", 4), ("end", 5)),
+    )
+    with pytest.raises(ValueError, match="matching protected"):
+        prepare_landmark_basis([master(), a, changed], native_partition="quarters")
+    with pytest.raises(ValueError, match="unknown native"):
+        prepare_landmark_basis([master(), a], native_partition="approximate")
