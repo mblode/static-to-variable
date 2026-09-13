@@ -146,3 +146,29 @@ def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(tmp_p
 def test_malformed_operation_program_rejects_with_value_error(bad):
     with pytest.raises(ValueError):
         exact_reference_template(ORIGINAL, bad)
+
+
+@pytest.mark.parametrize("control", [(50, 150), (100, 0)])
+def test_exact_quarter_subdivision_and_cyclic_start(control):
+    from fontTools.misc.bezierTools import splitQuadraticAtT
+
+    original = [ORIGINAL[0], ORIGINAL[1], ("qCurveTo", (control, (0, 0))), ORIGINAL[-1]]
+    pieces = splitQuadraticAtT((100, 0), control, (0, 0), 0.25, 0.5, 0.75)
+    template = [("moveTo", ((100, 0),))]
+    template.extend(("qCurveTo", tuple(piece[1:])) for piece in pieces)
+    template.extend([("lineTo", ((100, 0),)), ("closePath", ())])
+    assert exact_reference_template(original, template)
+    bad = copy.deepcopy(template)
+    point = bad[2][1][0]
+    bad[2] = ("qCurveTo", ((point[0] + 0.000001, point[1]), bad[2][1][1]))
+    assert not exact_reference_template(original, bad)
+
+
+def test_partial_quadratic_subdivision_cannot_drop_a_span():
+    from fontTools.misc.bezierTools import splitQuadraticAtT
+
+    pieces = splitQuadraticAtT((100, 0), (50, 150), (0, 0), 0.25, 0.5, 0.75)
+    template = [ORIGINAL[0], ORIGINAL[1]]
+    template.extend(("qCurveTo", tuple(piece[1:])) for piece in pieces[:-1])
+    template.append(("closePath", ()))
+    assert not exact_reference_template(ORIGINAL, template)
