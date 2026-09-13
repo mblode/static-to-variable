@@ -317,7 +317,9 @@ def _adaptive_piecewise_metadata(fonts, placements: dict[str, str]) -> dict[str,
         allocations = recipe.get("allocations") if isinstance(recipe, dict) else None
         valid = (
             isinstance(recipe, dict)
-            and set(recipe) == required
+            and required <= set(recipe) <= required | {"carrierScale"}
+            and type(recipe.get("carrierScale", 16)) is int
+            and recipe.get("carrierScale", 16) in (16, 32)
             and placements.get(name) == ADAPTIVE_PIECEWISE
             and type(recipe["schemaVersion"]) is int
             and recipe["schemaVersion"] == 1
@@ -560,6 +562,7 @@ def _grouped_carrier_scale(
     contours: list[list[list[Operation]]],
     protected_indices: frozenset[int],
     placement: str,
+    minimum_scale: int = 16,
 ) -> int:
     """Choose the smallest exact carrier grid for protected grouped geometry."""
     if placement == CONTINUOUS_CHAIN_FULL:
@@ -577,6 +580,8 @@ def _grouped_carrier_scale(
         if point is not None
     ]
     for scale in (CONTINUOUS_CHAIN_SCALE, CONTINUOUS_CHAIN_FULL_SCALE):
+        if scale < minimum_scale:
+            continue
         if all(
             math.isfinite(value) and value * scale == round(value * scale)
             for point in protected_points
@@ -2271,6 +2276,7 @@ def preserve_quadratic_reference(
             contours,
             protected_indices if name not in endpoint_transports else frozenset(),
             placements[name],
+            adaptive_recipes.get(name, {}).get("carrierScale", 16),
         )
         for name, (contours, _, _) in staged_groups.items()
         if placements.get(name)
