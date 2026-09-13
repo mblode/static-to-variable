@@ -616,7 +616,7 @@ def test_continuous_chain_origin_rejects_unrepresentable_bounds(end: float) -> N
         quadratic_reference._continuous_chain_origin("wide", masters, 32)
 
 
-@pytest.mark.parametrize("scale", (16, 32, 64, True, 32.0))
+@pytest.mark.parametrize("scale", (16, 32, 64, 128, True, 32.0))
 def test_adaptive_recipe_validates_requested_carrier_precision(scale) -> None:
     from types import SimpleNamespace
 
@@ -630,7 +630,7 @@ def test_adaptive_recipe_validates_requested_carrier_precision(scale) -> None:
         "carrierScale": scale,
     }
     fonts = [{"curve": SimpleNamespace(lib={quadratic_reference.ADAPTIVE_PIECEWISE_KEY: recipe})}]
-    if type(scale) is int and scale in (16, 32):
+    if type(scale) is int and scale in (16, 32, 64):
         assert (
             quadratic_reference._adaptive_piecewise_metadata(
                 fonts, {"curve": "adaptive-piecewise"}
@@ -657,12 +657,10 @@ def test_grouped_carrier_promotes_only_exact_protected_geometry_to_32x() -> None
         )
         == 32
     )
+
     assert (
         quadratic_reference._grouped_carrier_scale(
-            "curve",
-            masters,
-            frozenset(),
-            quadratic_reference.ADAPTIVE_PIECEWISE,
+            "curve", masters, frozenset(), quadratic_reference.ADAPTIVE_PIECEWISE
         )
         == 16
     )
@@ -672,6 +670,43 @@ def test_grouped_carrier_promotes_only_exact_protected_geometry_to_32x() -> None
         )
         == 32
     )
+
+
+def test_contour_carrier_64_compiles_separated_contours_and_long_lines(tmp_path) -> None:
+    font = ufoLib2.Font()
+    font.info.unitsPerEm = 1000
+    font.newGlyph(".notdef").width = 500
+    glyph = font.newGlyph("test")
+    glyph.width = 450
+    contours = [
+        [
+            ("moveTo", ((0, 0),)),
+            ("lineTo", ((100, 0),)),
+            ("lineTo", ((100, 600),)),
+            ("lineTo", ((0, 600),)),
+            ("closePath", ()),
+        ],
+        [
+            ("moveTo", ((0, -200),)),
+            ("lineTo", ((40, -200),)),
+            ("lineTo", ((40, -100),)),
+            ("lineTo", ((0, -100),)),
+            ("closePath", ()),
+        ],
+    ]
+    quadratic_reference._draw_contours(glyph, contours)
+    before = _recording(glyph)
+    origins = [quadratic_reference._continuous_chain_origin("test", [[c]], 64) for c in contours]
+    helpers = quadratic_reference._install_contour_carriers(
+        font, "test", contours, origins, protected=True, authorship="manual:" + "a" * 64
+    )
+    assert len(helpers) == 2
+    path = tmp_path / "font.ttf"
+    ufo2ft.compileTTF(font, useProductionNames=False).save(path)
+    saved = TTFont(path)
+    pen = DecomposingRecordingPen(saved.getGlyphSet())
+    saved.getGlyphSet()["test"].draw(pen)
+    assert _same_filled_path(before, pen)
 
 
 @pytest.mark.parametrize("value", (0.02, 1024.03125))
