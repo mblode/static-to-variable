@@ -137,25 +137,70 @@ def _canonical(recording):
     return contours
 
 
+def _same_span(left, right):
+    return (
+        left[0] == right[0]
+        and len(left) == len(right)
+        and all(_same(p, q) for p, q in zip(left[1:], right[1:], strict=True))
+    )
+
+
+def _quadratic_remainder(original, prefix):
+    """Recover a strict subdivision parameter and verify de Casteljau exactly."""
+    if original[0] != "quadratic" or prefix[0] != "quadratic":
+        return None
+    start, control, end = original[1:]
+    if not _same(start, prefix[1]):
+        return None
+    direction = tuple(c - s for s, c in zip(start, control, strict=True))
+    axis = max(range(2), key=lambda i: abs(direction[i]))
+    if direction[axis] != 0:
+        t = (prefix[2][axis] - start[axis]) / direction[axis]
+    else:
+        direction = tuple(e - s for s, e in zip(start, end, strict=True))
+        axis = max(range(2), key=lambda i: abs(direction[i]))
+        if direction[axis] == 0:
+            return None
+        square = (prefix[3][axis] - start[axis]) / direction[axis]
+        if square <= 0:
+            return None
+        t = math.sqrt(square)
+    if not 0 < t < 1:
+        return None
+    left_control = tuple(s + t * (c - s) for s, c in zip(start, control, strict=True))
+    right_control = tuple(c + t * (e - c) for c, e in zip(control, end, strict=True))
+    split = tuple(a + t * (b - a) for a, b in zip(left_control, right_control, strict=True))
+    if not _same_span(("quadratic", start, left_control, split), prefix):
+        return None
+    return ("quadratic", split, right_control, end)
+
+
+def _matches_subdivided_program(original, template):
+    index = 0
+    for span in original:
+        remaining = span
+        while index < len(template):
+            piece = template[index]
+            index += 1
+            if _same_span(remaining, piece):
+                break
+            remaining = _quadratic_remainder(remaining, piece)
+            if remaining is None:
+                return False
+        else:
+            return False
+    return index == len(template)
+
+
 def exact_reference_template(original, template) -> bool:
-    """Compare exact cyclic span programs, never reversed contours or sampled ink."""
+    """Compare cyclic exact spans, allowing proven de Casteljau subdivisions."""
     left, right = _canonical(original), _canonical(template)
     if len(left) != len(right):
         return False
-    for a, b in zip(left, right, strict=True):
-        if len(a) != len(b):
-            return False
-        if not any(
-            all(
-                x[0] == y[0]
-                and len(x) == len(y)
-                and all(_same(p, q) for p, q in zip(x[1:], y[1:], strict=True))
-                for x, y in zip(a, b[k:] + b[:k], strict=True)
-            )
-            for k in range(len(b))
-        ):
-            return False
-    return True
+    return all(
+        any(_matches_subdivided_program(a, b[k:] + b[:k]) for k in range(len(b)))
+        for a, b in zip(left, right, strict=True)
+    )
 
 
 def _resolve_native_roundoff(original, template):
