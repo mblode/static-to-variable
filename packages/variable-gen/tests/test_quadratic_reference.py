@@ -616,6 +616,32 @@ def test_continuous_chain_origin_rejects_unrepresentable_bounds(end: float) -> N
         quadratic_reference._continuous_chain_origin("wide", masters, 32)
 
 
+@pytest.mark.parametrize("scale", (16, 32, 64, True, 32.0))
+def test_adaptive_recipe_validates_requested_carrier_precision(scale) -> None:
+    from types import SimpleNamespace
+
+    recipe = {
+        "schemaVersion": 1,
+        "placement": "adaptive-piecewise",
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "subdivisions": 4,
+        "allocations": {},
+        "carrierScale": scale,
+    }
+    fonts = [{"curve": SimpleNamespace(lib={quadratic_reference.ADAPTIVE_PIECEWISE_KEY: recipe})}]
+    if type(scale) is int and scale in (16, 32):
+        assert (
+            quadratic_reference._adaptive_piecewise_metadata(
+                fonts, {"curve": "adaptive-piecewise"}
+            )["curve"]["carrierScale"]
+            == scale
+        )
+    else:
+        with pytest.raises(PipelineError, match="metadata is invalid"):
+            quadratic_reference._adaptive_piecewise_metadata(fonts, {"curve": "adaptive-piecewise"})
+
+
 def test_grouped_carrier_promotes_only_exact_protected_geometry_to_32x() -> None:
     masters = [
         [[("moveTo", ((0.03125, 0),)), ("lineTo", ((100, 0),))]],
@@ -639,6 +665,12 @@ def test_grouped_carrier_promotes_only_exact_protected_geometry_to_32x() -> None
             quadratic_reference.ADAPTIVE_PIECEWISE,
         )
         == 16
+    )
+    assert (
+        quadratic_reference._grouped_carrier_scale(
+            "curve", masters, frozenset(), quadratic_reference.ADAPTIVE_PIECEWISE, 32
+        )
+        == 32
     )
 
 
