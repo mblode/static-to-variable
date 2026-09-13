@@ -136,6 +136,23 @@ def _native_slots(curves, count):
     return result
 
 
+def _dyadic_slots(curves, count):
+    """Fill capacity with exact halves/quarters before stationary end slots."""
+    parts = [(curve, 0) for curve in curves]
+    while len(parts) < count:
+        choices = [i for i, (_, depth) in enumerate(parts) if depth < 2]
+        if not choices:
+            parts.append((np.array([parts[-1][0][-1]] * 4), 2))
+            continue
+        index = max(choices, key=lambda i: _length(parts[i][0]))
+        curve, depth = parts[index]
+        parts[index : index + 1] = [
+            (_section(curve, 0, 0.5), depth + 1),
+            (_section(curve, 0.5, 1), depth + 1),
+        ]
+    return [curve for curve, _ in parts]
+
+
 def _authored_slots(curves, count):
     lengths = np.array([_length(c) for c in curves])
     if np.any(lengths <= 0):
@@ -165,10 +182,12 @@ def prepare_landmark_basis(masters, *, native_partition="stationary") -> Landmar
 
     By default additional native slots collapse at an endpoint. The explicit
     quarters mode instead subdivides each protected span exactly four times;
-    it requires matching native span counts in every semantic region. Native
-    spans are never fitted or moved. Named roles bind the entire master set.
+    it requires matching native span counts in every semantic region. Dyadic
+    mode balances differing counts with exact halves/quarters, then stationary
+    end capacity if necessary. Native spans are never fitted or moved. Named
+    roles bind the entire master set.
     """
-    if native_partition not in ("stationary", "quarters"):
+    if native_partition not in ("stationary", "quarters", "dyadic"):
         raise ValueError("unknown native landmark partition")
     if (
         len(masters) < 2
@@ -190,7 +209,7 @@ def prepare_landmark_basis(masters, *, native_partition="stationary") -> Landmar
     ]
     if native_partition == "quarters" and any(len(set(counts)) != 1 for counts in native_counts):
         raise ValueError("quarter partition requires matching protected landmark span counts")
-    multiplier = 4 if native_partition == "quarters" else 2
+    multiplier = {"quarters": 4, "stationary": 2, "dyadic": 1}[native_partition]
     slots = tuple(multiplier * max(counts) for counts in native_counts)
     sources, groups, protected = [], [], {}
     for mi, master in enumerate(masters):
@@ -202,6 +221,8 @@ def prepare_landmark_basis(masters, *, native_partition="stationary") -> Landmar
                 pieces = (
                     [_section(c, j / 4, (j + 1) / 4) for c in region for j in range(4)]
                     if native_partition == "quarters"
+                    else _dyadic_slots(region, count)
+                    if native_partition == "dyadic"
                     else _native_slots(region, count)
                 )
                 counts = [1] * count
