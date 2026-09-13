@@ -319,7 +319,7 @@ def _adaptive_piecewise_metadata(fonts, placements: dict[str, str]) -> dict[str,
             isinstance(recipe, dict)
             and required <= set(recipe) <= required | {"carrierScale"}
             and type(recipe.get("carrierScale", 16)) is int
-            and recipe.get("carrierScale", 16) in (16, 32)
+            and recipe.get("carrierScale", 16) in (16, 32, 64)
             and placements.get(name) == ADAPTIVE_PIECEWISE
             and type(recipe["schemaVersion"]) is int
             and recipe["schemaVersion"] == 1
@@ -579,6 +579,14 @@ def _grouped_carrier_scale(
         for point in points
         if point is not None
     ]
+    if minimum_scale == 64:
+        if any(
+            not math.isfinite(value) or value * 64 != round(value * 64)
+            for point in protected_points
+            for value in point
+        ):
+            raise PipelineError(f"{name}: protected 64x carrier is not exact")
+        return 64
     for scale in (CONTINUOUS_CHAIN_SCALE, CONTINUOUS_CHAIN_FULL_SCALE):
         if scale < minimum_scale:
             continue
@@ -650,6 +658,55 @@ def _install_continuous_chain_carrier(
         (1 / scale, 0, 0, 1 / scale, *origin),
     )
     return helper_name
+
+
+def _install_contour_carriers(font, name, contours, origins, *, protected, authorship):
+    """Keep a finer grid within TrueType coordinate and inter-point delta limits."""
+    prepared = []
+    for index, (contour, origin) in enumerate(zip(contours, origins, strict=True)):
+        expanded = []
+        previous = None
+        start = None
+        for operation, points in contour:
+            if operation == "moveTo":
+                start = points[0]
+            if operation == "lineTo" and previous is not None:
+                midpoint = tuple((a + b) / 2 for a, b in zip(previous, points[0], strict=True))
+                expanded.append(("lineTo", (midpoint,)))
+            if operation == "closePath" and previous is not None and start is not None:
+                midpoint = tuple((a + b) / 2 for a, b in zip(previous, start, strict=True))
+                expanded.append(("lineTo", (midpoint,)))
+            expanded.append((operation, points))
+            if points and points[-1] is not None:
+                previous = points[-1]
+        scaled = _scaled_contours([expanded], 64, origin)
+        previous = (0, 0)
+        for _, points in scaled[0]:
+            for point in points:
+                if point is None:
+                    continue
+                if any(not math.isfinite(v) or abs(v) > 32767 for v in point):
+                    raise PipelineError(f"{name}: contour carrier coordinate is out of range")
+                if protected and any(v != round(v) for v in point):
+                    raise PipelineError(f"{name}: protected contour carrier is not exact")
+                if any(
+                    abs(round(v) - round(p)) > 32767 for v, p in zip(point, previous, strict=True)
+                ):
+                    raise PipelineError(f"{name}: contour carrier delta is out of range")
+                previous = point
+        helper_name = f"{name}.stv-semantic64x.c{index}"
+        if helper_name in font:
+            raise PipelineError(f"{name}: contour carrier already exists")
+        prepared.append((helper_name, scaled, origin))
+    glyph = font[name]
+    glyph.clearContours()
+    for helper_name, scaled, origin in prepared:
+        helper = font.newGlyph(helper_name)
+        helper.width = glyph.width * 64
+        helper.lib[OPTICAL_AUTHORSHIP_KEY] = authorship
+        _draw_contours(helper, scaled)
+        glyph.getPen().addComponent(helper_name, (1 / 64, 0, 0, 1 / 64, *origin))
+    return tuple(item[0] for item in prepared)
 
 
 def _filled_path(recording: RecordingPen) -> pathops.Path:
@@ -2300,6 +2357,14 @@ def preserve_quadratic_reference(
         for name, (contours, _, _) in staged_groups.items()
         if placements.get(name) in {CONTINUOUS_CHAIN, CONTINUOUS_CHAIN_FULL}
     }
+    contour_origins = {
+        name: [
+            _continuous_chain_origin(name, [[master[index]] for master in contours], 64)
+            for index in range(len(contours[0]))
+        ]
+        for name, (contours, _, _) in staged_groups.items()
+        if carrier_scales.get(name) == 64
+    }
     # Dictionaries expose the same glyph objects while excluding explicitly
     # grouped drawings from cu2qu's one-operation-per-master requirement.
     conversion_fonts = (
@@ -2328,7 +2393,18 @@ def preserve_quadratic_reference(
                         raise PipelineError(
                             f"{name}: grouped conversion moved protected reference geometry"
                         )
-                if placements.get(name) in {
+                if carrier_scales.get(name) == 64:
+                    carrier_glyphs.update(
+                        _install_contour_carriers(
+                            font,
+                            name,
+                            contours[index],
+                            contour_origins[name],
+                            protected=index in protected_glyph_sets,
+                            authorship=authorship[name],
+                        )
+                    )
+                elif placements.get(name) in {
                     CONTINUOUS_CHAIN,
                     CONTINUOUS_CHAIN_FULL,
                     ADAPTIVE_PIECEWISE,
