@@ -131,6 +131,12 @@ def _signature(glyph) -> tuple[tuple[str, int], ...]:
     return tuple((operation, len(points)) for operation, points in recording.value)
 
 
+def _decomposed_recording(glyph, glyph_set) -> RecordingPen:
+    pen = DecomposingRecordingPen(glyph_set)
+    glyph.draw(pen)
+    return pen
+
+
 def _compile_variable(fonts: list[ufoLib2.Font], *, optimize_gvar: bool = True) -> TTFont:
     document = DesignSpaceDocument()
     axis = AxisDescriptor()
@@ -271,13 +277,23 @@ def test_display_weight_row_is_preserved_with_text_as_the_default(tmp_path: Path
         "opsz": 14,
     }
     for weight in (100, 237, 400, 625, 900):
-        expected = reference.getGlyphSet(location={"wght": weight, "opsz": 32})["curve"]
-        actual = variable.getGlyphSet(location={"wght": weight, "opsz": 32})["curve"]
-        assert _same_filled_path(_recording(actual), _recording(expected))
+        expected_set = reference.getGlyphSet(location={"wght": weight, "opsz": 32})
+        actual_set = variable.getGlyphSet(location={"wght": weight, "opsz": 32})
+        expected = expected_set["curve"]
+        actual = actual_set["curve"]
+        assert _same_filled_path(
+            _decomposed_recording(actual, actual_set),
+            _decomposed_recording(expected, expected_set),
+        )
         assert actual.width == pytest.approx(expected.width, abs=1e-9)
-    text = variable.getGlyphSet()["curve"]
-    assert text.width == 540
-    assert not _same_filled_path(_recording(text), _recording(reference.getGlyphSet()["curve"]))
+    default_set = variable.getGlyphSet()
+    text_glyph = default_set["curve"]
+    reference_set = reference.getGlyphSet()
+    assert text_glyph.width == 540
+    assert not _same_filled_path(
+        _decomposed_recording(text_glyph, default_set),
+        _decomposed_recording(reference_set["curve"], reference_set),
+    )
 
 
 @pytest.mark.parametrize("locations", [{}, {3: {}}, {True: {}}])
@@ -326,22 +342,17 @@ def test_reference_geometry_survives_compatible_closed_variable_build(tmp_path: 
     assert report.exact_default_glyphs == 0
     assert report.expanded_operations == 3
     assert report.maximum_segments == 4
+    assert report.carrier_glyphs == ("curve.stv-semantic16x",)
     signatures = {_signature(font["curve"]) for font in fonts}
-    assert signatures == {
-        (
-            ("moveTo", 1),
-            ("lineTo", 1),
-            ("qCurveTo", 2),
-            ("qCurveTo", 2),
-            ("qCurveTo", 2),
-            ("qCurveTo", 2),
-            ("closePath", 0),
-        )
-    }
+    assert signatures == {(("addComponent", 2),)}
 
     reference = TTFont(reference_path).getGlyphSet()["curve"]
-    assert _same_filled_path(_recording(fonts[1]["curve"]), _recording(reference))
-    assert _same_filled_path(_recording(fonts[2]["curve"]), _recording(reference))
+    assert _same_filled_path(
+        _decomposed_recording(fonts[1]["curve"], fonts[1]), _recording(reference)
+    )
+    assert _same_filled_path(
+        _decomposed_recording(fonts[2]["curve"], fonts[2]), _recording(reference)
+    )
     assert fonts[1]["curve"].width == fonts[2]["curve"].width == 500
     assert fonts[0]["curve"].width == 520
 
@@ -349,8 +360,14 @@ def test_reference_geometry_survives_compatible_closed_variable_build(tmp_path: 
     ui = instantiateVariableFont(variable, {"opsz": 16}, inplace=False)
     display = instantiateVariableFont(variable, {"opsz": 28}, inplace=False)
     text = instantiateVariableFont(variable, {"opsz": 12}, inplace=False)
-    assert _same_filled_path(_recording(ui.getGlyphSet()["curve"]), _recording(reference))
-    assert _same_filled_path(_recording(display.getGlyphSet()["curve"]), _recording(reference))
+    ui_glyphs = ui.getGlyphSet()
+    display_glyphs = display.getGlyphSet()
+    assert _same_filled_path(
+        _decomposed_recording(ui_glyphs["curve"], ui_glyphs), _recording(reference)
+    )
+    assert _same_filled_path(
+        _decomposed_recording(display_glyphs["curve"], display_glyphs), _recording(reference)
+    )
     assert ui["hmtx"].metrics["curve"][0] == 500
     assert display["hmtx"].metrics["curve"][0] == 500
     assert text["hmtx"].metrics["curve"][0] == 520
