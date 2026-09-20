@@ -18,10 +18,19 @@ from variable_gen.common import PipelineError
 from variable_gen.quadratic_semantic_partition import subdivide_quadratic_chain
 
 Point = tuple[float, float]
-Operation = tuple[str, tuple[Point, ...]]
+Operation = tuple[str, tuple[Point | None, ...]]
+SemanticOperation = tuple[str, tuple[Point, ...]]
 
 _native_pad = qr._pad_reference_operation
 _native_preserve = qr.preserve_quadratic_reference
+
+
+def _as_semantic_operation(operation: Operation) -> SemanticOperation:
+    kind, points = operation
+    return (
+        kind,
+        tuple(qr._require_point(point, "reference", "qCurveTo point") for point in points),
+    )
 
 
 def _closed(start: Point, operations: list[Operation]) -> RecordingPen:
@@ -46,7 +55,10 @@ def _subdivided_prefix(start: Point, operation: Operation, extra: int) -> list[O
         steps = 1
         while steps < extra + 1:
             steps *= 2
-        spline = [start, *subdivide_quadratic_chain(start, operation, steps)]
+        spline = [
+            start,
+            *subdivide_quadratic_chain(start, _as_semantic_operation(operation), steps),
+        ]
         operations = qr._partition_spline(spline, extra)[:-1]
         parameter = extra / steps
         control = qr._require_point(operation[1][0], "reference", "qCurveTo control")
@@ -58,7 +70,8 @@ def _subdivided_prefix(start: Point, operation: Operation, extra: int) -> list[O
         while native * steps < native + extra:
             steps += 1
         operations = qr._partition_spline(
-            [start, *subdivide_quadratic_chain(start, operation, steps)], extra
+            [start, *subdivide_quadratic_chain(start, _as_semantic_operation(operation), steps)],
+            extra,
         )
     if ("qCurveTo", (start, start)) in operations:
         raise AssertionError("extra Display spans must not collapse to the start")
