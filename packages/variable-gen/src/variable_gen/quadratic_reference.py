@@ -1929,6 +1929,13 @@ def _piecewise_contours(
                 if placement in {SEMANTIC_PARTITION, REFERENCE_TEMPLATE}
                 else placement
             )
+            # Semantic/template reuse the prefix *fit* path, but must keep
+            # stationary pads. True default "prefix" may subdivide (opsz lobes).
+            pad_placement = (
+                REFERENCE_COUNT_LINES
+                if placement in {SEMANTIC_PARTITION, REFERENCE_TEMPLATE}
+                else effective_placement
+            )
             prefix, fitted = _fit_piecewise_group(
                 curves, reference_count, tolerance, name, effective_placement
             )
@@ -1939,7 +1946,7 @@ def _piecewise_contours(
                     operation = references[index][contour_index][operation_index]
                     result[index][contour_index].extend(
                         _pad_reference_operation(
-                            reference_current[index], operation, prefix, effective_placement
+                            reference_current[index], operation, prefix, pad_placement
                         )
                     )
                     reference_current[index] = _require_point(
