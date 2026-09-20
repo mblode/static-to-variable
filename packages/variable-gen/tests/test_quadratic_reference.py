@@ -616,6 +616,32 @@ def test_continuous_chain_origin_rejects_unrepresentable_bounds(end: float) -> N
         quadratic_reference._continuous_chain_origin("wide", masters, 32)
 
 
+@pytest.mark.parametrize("scale", (16, 32, 64, 128, True, 32.0))
+def test_adaptive_recipe_validates_requested_carrier_precision(scale) -> None:
+    from types import SimpleNamespace
+
+    recipe = {
+        "schemaVersion": 1,
+        "placement": "adaptive-piecewise",
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "subdivisions": 4,
+        "allocations": {},
+        "carrierScale": scale,
+    }
+    fonts = [{"curve": SimpleNamespace(lib={quadratic_reference.ADAPTIVE_PIECEWISE_KEY: recipe})}]
+    if type(scale) is int and scale in (16, 32, 64):
+        assert (
+            quadratic_reference._adaptive_piecewise_metadata(
+                fonts, {"curve": "adaptive-piecewise"}
+            )["curve"]["carrierScale"]
+            == scale
+        )
+    else:
+        with pytest.raises(PipelineError, match="metadata is invalid"):
+            quadratic_reference._adaptive_piecewise_metadata(fonts, {"curve": "adaptive-piecewise"})
+
+
 def test_grouped_carrier_promotes_only_exact_protected_geometry_to_32x() -> None:
     masters = [
         [[("moveTo", ((0.03125, 0),)), ("lineTo", ((100, 0),))]],
@@ -631,15 +657,56 @@ def test_grouped_carrier_promotes_only_exact_protected_geometry_to_32x() -> None
         )
         == 32
     )
+
     assert (
         quadratic_reference._grouped_carrier_scale(
-            "curve",
-            masters,
-            frozenset(),
-            quadratic_reference.ADAPTIVE_PIECEWISE,
+            "curve", masters, frozenset(), quadratic_reference.ADAPTIVE_PIECEWISE
         )
         == 16
     )
+    assert (
+        quadratic_reference._grouped_carrier_scale(
+            "curve", masters, frozenset(), quadratic_reference.ADAPTIVE_PIECEWISE, 32
+        )
+        == 32
+    )
+
+
+def test_contour_carrier_64_compiles_separated_contours_and_long_lines(tmp_path) -> None:
+    font = ufoLib2.Font()
+    font.info.unitsPerEm = 1000
+    font.newGlyph(".notdef").width = 500
+    glyph = font.newGlyph("test")
+    glyph.width = 450
+    contours = [
+        [
+            ("moveTo", ((0, 0),)),
+            ("lineTo", ((100, 0),)),
+            ("lineTo", ((100, 600),)),
+            ("lineTo", ((0, 600),)),
+            ("closePath", ()),
+        ],
+        [
+            ("moveTo", ((0, -200),)),
+            ("lineTo", ((40, -200),)),
+            ("lineTo", ((40, -100),)),
+            ("lineTo", ((0, -100),)),
+            ("closePath", ()),
+        ],
+    ]
+    quadratic_reference._draw_contours(glyph, contours)
+    before = _recording(glyph)
+    origins = [quadratic_reference._continuous_chain_origin("test", [[c]], 64) for c in contours]
+    helpers = quadratic_reference._install_contour_carriers(
+        font, "test", contours, origins, protected=True, authorship="manual:" + "a" * 64
+    )
+    assert len(helpers) == 2
+    path = tmp_path / "font.ttf"
+    ufo2ft.compileTTF(font, useProductionNames=False).save(path)
+    saved = TTFont(path)
+    pen = DecomposingRecordingPen(saved.getGlyphSet())
+    saved.getGlyphSet()["test"].draw(pen)
+    assert _same_filled_path(before, pen)
 
 
 @pytest.mark.parametrize("value", (0.02, 1024.03125))
@@ -799,7 +866,7 @@ def test_adaptive_piecewise_rejects_missing_or_incomplete_multi_curve_allocation
     assert [_recording(font["curve"]).value for font in fonts] == before
 
 
-@pytest.mark.parametrize("version", [1, 3])
+@pytest.mark.parametrize("version", [1, 3, 6])
 def test_semantic_partition_uses_source_bound_recipe_and_exact_carrier(
     tmp_path: Path,
     version: int,
@@ -817,8 +884,10 @@ def test_semantic_partition_uses_source_bound_recipe_and_exact_carrier(
         "semanticSlots": [],
         "straightExtensionWeights": [],
     }
-    if version == 3:
-        recipe.update(schemaVersion=3, defaultSubdivisions=1, endpointSpans={"1": 8})
+    if version in (3, 6):
+        recipe.update(schemaVersion=version, defaultSubdivisions=1, endpointSpans={"1": 8})
+        if version == 6:
+            recipe["endpointSpanStarts"] = [1]
     for font in fonts:
         font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
         font["curve"].lib[quadratic_reference.PADDING_PLACEMENT_KEY] = (
@@ -871,6 +940,29 @@ def test_endpoint_metadata_rejects_unbounded_or_subdivided_protected_paths(chang
         "endpointSpans": {"1": 8},
     }
     recipe.update(change)
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    with pytest.raises(PipelineError, match="semantic partition metadata"):
+        quadratic_reference._semantic_partition_metadata(
+            fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+        )
+
+
+@pytest.mark.parametrize("starts", [[], [True], [-1], [1, 1], [2], {"1": True}, ["1"]])
+def test_start_capacity_metadata_rejects_unknown_or_ambiguous_operations(starts):
+    fonts = _source_set()
+    recipe = {
+        "schemaVersion": 6,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 1,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "straightExtensionWeights": [],
+        "endpointSpans": {"1": 8},
+        "endpointSpanStarts": starts,
+    }
     for font in fonts:
         font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
     with pytest.raises(PipelineError, match="semantic partition metadata"):

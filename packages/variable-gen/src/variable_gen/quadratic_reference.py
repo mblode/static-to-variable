@@ -37,9 +37,14 @@ from fontTools.varLib.instancer import instantiateVariableFont
 from variable_gen.authorship import OPTICAL_AUTHORSHIP_KEY
 from variable_gen.common import PipelineError
 from variable_gen.curve_certificate import certify_curve_distance
+from variable_gen.quadratic_reference_templates import (
+    REFERENCE_TEMPLATE,
+    load_reference_templates,
+)
 from variable_gen.quadratic_semantic_partition import (
     partition_endpoint_spans,
     partition_semantic_curve,
+    partition_startpoint_spans,
     subdivide_quadratic_chain,
 )
 
@@ -113,6 +118,7 @@ def _padding_placement_metadata(fonts, groups: dict[str, SourceGroups]) -> dict[
             CONTINUOUS_CHAIN_FULL,
             ADAPTIVE_PIECEWISE,
             SEMANTIC_PARTITION,
+            REFERENCE_TEMPLATE,
         }:
             raise PipelineError(
                 f"{name}: padding placement must be a supported consistent mode in every master"
@@ -140,6 +146,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
     version_three_keys = version_one_keys | {"endpointSpans"}
     version_four_keys = version_three_keys | {"splitFraction"}
     version_five_keys = version_two_keys | {"semanticContour"}
+    version_six_keys = version_three_keys | {"endpointSpanStarts"}
     result = {}
     for name in sorted(names):
         values = []
@@ -158,6 +165,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
                 frozenset(version_three_keys),
                 frozenset(version_four_keys),
                 frozenset(version_five_keys),
+                frozenset(version_six_keys),
             }
             for value in values
         ):
@@ -174,6 +182,7 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         pairs = recipe.get("pairedOperations", [])
         match_axes = recipe.get("protectedMatchAxes", [])
         endpoint_spans = recipe.get("endpointSpans", {})
+        endpoint_starts = recipe.get("endpointSpanStarts", [])
         semantic_contour = recipe.get("semanticContour", 0)
         valid_endpoints = (
             isinstance(endpoint_spans, dict)
@@ -207,13 +216,14 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
         valid = (
             placements.get(name) == SEMANTIC_PARTITION
             and type(version) is int
-            and version in {1, 2, 3, 4, 5}
+            and version in {1, 2, 3, 4, 5, 6}
             and (
                 (version == 1 and set(recipe) == version_one_keys)
                 or (version == 2 and set(recipe) == version_two_keys)
                 or (version == 3 and set(recipe) == version_three_keys)
                 or (version == 4 and set(recipe) == version_four_keys)
                 or (version == 5 and set(recipe) == version_five_keys)
+                or (version == 6 and set(recipe) == version_six_keys)
             )
             and recipe["placement"] == SEMANTIC_PARTITION
             and recipe["glyph"] == name
@@ -239,7 +249,17 @@ def _semantic_partition_metadata(fonts, placements: dict[str, str]) -> dict[str,
             )
             and len(set(weights)) == len(weights)
             and (version not in {2, 5} or (valid_pairs and bool(pairs and match_axes)))
-            and (version not in {3, 4} or valid_endpoints)
+            and (version not in {3, 4, 6} or valid_endpoints)
+            and (
+                version != 6
+                or (
+                    isinstance(endpoint_starts, (list, tuple))
+                    and bool(endpoint_starts)
+                    and all(type(index) is int and index >= 0 for index in endpoint_starts)
+                    and len(set(endpoint_starts)) == len(endpoint_starts)
+                    and set(endpoint_starts) <= {int(key) for key in endpoint_spans}
+                )
+            )
             and type(semantic_contour) is int
             and semantic_contour >= 0
             and (
@@ -297,7 +317,9 @@ def _adaptive_piecewise_metadata(fonts, placements: dict[str, str]) -> dict[str,
         allocations = recipe.get("allocations") if isinstance(recipe, dict) else None
         valid = (
             isinstance(recipe, dict)
-            and set(recipe) == required
+            and required <= set(recipe) <= required | {"carrierScale"}
+            and type(recipe.get("carrierScale", 16)) is int
+            and recipe.get("carrierScale", 16) in (16, 32, 64)
             and placements.get(name) == ADAPTIVE_PIECEWISE
             and type(recipe["schemaVersion"]) is int
             and recipe["schemaVersion"] == 1
@@ -377,13 +399,13 @@ def _native_iup_transport_metadata(fonts, placements: dict[str, str]) -> dict[st
 
             validate_endpoint_transport(name, recipe)
             if placements.get(name) != SEMANTIC_PARTITION or any(
-                font[name].lib.get(SEMANTIC_PARTITION_KEY, {}).get("schemaVersion") != 3
+                font[name].lib.get(SEMANTIC_PARTITION_KEY, {}).get("schemaVersion") not in (3, 6)
                 or font[name].lib[SEMANTIC_PARTITION_KEY].get("glyphRowsSha256")
                 != recipe["glyphRowsSha256"]
                 for font in fonts
             ):
                 raise PipelineError(
-                    f"{name}: endpoint transport requires matching semantic v3 metadata"
+                    f"{name}: endpoint transport requires matching semantic v3 or v6 metadata"
                 )
             result[name] = recipe
             continue
@@ -540,11 +562,12 @@ def _grouped_carrier_scale(
     contours: list[list[list[Operation]]],
     protected_indices: frozenset[int],
     placement: str,
+    minimum_scale: int = 16,
 ) -> int:
     """Choose the smallest exact carrier grid for protected grouped geometry."""
     if placement == CONTINUOUS_CHAIN_FULL:
         return CONTINUOUS_CHAIN_FULL_SCALE
-    if placement not in {ADAPTIVE_PIECEWISE, SEMANTIC_PARTITION}:
+    if placement not in {ADAPTIVE_PIECEWISE, SEMANTIC_PARTITION, REFERENCE_TEMPLATE}:
         return CONTINUOUS_CHAIN_SCALE
 
     protected_points = [
@@ -556,7 +579,17 @@ def _grouped_carrier_scale(
         for point in points
         if point is not None
     ]
+    if minimum_scale == 64:
+        if any(
+            not math.isfinite(value) or value * 64 != round(value * 64)
+            for point in protected_points
+            for value in point
+        ):
+            raise PipelineError(f"{name}: protected 64x carrier is not exact")
+        return 64
     for scale in (CONTINUOUS_CHAIN_SCALE, CONTINUOUS_CHAIN_FULL_SCALE):
+        if scale < minimum_scale:
+            continue
         if all(
             math.isfinite(value) and value * scale == round(value * scale)
             for point in protected_points
@@ -625,6 +658,55 @@ def _install_continuous_chain_carrier(
         (1 / scale, 0, 0, 1 / scale, *origin),
     )
     return helper_name
+
+
+def _install_contour_carriers(font, name, contours, origins, *, protected, authorship):
+    """Keep a finer grid within TrueType coordinate and inter-point delta limits."""
+    prepared = []
+    for index, (contour, origin) in enumerate(zip(contours, origins, strict=True)):
+        expanded = []
+        previous = None
+        start = None
+        for operation, points in contour:
+            if operation == "moveTo":
+                start = points[0]
+            if operation == "lineTo" and previous is not None:
+                midpoint = tuple((a + b) / 2 for a, b in zip(previous, points[0], strict=True))
+                expanded.append(("lineTo", (midpoint,)))
+            if operation == "closePath" and previous is not None and start is not None:
+                midpoint = tuple((a + b) / 2 for a, b in zip(previous, start, strict=True))
+                expanded.append(("lineTo", (midpoint,)))
+            expanded.append((operation, points))
+            if points and points[-1] is not None:
+                previous = points[-1]
+        scaled = _scaled_contours([expanded], 64, origin)
+        previous = (0, 0)
+        for _, points in scaled[0]:
+            for point in points:
+                if point is None:
+                    continue
+                if any(not math.isfinite(v) or abs(v) > 32767 for v in point):
+                    raise PipelineError(f"{name}: contour carrier coordinate is out of range")
+                if protected and any(v != round(v) for v in point):
+                    raise PipelineError(f"{name}: protected contour carrier is not exact")
+                if any(
+                    abs(round(v) - round(p)) > 32767 for v, p in zip(point, previous, strict=True)
+                ):
+                    raise PipelineError(f"{name}: contour carrier delta is out of range")
+                previous = point
+        helper_name = f"{name}.stv-semantic64x.c{index}"
+        if helper_name in font:
+            raise PipelineError(f"{name}: contour carrier already exists")
+        prepared.append((helper_name, scaled, origin))
+    glyph = font[name]
+    glyph.clearContours()
+    for helper_name, scaled, origin in prepared:
+        helper = font.newGlyph(helper_name)
+        helper.width = glyph.width * 64
+        helper.lib[OPTICAL_AUTHORSHIP_KEY] = authorship
+        _draw_contours(helper, scaled)
+        glyph.getPen().addComponent(helper_name, (1 / 64, 0, 0, 1 / 64, *origin))
+    return tuple(item[0] for item in prepared)
 
 
 def _filled_path(recording: RecordingPen) -> pathops.Path:
@@ -1502,6 +1584,7 @@ def _piecewise_contours(
                 extra_spans = semantic_recipe.get("endpointSpans", {}).get(str(semantic_index))
                 if extra_spans is not None:
                     leading = semantic_index in semantic_recipe["semanticSlots"]
+                    at_start = semantic_index in semantic_recipe.get("endpointSpanStarts", [])
                     target_start = reference_current[reference_index]
                     for index, group in enumerate(curves):
                         if index in references:
@@ -1512,9 +1595,11 @@ def _piecewise_contours(
                                 result[index][contour_index].append(("qCurveTo", (start, start)))
                             result[index][contour_index].extend(
                                 (
+                                    ("qCurveTo", (reference_current[index],) * (extra_spans + 1)),
                                     operation,
-                                    ("qCurveTo", (span_endpoint,) * (extra_spans + 1)),
                                 )
+                                if at_start
+                                else (operation, ("qCurveTo", (span_endpoint,) * (extra_spans + 1)))
                             )
                             reference_current[index] = span_endpoint
                         else:
@@ -1528,15 +1613,26 @@ def _piecewise_contours(
                                 ),
                             )
                             try:
-                                partition = partition_endpoint_spans(
-                                    group,
-                                    endpoint_target,
-                                    _reference_count_spline,
-                                    tolerance,
-                                    extra_spans=extra_spans,
-                                    split_fraction=semantic_recipe.get("splitFraction", 0.5),
-                                    leading_start=leading_start,
-                                    protected_start=target_start if leading else None,
+                                partition = (
+                                    partition_startpoint_spans(
+                                        group,
+                                        endpoint_target,
+                                        _reference_count_spline,
+                                        tolerance,
+                                        extra_spans=extra_spans,
+                                        protected_start=target_start,
+                                    )
+                                    if at_start
+                                    else partition_endpoint_spans(
+                                        group,
+                                        endpoint_target,
+                                        _reference_count_spline,
+                                        tolerance,
+                                        extra_spans=extra_spans,
+                                        split_fraction=semantic_recipe.get("splitFraction", 0.5),
+                                        leading_start=leading_start,
+                                        protected_start=target_start if leading else None,
+                                    )
                                 )
                             except ValueError as error:
                                 raise PipelineError(f"{name}: {error}") from error
@@ -1830,7 +1926,7 @@ def _piecewise_contours(
                     NATIVE_IUP_TRANSPORT,
                 }
                 else "prefix"
-                if placement == SEMANTIC_PARTITION
+                if placement in {SEMANTIC_PARTITION, REFERENCE_TEMPLATE}
                 else placement
             )
             prefix, fitted = _fit_piecewise_group(
@@ -2191,6 +2287,18 @@ def preserve_quadratic_reference(
         raise ValueError("Per-glyph quadratic precision must be finite and positive")
     protected_glyph_sets = {index: font.getGlyphSet() for index, font in reference_fonts.items()}
     reference_glyphs = protected_glyph_sets[reference_index]
+    protected_recordings = {
+        name: {
+            index: _recording(glyphs[name])
+            for index, glyphs in protected_glyph_sets.items()
+            if name in glyphs
+        }
+        for name in authored
+    }
+    templates = load_reference_templates(
+        fonts, placements, protected_recordings, reference_path, locations
+    )
+    protected_recordings.update(templates)
     for name in authored:
         if any(name not in font for font in fonts) or any(
             name not in glyphs for glyphs in protected_glyph_sets.values()
@@ -2199,7 +2307,7 @@ def preserve_quadratic_reference(
         for recording in originals[name]:
             _contours(recording, name)
         signatures = {
-            _topology(_recording(glyphs[name]), name) for glyphs in protected_glyph_sets.values()
+            _topology(recording, name) for recording in protected_recordings[name].values()
         }
         if len(signatures) != 1:
             raise PipelineError(f"{name}: protected reference masters have incompatible topology")
@@ -2208,7 +2316,7 @@ def preserve_quadratic_reference(
             name,
             originals[name],
             groups,
-            {index: _recording(glyphs[name]) for index, glyphs in protected_glyph_sets.items()},
+            protected_recordings[name],
             reference_index,
             errors.get(name, max_error),
             placements.get(name, "prefix"),
@@ -2225,6 +2333,7 @@ def preserve_quadratic_reference(
             contours,
             protected_indices if name not in endpoint_transports else frozenset(),
             placements[name],
+            adaptive_recipes.get(name, {}).get("carrierScale", 16),
         )
         for name, (contours, _, _) in staged_groups.items()
         if placements.get(name)
@@ -2233,6 +2342,7 @@ def preserve_quadratic_reference(
             CONTINUOUS_CHAIN_FULL,
             ADAPTIVE_PIECEWISE,
             SEMANTIC_PARTITION,
+            REFERENCE_TEMPLATE,
         }
     }
     # Stage range validation before mutating any source font. Endpoint-IUP
@@ -2246,6 +2356,14 @@ def preserve_quadratic_reference(
         )
         for name, (contours, _, _) in staged_groups.items()
         if placements.get(name) in {CONTINUOUS_CHAIN, CONTINUOUS_CHAIN_FULL}
+    }
+    contour_origins = {
+        name: [
+            _continuous_chain_origin(name, [[master[index]] for master in contours], 64)
+            for index in range(len(contours[0]))
+        ]
+        for name, (contours, _, _) in staged_groups.items()
+        if carrier_scales.get(name) == 64
     }
     # Dictionaries expose the same glyph objects while excluding explicitly
     # grouped drawings from cu2qu's one-operation-per-master requirement.
@@ -2275,11 +2393,23 @@ def preserve_quadratic_reference(
                         raise PipelineError(
                             f"{name}: grouped conversion moved protected reference geometry"
                         )
-                if placements.get(name) in {
+                if carrier_scales.get(name) == 64:
+                    carrier_glyphs.update(
+                        _install_contour_carriers(
+                            font,
+                            name,
+                            contours[index],
+                            contour_origins[name],
+                            protected=index in protected_glyph_sets,
+                            authorship=authorship[name],
+                        )
+                    )
+                elif placements.get(name) in {
                     CONTINUOUS_CHAIN,
                     CONTINUOUS_CHAIN_FULL,
                     ADAPTIVE_PIECEWISE,
                     SEMANTIC_PARTITION,
+                    REFERENCE_TEMPLATE,
                 }:
                     carrier_glyphs.add(
                         _install_continuous_chain_carrier(
