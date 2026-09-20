@@ -102,8 +102,9 @@ def text_precision_carriers(
         variations = []
         owner_variations = []
         for variation in old_variations:
-            if any(p is None for p in variation.coordinates[-4:]):
-                raise PipelineError(f"{name}: ambiguous phantom inference")
+            # IUP treats each phantom as its own one-point contour. An omitted
+            # phantom therefore has zero delta, independently of outline IUP.
+            phantoms = [p if p is not None else (0, 0) for p in variation.coordinates[-4:]]
             variations.append(
                 TupleVariation(
                     deepcopy(variation.axes),
@@ -113,11 +114,7 @@ def text_precision_carriers(
                     ],
                 )
             )
-            owner_variations.append(
-                TupleVariation(
-                    deepcopy(variation.axes), [(0, 0)] + deepcopy(variation.coordinates[-4:])
-                )
-            )
+            owner_variations.append(TupleVariation(deepcopy(variation.axes), [(0, 0)] + phantoms))
         default = corrections[weight.defaultValue]
         for location in weights:
             support = (

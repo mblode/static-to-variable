@@ -30,8 +30,12 @@ def recording(font, weight, optical):
     return pen.value, glyphs["curve"].width
 
 
-def test_roundtrip_retains_sparse_display_and_corrects_text():
+@pytest.mark.parametrize("omitted_phantoms", [False, True])
+def test_roundtrip_retains_sparse_display_and_corrects_text(omitted_phantoms):
     reference, _ = fonts()
+    if omitted_phantoms:
+        for variation in reference["gvar"].variations["curve"]:
+            variation.coordinates[-4:] = [None] * 4
     authored = targets(reference)
     result, report = text_precision_carriers(reference, authored)
     assert report["curve"]["maximumCoordinateCorrection"] == 0.375
