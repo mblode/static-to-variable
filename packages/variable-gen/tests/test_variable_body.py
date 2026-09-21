@@ -38,8 +38,14 @@ def recording(font, weight, optical):
     return pen.value, gs["curve"].width
 
 
-def test_sparse_accent_extraction_roundtrips_without_changing_ink_or_metrics():
+@pytest.mark.parametrize("serialized", [False, True])
+def test_sparse_accent_extraction_roundtrips_without_changing_ink_or_metrics(serialized):
     original = fixture()
+    if serialized:
+        stream = BytesIO()
+        original.save(stream)
+        stream.seek(0)
+        original = TTFont(stream)
     result, report = reuse_variable_body(original, "curve", "body")
     assert report["accentContours"] == [1]
     assert "curve.stvMark" not in original.getGlyphOrder()

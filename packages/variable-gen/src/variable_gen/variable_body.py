@@ -42,7 +42,9 @@ def extract_variable_contours(
         indexes.extend(range(start, mark.endPtsOfContours[index] + 1))
         ends.append(len(indexes) - 1)
     mark.coordinates = GlyphCoordinates([mark.coordinates[i] for i in indexes])
-    mark.flags = type(mark.flags)("B", [mark.flags[i] for i in indexes])
+    selected_flags = [mark.flags[i] for i in indexes]
+    mark.flags = mark.flags[:0]
+    mark.flags.extend(selected_flags)
     mark.endPtsOfContours = ends
     mark.numberOfContours = len(ends)
     mark.recalcBounds(font["glyf"])
@@ -145,7 +147,8 @@ def reuse_variable_body(
         ends.append(len(indexes) - 1)
     accent = deepcopy(mark)
     accent.coordinates = GlyphCoordinates([mark.coordinates[i] for i in indexes])
-    accent.flags = type(mark.flags)("B", [mark.flags[i] for i in indexes])
+    accent.flags = mark.flags[:0]
+    accent.flags.extend(mark.flags[i] for i in indexes)
     accent.endPtsOfContours = ends
     accent.numberOfContours = len(ends)
     variations = deepcopy(source["gvar"].variations.get(name, []))
