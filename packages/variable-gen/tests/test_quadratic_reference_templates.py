@@ -92,9 +92,12 @@ def test_metadata_requires_complete_matching_bound_recipe(tmp_path):
         )
 
 
-@pytest.mark.parametrize(("fit_mode", "tolerance"), (("prefix", 0.03125), ("direct", 20)))
+@pytest.mark.parametrize(
+    ("fit_mode", "tolerance", "arc_blend"),
+    (("prefix", 0.03125, None), ("direct", 20, None), ("direct", 20, 0.25)),
+)
 def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(
-    tmp_path, monkeypatch, fit_mode, tolerance
+    tmp_path, monkeypatch, fit_mode, tolerance, arc_blend
 ):
     path = tmp_path / "reference.ttf"
     _reference_font(path)
@@ -104,6 +107,8 @@ def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(
     template = [ORIGINAL[0], ("qCurveTo", ((50, 0), (100, 0))), *ORIGINAL[2:]]
     r = recipe(path, template)
     r["fitMode"] = fit_mode
+    if arc_blend is not None:
+        r["arcBlend"] = arc_blend
     for font in fonts:
         lib = font["curve"].lib
         lib[q.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)

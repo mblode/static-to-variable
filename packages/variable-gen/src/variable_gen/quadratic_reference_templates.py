@@ -257,8 +257,12 @@ def load_reference_templates(fonts, placements, originals, reference_path: Path,
                     "referenceSha256",
                     "templates",
                     "fitMode",
+                    "arcBlend",
                 }
                 or recipe.get("fitMode", "prefix") not in ("prefix", "direct")
+                or type(recipe.get("arcBlend", 0)) not in (int, float)
+                or not 0 <= recipe.get("arcBlend", 0) <= 1
+                or ("arcBlend" in recipe and recipe.get("fitMode") != "direct")
                 or type(recipe["schemaVersion"]) is not int
                 or recipe["schemaVersion"] != 1
             ):

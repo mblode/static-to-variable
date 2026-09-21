@@ -1432,6 +1432,7 @@ def _piecewise_contours(
     source_locations: tuple[dict[str, float], ...] = (),
     adaptive_recipe: dict | None = None,
     template_fit_mode: str = "prefix",
+    template_arc_blend: float = 0,
 ) -> tuple[list[list[list[Operation]]], int, int]:
     """Validate explicit per-master operation groups and stage their conversion."""
     sources = [_contours(recording, name) for recording in originals]
@@ -1966,6 +1967,22 @@ def _piecewise_contours(
                         if len(group) == 1
                         else _continuous_piecewise_spline(group, reference_count, tolerance)
                     )
+                    if spline is not None and len(group) == 1 and template_arc_blend:
+                        arc = _continuous_piecewise_spline(group, reference_count, tolerance)
+                        if arc is not None:
+                            spline = [
+                                (
+                                    (1 - template_arc_blend) * a[0] + template_arc_blend * b[0],
+                                    (1 - template_arc_blend) * a[1] + template_arc_blend * b[1],
+                                )
+                                for a, b in zip(spline, arc, strict=True)
+                            ]
+                            if not certify_curve_distance(
+                                group, _quadratic_spans(spline), tolerance
+                            ):
+                                raise PipelineError(
+                                    f"{name}: blended template fit exceeds {tolerance:g}-unit bound"
+                                )
                     if spline is None:
                         raise PipelineError(
                             f"{name}: direct template fit exceeds {tolerance:g}-unit bound"
@@ -2380,6 +2397,7 @@ def preserve_quadratic_reference(
             source_locations,
             adaptive_recipes.get(name),
             fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("fitMode", "prefix"),
+            fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("arcBlend", 0),
         )
         for name, groups in source_groups.items()
     }
