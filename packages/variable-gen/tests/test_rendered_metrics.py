@@ -2,7 +2,9 @@
 
 import pytest
 from fontTools.ttLib import newTable
+from fontTools.ttLib.tables import otTables
 from fontTools.ttLib.tables.TupleVariation import TupleVariation
+from fontTools.varLib.varStore import OnlineVarStoreBuilder
 
 from test_release_components import fixture_font
 from variable_gen.rendered_metrics import check_rendered_metrics
@@ -64,3 +66,23 @@ def test_nonmonotone_axis_map_is_rejected():
     font["avar"].segments = {"wght": {-1: -1, 0: 0, 0.5: 0, 1: 1}}
     with pytest.raises(ValueError, match="strictly monotone"):
         check_rendered_metrics(font, internal_glyphs={"carrier"})
+
+
+def test_metric_variation_peak_can_clip_an_unchanged_owner():
+    font = prepared()
+    store = OnlineVarStoreBuilder(["wght"])
+    store.setSupports([{"wght": (0, 0.25, 1)}])
+    index = store.storeDeltas([-30])
+    font["MVAR"] = newTable("MVAR")
+    table = font["MVAR"].table = otTables.MVAR()
+    table.Version = 0x10000
+    table.Reserved = 0
+    table.VarStore = store.finish()
+    record = otTables.MetricsValueRecord()
+    record.ValueTag, record.VarIdx = "hcla", index
+    table.ValueRecord = [record]
+    table.ValueRecordSize, table.ValueRecordCount = 8, 1
+    result = check_rendered_metrics(font, internal_glyphs={"carrier"})
+    assert not result["passed"]
+    assert 525 in result["supportCornerLocations"]["wght"]
+    assert any(row["winAscent"] == 180 for row in result["failures"])
