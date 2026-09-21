@@ -248,8 +248,33 @@ def load_reference_templates(fonts, placements, originals, reference_path: Path,
             recipe = values[0]
             if (
                 not isinstance(recipe, dict)
-                or set(recipe)
-                != {"schemaVersion", "glyph", "glyphRowsSha256", "referenceSha256", "templates"}
+                or not {"schemaVersion", "glyph", "glyphRowsSha256", "referenceSha256", "templates"}
+                <= set(recipe)
+                <= {
+                    "schemaVersion",
+                    "glyph",
+                    "glyphRowsSha256",
+                    "referenceSha256",
+                    "templates",
+                    "fitMode",
+                    "arcBlend",
+                    "carrierScale",
+                    "stationaryAxis",
+                }
+                or recipe.get("fitMode", "prefix") not in ("prefix", "direct")
+                or type(recipe.get("arcBlend", 0)) not in (int, float)
+                or not 0 <= recipe.get("arcBlend", 0) <= 1
+                or ("arcBlend" in recipe and recipe.get("fitMode") != "direct")
+                or type(recipe.get("carrierScale", 16)) is not int
+                or recipe.get("carrierScale", 16) not in (16, 32, 64)
+                or (
+                    "stationaryAxis" in recipe
+                    and (
+                        recipe.get("fitMode") != "direct"
+                        or not isinstance(recipe["stationaryAxis"], str)
+                        or len(recipe["stationaryAxis"]) != 4
+                    )
+                )
                 or type(recipe["schemaVersion"]) is not int
                 or recipe["schemaVersion"] != 1
             ):
@@ -278,7 +303,12 @@ def load_reference_templates(fonts, placements, originals, reference_path: Path,
                     raise ValueError("template location is missing or repeated")
                 index = matching[0]
                 original = originals[name][index].value
+                # Glyphs rounds numeric userData to five decimals. Explicit
+                # JSON text retains exact dyadic template coordinates through
+                # that source format; hashes and geometry still verify below.
                 template = item["recording"]
+                if isinstance(template, str):
+                    template = json.loads(template)
                 if (
                     recording_sha256(original) != item["originalRecordingSha256"]
                     or recording_sha256(template) != item["recordingSha256"]

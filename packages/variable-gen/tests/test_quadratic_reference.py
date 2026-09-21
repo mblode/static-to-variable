@@ -794,9 +794,11 @@ def test_continuous_chain_full_distributes_exact_collapsed_reference_capacity() 
 
 
 @pytest.mark.parametrize("subdivisions", (4, 8))
+@pytest.mark.parametrize("fit_mode", ("piecewise", "continuous"))
 def test_adaptive_piecewise_uses_reviewed_allocations_and_explicit_deltas(
     tmp_path: Path,
     subdivisions: int,
+    fit_mode: str,
 ) -> None:
     from fontTools.misc.bezierTools import splitCubicAtT
 
@@ -817,6 +819,7 @@ def test_adaptive_piecewise_uses_reviewed_allocations_and_explicit_deltas(
         "glyph": "curve",
         "glyphRowsSha256": "a" * 64,
         "subdivisions": subdivisions,
+        "fitMode": fit_mode,
         "allocations": {"0:1": [subdivisions // 4, subdivisions // 4, subdivisions // 2]},
     }
     for font, contours in zip(fonts, groups, strict=True):
@@ -856,6 +859,14 @@ def test_adaptive_piecewise_uses_reviewed_allocations_and_explicit_deltas(
         recording = DecomposingRecordingPen(instance.getGlyphSet())
         instance.getGlyphSet()["curve"].draw(recording)
         assert _same_filled_path(recording, _recording(reference))
+
+
+def test_continuous_adaptive_fit_refuses_uncertified_geometry() -> None:
+    curve = ((0, 0), (0, 100), (100, -100), (100, 0))
+    with pytest.raises(PipelineError, match="continuous adaptive fit exceeds"):
+        quadratic_reference.fit_adaptive_piecewise_group(
+            [[curve]], (1,), 0.01, "curve", "continuous"
+        )
 
 
 @pytest.mark.parametrize(

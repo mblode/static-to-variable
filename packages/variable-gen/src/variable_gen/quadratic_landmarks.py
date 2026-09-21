@@ -177,7 +177,58 @@ def _authored_slots(curves, count):
     return pieces, groups
 
 
-def prepare_landmark_basis(masters, *, native_partition="stationary") -> LandmarkBasis:
+def _matched_authored_slots(curves, native, count, exponent):
+    """Distribute authored arc length over the matching native moving slots."""
+    slots = _native_slots(native, count)
+    weights = np.array([_length(c) for c in slots])
+    weights = np.where(weights > 0, weights**exponent, 0)
+    if not np.any(weights):
+        raise ValueError("matched landmark region has no moving native span")
+    dense, parameters = [], []
+    for ci, c in enumerate(curves):
+        for k in range(1025):
+            if ci and k == 0:
+                continue
+            t = k / 1024
+            dense.append(
+                (1 - t) ** 3 * c[0]
+                + 3 * t * (1 - t) ** 2 * c[1]
+                + 3 * t * t * (1 - t) * c[2]
+                + t**3 * c[3]
+            )
+            parameters.append(ci + t)
+    cumulative = np.cumsum([0, *np.linalg.norm(np.diff(dense, axis=0), axis=1)])
+    distances = np.cumsum([0, *weights]) / sum(weights) * cumulative[-1]
+    knots = list(np.interp(distances, cumulative, parameters))
+    knots[0], knots[-1] = 0.0, float(len(curves))
+    pieces, groups = [], []
+    for start, end in zip(knots, knots[1:], strict=False):
+        if abs(end - start) < 1e-12:
+            i = min(int(start), len(curves) - 1)
+            t, c = start - i, curves[i]
+            point = (
+                (1 - t) ** 3 * c[0]
+                + 3 * t * (1 - t) ** 2 * c[1]
+                + 3 * t * t * (1 - t) * c[2]
+                + t**3 * c[3]
+            )
+            part = [np.array([point] * 4)]
+        else:
+            part = [
+                _section(c, max(start, i) - i, min(end, i + 1) - i)
+                for i, c in enumerate(curves)
+                if min(end, i + 1) - max(start, i) > 1e-10
+            ]
+        if not part:
+            raise ValueError("matched authored landmark slot has no curve")
+        pieces.extend(part)
+        groups.append(len(part))
+    return pieces, groups
+
+
+def prepare_landmark_basis(
+    masters, *, native_partition="stationary", authored_matches=None
+) -> LandmarkBasis:
     """Return grouped exact source subdivisions and protected quadratic slots.
 
     By default additional native slots collapse at an endpoint. The explicit
@@ -203,6 +254,26 @@ def prepare_landmark_basis(masters, *, native_partition="stationary") -> Landmar
         raise ValueError("landmark masters require finite cubic contours")
     winding = _area(masters[0].curves)
     curves = [_validate(m, roles, winding) for m in masters]
+    if authored_matches is not None:
+        if (
+            native_partition != "stationary"
+            or not isinstance(authored_matches, dict)
+            or set(authored_matches) != {i for i, m in enumerate(masters) if not m.protected}
+        ):
+            raise ValueError("matched landmarks require every authored stationary master")
+        for match in authored_matches.values():
+            if (
+                not isinstance(match, (tuple, list))
+                or len(match) != 2
+                or type(match[0]) is not int
+                or not 0 <= match[0] < len(masters)
+                or not masters[match[0]].protected
+                or type(match[1]) not in (int, float)
+                or not 0 <= match[1] <= 2
+            ):
+                raise ValueError(
+                    "matched landmarks require a protected master and bounded exponent"
+                )
     native_counts = [
         [m.landmarks[j + 1][1] - m.landmarks[j][1] for m in masters if m.protected]
         for j in range(len(roles) - 1)
@@ -227,7 +298,14 @@ def prepare_landmark_basis(masters, *, native_partition="stationary") -> Landmar
                 )
                 counts = [1] * count
             else:
-                pieces, counts = _authored_slots(region, count)
+                if authored_matches is None:
+                    pieces, counts = _authored_slots(region, count)
+                else:
+                    ni, exponent = authored_matches[mi]
+                    native = curves[ni][
+                        masters[ni].landmarks[j][1] : masters[ni].landmarks[j + 1][1]
+                    ]
+                    pieces, counts = _matched_authored_slots(region, native, count, exponent)
             output.extend(pieces)
             grouping.extend(counts)
         sources.append(_record(output))

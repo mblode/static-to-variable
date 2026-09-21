@@ -52,6 +52,21 @@ def test_basis_preserves_native_spans_source_area_and_shared_corner_slots():
     assert points == [(100, 0), (100, 0), (100, 80), (100, 80), (0, 80), (0, 80), (0, 0), (0, 0)]
 
 
+def test_matched_slots_preserve_ink_and_collapse_the_same_endpoint_capacity():
+    result = prepare_landmark_basis([master(), master(True)], authored_matches={0: (1, 0)})
+    assert area(result.sources[0]) == pytest.approx(8000)
+    assert area(result.protected[1]) == pytest.approx(8000)
+    authored = [points for op, points in result.sources[0] if op == "curveTo"]
+    assert all(len(set(points)) == 1 for points in authored[1::2])
+    assert result.groups[0] == result.groups[1]
+
+
+@pytest.mark.parametrize("matches", [{}, {0: (0, 0)}, {0: (1, -1)}, {0: (1, float("nan"))}])
+def test_invalid_matched_source_authority_rejected(matches):
+    with pytest.raises(ValueError, match="matched landmarks"):
+        prepare_landmark_basis([master(), master(True)], authored_matches=matches)
+
+
 def test_changed_source_hash_is_rejected_before_conversion():
     a = master()
     with pytest.raises(ValueError, match="hash mismatch"):

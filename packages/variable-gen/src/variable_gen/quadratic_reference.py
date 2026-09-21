@@ -39,6 +39,7 @@ from variable_gen.common import PipelineError
 from variable_gen.curve_certificate import certify_curve_distance
 from variable_gen.quadratic_reference_templates import (
     REFERENCE_TEMPLATE,
+    REFERENCE_TEMPLATES_KEY,
     load_reference_templates,
 )
 from variable_gen.quadratic_semantic_partition import (
@@ -317,7 +318,8 @@ def _adaptive_piecewise_metadata(fonts, placements: dict[str, str]) -> dict[str,
         allocations = recipe.get("allocations") if isinstance(recipe, dict) else None
         valid = (
             isinstance(recipe, dict)
-            and required <= set(recipe) <= required | {"carrierScale"}
+            and required <= set(recipe) <= required | {"carrierScale", "fitMode"}
+            and recipe.get("fitMode", "piecewise") in ("piecewise", "continuous")
             and type(recipe.get("carrierScale", 16)) is int
             and recipe.get("carrierScale", 16) in (16, 32, 64)
             and placements.get(name) == ADAPTIVE_PIECEWISE
@@ -1018,6 +1020,7 @@ def fit_adaptive_piecewise_group(
     allocations: tuple[int, ...],
     tolerance: float,
     glyph_name: str,
+    fit_mode: str = "piecewise",
 ) -> list[list[Operation]]:
     """Fit reviewed cubic pieces to one fixed, native-derived q allocation.
 
@@ -1026,16 +1029,31 @@ def fit_adaptive_piecewise_group(
     The latter preserves each authored join and gives difficult pieces only the
     native subdivision capacity assigned to them. Acceptance uses the symmetric
     geometric certificate over the complete group.
+
+    An explicit continuous fit uses arc-length correspondence across the group
+    while retaining its fixed allocation and the same geometric certificate.
+    It may approximate authored joins within the declared conversion bound;
+    protected native operations are still partitioned analytically.
     """
     if not groups:
         raise ValueError("Adaptive piecewise conversion requires source groups")
+    if fit_mode not in ("piecewise", "continuous"):
+        raise ValueError("Unknown adaptive piecewise fit mode")
     if not math.isfinite(tolerance) or tolerance <= 0:
         raise ValueError("Adaptive piecewise conversion requires a finite tolerance")
     if not allocations or any(type(count) is not int or count < 1 for count in allocations):
         raise ValueError("Adaptive piecewise allocations must be positive integers")
     fitted: list[list[Operation]] = []
     for group in groups:
-        if len(group) == 1:
+        if fit_mode == "continuous":
+            spline = _continuous_piecewise_spline(group, sum(allocations), tolerance)
+            if spline is None:
+                raise PipelineError(
+                    f"{glyph_name}: continuous adaptive fit exceeds {tolerance:g}-unit bound"
+                )
+            operations = _partition_spline_by_counts(spline, allocations)
+            spans = _quadratic_spans(spline)
+        elif len(group) == 1:
             spline = _reference_count_spline(group[0], sum(allocations), tolerance)
             if spline is None:
                 raise PipelineError(
@@ -1402,6 +1420,17 @@ def _fit_piecewise_group(
     raise PipelineError(f"{glyph_name}: piecewise source exceeds {tolerance:g}-unit cu2qu bound")
 
 
+def _match_stationary_controls(group, spline, operation, start, tolerance):
+    """Keep endpoint velocity zero where the corresponding native span stops."""
+    points = operation[1]
+    result = list(spline)
+    if points[0] == start:
+        result[1] = group[0][0]
+    if points[-2] == points[-1]:
+        result[-2] = group[-1][-1]
+    return result if certify_curve_distance(group, _quadratic_spans(result), tolerance) else spline
+
+
 def _piecewise_contours(
     name: str,
     originals: list[RecordingPen],
@@ -1413,11 +1442,32 @@ def _piecewise_contours(
     semantic_recipe: dict | None = None,
     source_locations: tuple[dict[str, float], ...] = (),
     adaptive_recipe: dict | None = None,
+    template_fit_mode: str = "prefix",
+    template_arc_blend: float = 0,
+    template_stationary_axis: str | None = None,
 ) -> tuple[list[list[list[Operation]]], int, int]:
     """Validate explicit per-master operation groups and stage their conversion."""
     sources = [_contours(recording, name) for recording in originals]
     references = {index: _contours(recording, name) for index, recording in protected.items()}
     reference = references[reference_index]
+    stationary_matches = {}
+    if template_stationary_axis is not None:
+        if len(source_locations) != len(sources) or any(
+            template_stationary_axis not in loc for loc in source_locations
+        ):
+            raise PipelineError(f"{name}: stationary matching requires every source location")
+        for index, location in enumerate(source_locations):
+            if index in references:
+                continue
+            matches = [
+                i
+                for i in references
+                if {k: v for k, v in source_locations[i].items() if k != template_stationary_axis}
+                == {k: v for k, v in location.items() if k != template_stationary_axis}
+            ]
+            if len(matches) != 1:
+                raise PipelineError(f"{name}: stationary matching requires one protected partner")
+            stationary_matches[index] = matches[0]
     if (placement == SEMANTIC_PARTITION) != (semantic_recipe is not None):
         raise PipelineError(f"{name}: semantic partition placement and recipe must agree")
     if (placement == ADAPTIVE_PIECEWISE) != (adaptive_recipe is not None):
@@ -1567,7 +1617,13 @@ def _piecewise_contours(
                         f"{name}: adaptive piecewise multi-curve operation "
                         f"{contour_index}:{semantic_index} needs an explicit allocation"
                     )
-                fitted = fit_adaptive_piecewise_group(curves, allocation, tolerance, name)
+                fitted = fit_adaptive_piecewise_group(
+                    curves,
+                    allocation,
+                    tolerance,
+                    name,
+                    adaptive_recipe.get("fitMode", "piecewise"),
+                )
                 expanded += expected - reference_count
                 maximum = max(maximum, max(allocation))
                 for index in range(len(sources)):
@@ -1926,6 +1982,53 @@ def _piecewise_contours(
                             )
                         else:
                             result[index][contour_index].append(("qCurveTo", tuple(spline[1:])))
+                continue
+            if placement == REFERENCE_TEMPLATE and template_fit_mode == "direct":
+                stationary_starts = dict(reference_current)
+                for index, group in enumerate(curves):
+                    if index in references:
+                        operation = references[index][contour_index][operation_index]
+                        result[index][contour_index].append(operation)
+                        reference_current[index] = _require_point(
+                            operation[1][-1], name, "reference endpoint"
+                        )
+                        continue
+                    spline = (
+                        _reference_count_spline(group[0], reference_count, tolerance)
+                        if len(group) == 1
+                        else _continuous_piecewise_spline(group, reference_count, tolerance)
+                    )
+                    if spline is not None and len(group) == 1 and template_arc_blend:
+                        arc = _continuous_piecewise_spline(group, reference_count, tolerance)
+                        if arc is not None:
+                            spline = [
+                                (
+                                    (1 - template_arc_blend) * a[0] + template_arc_blend * b[0],
+                                    (1 - template_arc_blend) * a[1] + template_arc_blend * b[1],
+                                )
+                                for a, b in zip(spline, arc, strict=True)
+                            ]
+                            if not certify_curve_distance(
+                                group, _quadratic_spans(spline), tolerance
+                            ):
+                                raise PipelineError(
+                                    f"{name}: blended template fit exceeds {tolerance:g}-unit bound"
+                                )
+                    if spline is None:
+                        raise PipelineError(
+                            f"{name}: direct template fit exceeds {tolerance:g}-unit bound"
+                        )
+                    if index in stationary_matches:
+                        partner = stationary_matches[index]
+                        spline = _match_stationary_controls(
+                            group,
+                            spline,
+                            references[partner][contour_index][operation_index],
+                            stationary_starts[partner],
+                            tolerance,
+                        )
+                    result[index][contour_index].append(("qCurveTo", tuple(spline[1:])))
+                maximum = max(maximum, reference_count)
                 continue
             effective_placement = (
                 REFERENCE_COUNT
@@ -2333,6 +2436,9 @@ def preserve_quadratic_reference(
             semantic_recipes.get(name),
             source_locations,
             adaptive_recipes.get(name),
+            fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("fitMode", "prefix"),
+            fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("arcBlend", 0),
+            fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("stationaryAxis"),
         )
         for name, groups in source_groups.items()
     }
@@ -2343,7 +2449,10 @@ def preserve_quadratic_reference(
             contours,
             protected_indices if name not in endpoint_transports else frozenset(),
             placements[name],
-            adaptive_recipes.get(name, {}).get("carrierScale", 16),
+            adaptive_recipes.get(name, {}).get(
+                "carrierScale",
+                fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("carrierScale", 16),
+            ),
         )
         for name, (contours, _, _) in staged_groups.items()
         if placements.get(name)
