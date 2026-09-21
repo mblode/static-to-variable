@@ -329,7 +329,7 @@ def _adaptive_piecewise_metadata(fonts, placements: dict[str, str]) -> dict[str,
             and len(recipe["glyphRowsSha256"]) == 64
             and all(character in "0123456789abcdef" for character in recipe["glyphRowsSha256"])
             and type(recipe["subdivisions"]) is int
-            and recipe["subdivisions"] == CONTINUOUS_CHAIN_SUBDIVISIONS
+            and recipe["subdivisions"] in (4, 8)
             and isinstance(allocations, dict)
             and all(
                 isinstance(key, str)
@@ -1155,8 +1155,12 @@ def _continuous_piecewise_spline(
     return spline if certify_curve_distance(curves, _quadratic_spans(spline), tolerance) else None
 
 
-def _subdivide_reference_chain(start: Point, operation: Operation) -> Operation:
-    """Represent a native quadratic chain exactly with four times its controls."""
+def _subdivide_reference_chain(
+    start: Point, operation: Operation, subdivisions: int = CONTINUOUS_CHAIN_SUBDIVISIONS
+) -> Operation:
+    """Represent a native quadratic chain exactly at the selected dyadic density."""
+    if type(subdivisions) is not int or subdivisions not in (4, 8):
+        raise ValueError("Reference chain subdivision requires four or eight pieces")
     kind, points = operation
     if kind != "qCurveTo":
         raise ValueError("Continuous-chain subdivision requires qCurveTo")
@@ -1173,9 +1177,9 @@ def _subdivide_reference_chain(start: Point, operation: Operation) -> Operation:
                 (control[1] + controls[index + 1][1]) / 2,
             )
         )
-        for part in range(CONTINUOUS_CHAIN_SUBDIVISIONS):
-            value = part / CONTINUOUS_CHAIN_SUBDIVISIONS
-            step = 1 / CONTINUOUS_CHAIN_SUBDIVISIONS
+        for part in range(subdivisions):
+            value = part / subdivisions
+            step = 1 / subdivisions
             inverse = 1 - value
             point = (
                 inverse**2 * span_start[0]
@@ -1222,9 +1226,12 @@ def _subdivide_reference_chain_full(start: Point, operation: Operation) -> list[
 
 
 def _partition_subdivided_reference_chain(
-    start: Point, operation: Operation, allocations: tuple[int, ...]
+    start: Point,
+    operation: Operation,
+    allocations: tuple[int, ...],
+    subdivisions: int = CONTINUOUS_CHAIN_SUBDIVISIONS,
 ) -> list[Operation]:
-    kind, points = _subdivide_reference_chain(start, operation)
+    kind, points = _subdivide_reference_chain(start, operation, subdivisions)
     assert kind == "qCurveTo"
     spline = [start, *[_require_point(point, "reference", "qCurveTo point") for point in points]]
     return _partition_spline_by_counts(spline, allocations)
@@ -1544,7 +1551,7 @@ def _piecewise_contours(
                 assert adaptive_recipe is not None
                 allocation = adaptive_allocations.get(
                     (contour_index, semantic_index),
-                    (reference_count * CONTINUOUS_CHAIN_SUBDIVISIONS,),
+                    (reference_count * adaptive_recipe["subdivisions"],),
                 )
                 expected = reference_count * adaptive_recipe["subdivisions"]
                 if sum(allocation) != expected:
@@ -1568,7 +1575,10 @@ def _piecewise_contours(
                         operation = references[index][contour_index][operation_index]
                         result[index][contour_index].extend(
                             _partition_subdivided_reference_chain(
-                                reference_current[index], operation, allocation
+                                reference_current[index],
+                                operation,
+                                allocation,
+                                adaptive_recipe["subdivisions"],
                             )
                         )
                         reference_current[index] = _require_point(
