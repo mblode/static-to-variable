@@ -92,7 +92,10 @@ def test_metadata_requires_complete_matching_bound_recipe(tmp_path):
         )
 
 
-def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(tmp_path, monkeypatch):
+@pytest.mark.parametrize(("fit_mode", "tolerance"), (("prefix", 0.03125), ("direct", 20)))
+def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(
+    tmp_path, monkeypatch, fit_mode, tolerance
+):
     path = tmp_path / "reference.ttf"
     _reference_font(path)
     fonts = _source_set()
@@ -100,6 +103,7 @@ def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(tmp_p
     # protected line without changing the source operation grouping.
     template = [ORIGINAL[0], ("qCurveTo", ((50, 0), (100, 0))), *ORIGINAL[2:]]
     r = recipe(path, template)
+    r["fitMode"] = fit_mode
     for font in fonts:
         lib = font["curve"].lib
         lib[q.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
@@ -111,7 +115,7 @@ def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(tmp_p
         reference_path=path,
         reference_location={},
         protected_locations={1: {}},
-        max_error=0.03125,
+        max_error=tolerance,
     )
     assert report.carrier_glyphs == ("curve.stv-semantic16x",)
     compile_variable = ufo2ft.compileVariableTTF

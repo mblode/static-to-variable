@@ -248,8 +248,17 @@ def load_reference_templates(fonts, placements, originals, reference_path: Path,
             recipe = values[0]
             if (
                 not isinstance(recipe, dict)
-                or set(recipe)
-                != {"schemaVersion", "glyph", "glyphRowsSha256", "referenceSha256", "templates"}
+                or not {"schemaVersion", "glyph", "glyphRowsSha256", "referenceSha256", "templates"}
+                <= set(recipe)
+                <= {
+                    "schemaVersion",
+                    "glyph",
+                    "glyphRowsSha256",
+                    "referenceSha256",
+                    "templates",
+                    "fitMode",
+                }
+                or recipe.get("fitMode", "prefix") not in ("prefix", "direct")
                 or type(recipe["schemaVersion"]) is not int
                 or recipe["schemaVersion"] != 1
             ):
