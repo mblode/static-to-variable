@@ -91,6 +91,33 @@ def test_complete_contour_extraction_retains_sparse_inference_after_serializatio
     assert original["glyf"]["curve"].numberOfContours == 2
 
 
+def test_complete_external_outline_retains_sparse_ink_and_owner_advances():
+    original = fixture()
+    source = deepcopy(original)
+    source["glyf"]["curve"].coordinates.translate((13, -7))
+    source["glyf"]["curve"].recalcBounds(source["glyf"])
+    source["hmtx"]["curve"] = (999, original["hmtx"]["curve"][1] + 13)
+    result, _ = reuse_variable_body(
+        original, "curve", None, accent_font=source, contour_indices=(0, 1)
+    )
+    stream = BytesIO()
+    result.save(stream)
+    stream.seek(0)
+    result = TTFont(stream)
+    for weight in (100, 237.5, 400, 625.5, 950):
+        for optical in (14, 23, 32):
+            actual, width = recording(result, weight, optical)
+            expected, _ = recording(source, weight, optical)
+            assert actual == expected
+            assert width == recording(original, weight, optical)[1]
+    assert "curve.stvMark" not in original.getGlyphOrder()
+
+
+def test_complete_replacement_requires_external_authority():
+    with pytest.raises(PipelineError, match="external source"):
+        reuse_variable_body(fixture(), "curve", None, contour_indices=(0, 1))
+
+
 @pytest.mark.parametrize("defect", ["cycle", "missing", "selection", "axes", "collision"])
 def test_invalid_recipe_is_rejected_without_mutating_input(defect):
     original = fixture()

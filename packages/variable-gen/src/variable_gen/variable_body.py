@@ -60,7 +60,7 @@ def extract_variable_contours(
 def reuse_variable_body(
     original: TTFont,
     glyph: str,
-    body: str,
+    body: str | None,
     *,
     contour_indices: tuple[int, ...] = (1,),
     accent_font: TTFont | None = None,
@@ -69,7 +69,9 @@ def reuse_variable_body(
 
     Callers authorize body equivalence and any external accent drawing. This
     primitive retains the owner's metrics and sparse inference within each
-    complete contour. Saved-outline and protected-end fidelity remain gates.
+    complete contour. With body=None, selected external contours supply the
+    complete replacement outline. Saved-outline and protected-end fidelity
+    remain gates.
     """
     source = original if accent_font is None else accent_font
     helper = f"{glyph}.stvMark"
@@ -87,11 +89,15 @@ def reuse_variable_body(
         for f in (original, source)
     ):
         raise PipelineError("Body reuse does not support remapped axes")
-    if glyph == body or any(n not in original.getGlyphOrder() for n in (glyph, body)):
+    if glyph not in original.getGlyphOrder() or (
+        body is not None and (glyph == body or body not in original.getGlyphOrder())
+    ):
         raise PipelineError("Body reuse requires distinct existing owner and body")
+    if body is None and accent_font is None:
+        raise PipelineError("Complete outline replacement requires an external source")
     if glyph not in source.getGlyphOrder() or helper in original.getGlyphOrder():
         raise PipelineError("Missing accent glyph or colliding mark helper")
-    pending, seen = [body], set()
+    pending, seen = ([] if body is None else [body]), set()
     while pending:
         name = pending.pop()
         if name == glyph:
@@ -113,7 +119,7 @@ def reuse_variable_body(
     )
     for variation in owner_deltas:
         variation.calcInferredDeltas(owner_coords, owner_controls.endPts)
-        variation.coordinates = [(0, 0), (0, 0)] + variation.coordinates[-4:]
+        variation.coordinates = [(0, 0)] * (1 if body is None else 2) + variation.coordinates[-4:]
     name = glyph
     mark = source["glyf"][name]
     component = GlyphComponent()
@@ -166,12 +172,14 @@ def reuse_variable_body(
             mapping = getattr(table, key, None)
             if mapping is not None:
                 mapping.mapping[helper] = mapping.mapping[glyph]
-    base = GlyphComponent()
-    base.glyphName, base.x, base.y, base.flags = body, 0, 0, 4
     component.glyphName = helper
     composite = Glyph()
     composite.numberOfContours = -1
-    composite.components = [base, component]
+    composite.components = [component]
+    if body is not None:
+        base = GlyphComponent()
+        base.glyphName, base.x, base.y, base.flags = body, 0, 0, 4
+        composite.components.insert(0, base)
     font["glyf"][glyph] = composite
     font["gvar"].variations[glyph] = owner_deltas
     font.setGlyphOrder([*order, helper])
