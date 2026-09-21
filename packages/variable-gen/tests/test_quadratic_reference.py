@@ -642,6 +642,48 @@ def test_adaptive_recipe_validates_requested_carrier_precision(scale) -> None:
             quadratic_reference._adaptive_piecewise_metadata(fonts, {"curve": "adaptive-piecewise"})
 
 
+@pytest.mark.parametrize("subdivisions", (4, 8, 0, 2, 16, True, 8.0))
+def test_adaptive_recipe_validates_exact_subdivision_density(subdivisions) -> None:
+    from types import SimpleNamespace
+
+    recipe = {
+        "schemaVersion": 1,
+        "placement": "adaptive-piecewise",
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "subdivisions": subdivisions,
+        "allocations": {},
+    }
+    fonts = [{"curve": SimpleNamespace(lib={quadratic_reference.ADAPTIVE_PIECEWISE_KEY: recipe})}]
+    if type(subdivisions) is int and subdivisions in (4, 8):
+        assert (
+            quadratic_reference._adaptive_piecewise_metadata(
+                fonts, {"curve": "adaptive-piecewise"}
+            )["curve"]["subdivisions"]
+            == subdivisions
+        )
+    else:
+        with pytest.raises(PipelineError, match="metadata is invalid"):
+            quadratic_reference._adaptive_piecewise_metadata(fonts, {"curve": "adaptive-piecewise"})
+
+
+@pytest.mark.parametrize("subdivisions", (4, 8))
+def test_exact_subdivision_preserves_odd_native_coordinates(subdivisions: int) -> None:
+    original = RecordingPen()
+    original.moveTo((-5, -3))
+    original.qCurveTo((3, 7), (11, 1))
+    original.closePath()
+    operation = quadratic_reference._subdivide_reference_chain(
+        (-5, -3), ("qCurveTo", ((3, 7), (11, 1))), subdivisions
+    )
+    assert len(operation[1]) == subdivisions + 1
+    expanded = RecordingPen()
+    expanded.moveTo((-5, -3))
+    expanded.qCurveTo(*operation[1])
+    expanded.closePath()
+    assert _same_filled_path(original, expanded)
+
+
 def test_grouped_carrier_promotes_only_exact_protected_geometry_to_32x() -> None:
     masters = [
         [[("moveTo", ((0.03125, 0),)), ("lineTo", ((100, 0),))]],
@@ -751,8 +793,10 @@ def test_continuous_chain_full_distributes_exact_collapsed_reference_capacity() 
     assert quadratic_reference._same_filled_path(original, expanded)
 
 
+@pytest.mark.parametrize("subdivisions", (4, 8))
 def test_adaptive_piecewise_uses_reviewed_allocations_and_explicit_deltas(
     tmp_path: Path,
+    subdivisions: int,
 ) -> None:
     from fontTools.misc.bezierTools import splitCubicAtT
 
@@ -772,8 +816,8 @@ def test_adaptive_piecewise_uses_reviewed_allocations_and_explicit_deltas(
         "placement": quadratic_reference.ADAPTIVE_PIECEWISE,
         "glyph": "curve",
         "glyphRowsSha256": "a" * 64,
-        "subdivisions": 4,
-        "allocations": {"0:1": [1, 1, 2]},
+        "subdivisions": subdivisions,
+        "allocations": {"0:1": [subdivisions // 4, subdivisions // 4, subdivisions // 2]},
     }
     for font, contours in zip(fonts, groups, strict=True):
         font["curve"].lib[quadratic_reference.SOURCE_GROUPS_KEY] = contours
@@ -795,9 +839,9 @@ def test_adaptive_piecewise_uses_reviewed_allocations_and_explicit_deltas(
     assert len({_signature(font["curve.stv-semantic16x"]) for font in fonts}) == 1
     assert _signature(fonts[0]["curve.stv-semantic16x"])[1:5] == (
         ("lineTo", 1),
-        ("qCurveTo", 2),
-        ("qCurveTo", 2),
-        ("qCurveTo", 3),
+        ("qCurveTo", subdivisions // 4 + 1),
+        ("qCurveTo", subdivisions // 4 + 1),
+        ("qCurveTo", subdivisions // 2 + 1),
     )
     reference = TTFont(reference_path).getGlyphSet()["curve"]
     for index in (1, 2):
