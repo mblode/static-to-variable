@@ -1420,6 +1420,17 @@ def _fit_piecewise_group(
     raise PipelineError(f"{glyph_name}: piecewise source exceeds {tolerance:g}-unit cu2qu bound")
 
 
+def _match_stationary_controls(group, spline, operation, start, tolerance):
+    """Keep endpoint velocity zero where the corresponding native span stops."""
+    points = operation[1]
+    result = list(spline)
+    if points[0] == start:
+        result[1] = group[0][0]
+    if points[-2] == points[-1]:
+        result[-2] = group[-1][-1]
+    return result if certify_curve_distance(group, _quadratic_spans(result), tolerance) else spline
+
+
 def _piecewise_contours(
     name: str,
     originals: list[RecordingPen],
@@ -1433,11 +1444,30 @@ def _piecewise_contours(
     adaptive_recipe: dict | None = None,
     template_fit_mode: str = "prefix",
     template_arc_blend: float = 0,
+    template_stationary_axis: str | None = None,
 ) -> tuple[list[list[list[Operation]]], int, int]:
     """Validate explicit per-master operation groups and stage their conversion."""
     sources = [_contours(recording, name) for recording in originals]
     references = {index: _contours(recording, name) for index, recording in protected.items()}
     reference = references[reference_index]
+    stationary_matches = {}
+    if template_stationary_axis is not None:
+        if len(source_locations) != len(sources) or any(
+            template_stationary_axis not in loc for loc in source_locations
+        ):
+            raise PipelineError(f"{name}: stationary matching requires every source location")
+        for index, location in enumerate(source_locations):
+            if index in references:
+                continue
+            matches = [
+                i
+                for i in references
+                if {k: v for k, v in source_locations[i].items() if k != template_stationary_axis}
+                == {k: v for k, v in location.items() if k != template_stationary_axis}
+            ]
+            if len(matches) != 1:
+                raise PipelineError(f"{name}: stationary matching requires one protected partner")
+            stationary_matches[index] = matches[0]
     if (placement == SEMANTIC_PARTITION) != (semantic_recipe is not None):
         raise PipelineError(f"{name}: semantic partition placement and recipe must agree")
     if (placement == ADAPTIVE_PIECEWISE) != (adaptive_recipe is not None):
@@ -1954,6 +1984,7 @@ def _piecewise_contours(
                             result[index][contour_index].append(("qCurveTo", tuple(spline[1:])))
                 continue
             if placement == REFERENCE_TEMPLATE and template_fit_mode == "direct":
+                stationary_starts = dict(reference_current)
                 for index, group in enumerate(curves):
                     if index in references:
                         operation = references[index][contour_index][operation_index]
@@ -1986,6 +2017,15 @@ def _piecewise_contours(
                     if spline is None:
                         raise PipelineError(
                             f"{name}: direct template fit exceeds {tolerance:g}-unit bound"
+                        )
+                    if index in stationary_matches:
+                        partner = stationary_matches[index]
+                        spline = _match_stationary_controls(
+                            group,
+                            spline,
+                            references[partner][contour_index][operation_index],
+                            stationary_starts[partner],
+                            tolerance,
                         )
                     result[index][contour_index].append(("qCurveTo", tuple(spline[1:])))
                 maximum = max(maximum, reference_count)
@@ -2398,6 +2438,7 @@ def preserve_quadratic_reference(
             adaptive_recipes.get(name),
             fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("fitMode", "prefix"),
             fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("arcBlend", 0),
+            fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("stationaryAxis"),
         )
         for name, groups in source_groups.items()
     }
@@ -2408,7 +2449,10 @@ def preserve_quadratic_reference(
             contours,
             protected_indices if name not in endpoint_transports else frozenset(),
             placements[name],
-            adaptive_recipes.get(name, {}).get("carrierScale", 16),
+            adaptive_recipes.get(name, {}).get(
+                "carrierScale",
+                fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("carrierScale", 16),
+            ),
         )
         for name, (contours, _, _) in staged_groups.items()
         if placements.get(name)

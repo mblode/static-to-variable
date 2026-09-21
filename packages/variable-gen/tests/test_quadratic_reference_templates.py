@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -36,6 +37,16 @@ TEMPLATE = [
 
 def test_exact_midpoint_elevation_stationary_capacity_and_cyclic_start():
     assert exact_reference_template(ORIGINAL, TEMPLATE)
+
+
+def test_stationary_endpoint_matching_preserves_certificate():
+    group = [((0.0, 0.0), (0.0, 0.0), (1.0, 0.0), (1.0, 0.0))]
+    spline = [(0.0, 0.0), (0.1, 0.0), (0.9, 0.0), (1.0, 0.0)]
+    result = q._match_stationary_controls(
+        group, spline, ("qCurveTo", ((0.0, 0.0), (1.0, 0.0), (1.0, 0.0))), (0.0, 0.0), 0.01
+    )
+    assert result[1] == (0.0, 0.0) and result[-2] == (1.0, 0.0)
+    assert q.certify_curve_distance(group, q._quadratic_spans(result), 0.01)
 
 
 @pytest.mark.parametrize("change", ["bend", "reverse", "retrace", "move"])
@@ -96,8 +107,9 @@ def test_metadata_requires_complete_matching_bound_recipe(tmp_path):
     ("fit_mode", "tolerance", "arc_blend"),
     (("prefix", 0.03125, None), ("direct", 20, None), ("direct", 20, 0.25)),
 )
+@pytest.mark.parametrize("encoded", [False, True])
 def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(
-    tmp_path, monkeypatch, fit_mode, tolerance, arc_blend
+    tmp_path, monkeypatch, fit_mode, tolerance, arc_blend, encoded
 ):
     path = tmp_path / "reference.ttf"
     _reference_font(path)
@@ -106,6 +118,9 @@ def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(
     # protected line without changing the source operation grouping.
     template = [ORIGINAL[0], ("qCurveTo", ((50, 0), (100, 0))), *ORIGINAL[2:]]
     r = recipe(path, template)
+    if encoded:
+        for item in r["templates"]:
+            item["recording"] = json.dumps(item["recording"])
     r["fitMode"] = fit_mode
     if arc_blend is not None:
         r["arcBlend"] = arc_blend
