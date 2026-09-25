@@ -259,6 +259,7 @@ def build_designspace(
             # prefix (for example ``Glide Text Regular``).
             source_master_names=tuple(source.styleName for source in ds.sources),
             source_locations=tuple(dict(source.location) for source in ds.sources),
+            source_axis_names={axis.tag: axis.name for axis in ds.axes},
             protected_locations=protected_locations,
             glyph_max_error=quadratic_glyph_max_error,
         )

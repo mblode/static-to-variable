@@ -104,12 +104,17 @@ def test_metadata_requires_complete_matching_bound_recipe(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("fit_mode", "tolerance", "arc_blend"),
-    (("prefix", 0.03125, None), ("direct", 20, None), ("direct", 20, 0.25)),
+    ("fit_mode", "tolerance", "arc_blend", "axis_name"),
+    (
+        ("prefix", 0.03125, None, None),
+        ("direct", 20, None, None),
+        ("direct", 20, 0.25, None),
+        ("direct", 20, None, "Optical size"),
+    ),
 )
 @pytest.mark.parametrize("encoded", [False, True])
 def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(
-    tmp_path, monkeypatch, fit_mode, tolerance, arc_blend, encoded
+    tmp_path, monkeypatch, fit_mode, tolerance, arc_blend, axis_name, encoded
 ):
     path = tmp_path / "reference.ttf"
     _reference_font(path)
@@ -124,6 +129,8 @@ def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(
     r["fitMode"] = fit_mode
     if arc_blend is not None:
         r["arcBlend"] = arc_blend
+    if axis_name is not None:
+        r["stationaryAxis"] = "opsz"
     for font in fonts:
         lib = font["curve"].lib
         lib[q.SOURCE_GROUPS_KEY] = ((1, 1, 1, 1),)
@@ -136,6 +143,10 @@ def test_template_is_consumed_before_fontmake_and_compiled_master_is_exact(
         reference_location={},
         protected_locations={1: {}},
         max_error=tolerance,
+        source_locations=tuple({axis_name: value} for value in (12, 16, 28))
+        if axis_name is not None
+        else (),
+        source_axis_names={"opsz": axis_name} if axis_name is not None else None,
     )
     assert report.carrier_glyphs == ("curve.stv-semantic16x",)
     compile_variable = ufo2ft.compileVariableTTF
