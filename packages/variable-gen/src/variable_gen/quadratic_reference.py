@@ -2308,6 +2308,7 @@ def preserve_quadratic_reference(
     protected_locations: dict[int, dict[str, float]] | None = None,
     glyph_max_error: dict[str, float] | None = None,
     source_groups: dict[str, SourceGroups] | None = None,
+    source_axis_names: dict[str, str] | None = None,
 ) -> QuadraticReferenceReport:
     """Convert ``fonts`` in place while preserving a protected TT default.
 
@@ -2424,6 +2425,11 @@ def preserve_quadratic_reference(
         }
         if len(signatures) != 1:
             raise PipelineError(f"{name}: protected reference masters have incompatible topology")
+
+    def stationary_source_axis(name):
+        tag = fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("stationaryAxis")
+        return (source_axis_names or {}).get(tag, tag) if tag is not None else None
+
     staged_groups = {
         name: _piecewise_contours(
             name,
@@ -2438,7 +2444,7 @@ def preserve_quadratic_reference(
             adaptive_recipes.get(name),
             fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("fitMode", "prefix"),
             fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("arcBlend", 0),
-            fonts[0][name].lib.get(REFERENCE_TEMPLATES_KEY, {}).get("stationaryAxis"),
+            stationary_source_axis(name),
         )
         for name, groups in source_groups.items()
     }
