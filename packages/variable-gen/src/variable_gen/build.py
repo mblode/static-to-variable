@@ -27,6 +27,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 import glyphsLib
@@ -40,11 +41,16 @@ from variable_gen.authorship import AuthoredSource, inspect_authored_source
 from variable_gen.common import PipelineError, fontmake_command, merge_style_report
 from variable_gen.config import ProjectConfig, Style, default_donor_path
 from variable_gen.designspace import export_designspace
+from variable_gen.iup_projection import exact_iup_deltas
 from variable_gen.outlines import donor_outline, draw_into
 
 UNDERWEIGHT_RATIO = 0.92
 AUTHORED_FIDELITY_RATIO = 0.98
+# Unchunked 16x/32x carriers keep every delta explicit. Other semantic carriers,
+# including chunked ones (``<owner>.stv-semantic64x.c0``), may be IUP-compressed
+# only where the compression reproduces every explicit delta exactly.
 SEMANTIC_CARRIER_SUFFIXES = (".stv-semantic16x", ".stv-semantic32x")
+SEMANTIC_CARRIER_NAME = re.compile(r"(?P<owner>.+)\.stv-semantic[1-9]\d*x(?:\.c\d+)?")
 
 
 def _semantic_carrier_owner(name: str) -> str | None:
@@ -52,6 +58,11 @@ def _semantic_carrier_owner(name: str) -> str | None:
         if name.endswith(suffix):
             return name.removesuffix(suffix)
     return None
+
+
+def _any_semantic_carrier_owner(name: str) -> str | None:
+    match = SEMANTIC_CARRIER_NAME.fullmatch(name)
+    return match["owner"] if match else None
 
 
 @dataclass(frozen=True)
@@ -190,8 +201,25 @@ def _write_layout_report(config: ProjectConfig, style_key: str, layout, hinting)
     path.write_text(json.dumps(merged, indent=2) + "\n")
 
 
-def _optimize_unmarked_variations(font: TTFont, preserved: frozenset[str]) -> None:
-    """Apply the normal IUP optimization only outside the authored glyph set."""
+def _iup_reproduces(coordinates, end_points, sparse, explicit) -> bool:
+    """Whether rational IUP inference of ``sparse`` equals every explicit delta."""
+    if None not in sparse:
+        return list(sparse) == list(explicit)
+    try:
+        inferred = exact_iup_deltas(coordinates, end_points, sparse)
+    except PipelineError:
+        return False
+    return inferred == [(Fraction(x), Fraction(y)) for x, y in explicit]
+
+
+def _optimize_unmarked_variations(
+    font: TTFont, preserved: frozenset[str], exact: frozenset[str] = frozenset()
+) -> None:
+    """Apply the normal IUP optimization only outside the authored glyph set.
+
+    Tuples of glyphs in ``exact`` keep their compression only when IUP inference
+    reproduces every explicit delta; otherwise the tuple stays fully explicit.
+    """
     glyf = font["glyf"]
     h_metrics = font["hmtx"].metrics
     v_metrics = getattr(font.get("vmtx"), "metrics", None)
@@ -202,7 +230,12 @@ def _optimize_unmarked_variations(font: TTFont, preserved: frozenset[str]) -> No
         for variation in variations:
             if any(delta is None for delta in variation.coordinates):
                 raise PipelineError("Selective compression requires explicit input deltas")
+            explicit = list(variation.coordinates)
             variation.optimize(coordinates, controls.endPts, tolerance=0.5)
+            if name in exact and not _iup_reproduces(
+                coordinates, controls.endPts, variation.coordinates, explicit
+            ):
+                variation.coordinates = explicit
 
 
 def _preserved_authored_variations(font: TTFont, authored: frozenset[str]) -> frozenset[str]:
@@ -213,6 +246,19 @@ def _preserved_authored_variations(font: TTFont, authored: frozenset[str]) -> fr
         if (owner := _semantic_carrier_owner(name)) is not None and owner in authored
     }
     return authored | carriers
+
+
+def _exact_authored_carriers(
+    font: TTFont, authored: frozenset[str], preserved: frozenset[str]
+) -> frozenset[str]:
+    """Authored owners' other semantic carriers, compressed only when lossless."""
+    return frozenset(
+        name
+        for name in font.getGlyphOrder()
+        if name not in preserved
+        and (owner := _any_semantic_carrier_owner(name)) is not None
+        and owner in authored
+    )
 
 
 def build_style(config: ProjectConfig, style_key: str) -> list[str]:
@@ -264,8 +310,11 @@ def build_style(config: ProjectConfig, style_key: str) -> list[str]:
         if p.returncode == 0:
             if style.optimize_gvar and style.preserve_authored_deltas and authored.glyphs:
                 with TTFont(str(out)) as explicit:
+                    preserved = _preserved_authored_variations(explicit, authored.glyphs)
                     _optimize_unmarked_variations(
-                        explicit, _preserved_authored_variations(explicit, authored.glyphs)
+                        explicit,
+                        preserved,
+                        _exact_authored_carriers(explicit, authored.glyphs, preserved),
                     )
                     explicit.save(str(out))
             from variable_gen.variation_reference import (
