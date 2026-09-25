@@ -349,7 +349,7 @@ def test_endpoint_batch_matches_direct_transport_or_leaves_candidate_untouched(f
 
 @pytest.mark.parametrize("failure", [None, "missing", "mismatch", "semantic", "placement"])
 @pytest.mark.parametrize("version", [2, 3])
-@pytest.mark.parametrize("semantic_version", [3, 6])
+@pytest.mark.parametrize("semantic_version", [3, 6, 7])
 def test_endpoint_metadata_must_bind_every_source_and_its_semantic_recipe(
     failure, version, semantic_version
 ):
@@ -385,6 +385,27 @@ def test_endpoint_metadata_must_bind_every_source_and_its_semantic_recipe(
             _native_iup_transport_metadata(fonts, placement)
     else:
         assert _native_iup_transport_metadata(fonts, placement) == {"curve": recipe}
+
+
+@pytest.mark.parametrize("semantic_version", [1, 2, 4, 5])
+def test_endpoint_metadata_rejects_semantic_recipes_without_endpoint_carriers(semantic_version):
+    import ufoLib2
+    from variable_gen.quadratic_reference import (
+        NATIVE_IUP_TRANSPORT_KEY,
+        SEMANTIC_PARTITION_KEY,
+        _native_iup_transport_metadata,
+    )
+
+    fonts = [ufoLib2.Font(), ufoLib2.Font()]
+    for font in fonts:
+        glyph = font.newGlyph("curve")
+        glyph.lib[NATIVE_IUP_TRANSPORT_KEY] = endpoint_recipe()
+        glyph.lib[SEMANTIC_PARTITION_KEY] = {
+            "schemaVersion": semantic_version,
+            "glyphRowsSha256": "a" * 64,
+        }
+    with pytest.raises(PipelineError, match="v3, v6 or v7"):
+        _native_iup_transport_metadata(fonts, {"curve": "semantic-partition"})
 
 
 @pytest.mark.parametrize(
