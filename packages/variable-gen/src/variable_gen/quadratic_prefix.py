@@ -66,13 +66,35 @@ def _subdivided_prefix(start: Point, operation: Operation, extra: int) -> list[O
         right_control = _lerp(control, endpoint, parameter)
         operations.append(("qCurveTo", (right_control, endpoint)))
     else:
-        steps = 1
-        while native * steps < native + extra:
-            steps += 1
+        # Text carries ``extra`` one-control spans followed by one span with the
+        # protected ``native`` controls. Refine the chain uniformly so its tail
+        # keeps exactly ``native`` implied controls, then split whole head spans
+        # at t=1/2 until the head holds exactly ``extra`` one-control spans.
+        steps = extra // native + 1
+        head = native * (steps - 1)
         operations = qr._partition_spline(
             [start, *subdivide_quadratic_chain(start, _as_semantic_operation(operation), steps)],
-            extra,
+            head,
         )
+        remainder = extra - head
+        split = {(2 * index + 1) * head // (2 * remainder) for index in range(remainder)}
+        current = start
+        balanced: list[Operation] = []
+        for index, (kind, points) in enumerate(operations):
+            if index in split:
+                control, endpoint = (
+                    qr._require_point(point, "reference", "qCurveTo point") for point in points
+                )
+                left = _lerp(current, control, 0.5)
+                right = _lerp(control, endpoint, 0.5)
+                balanced.append(("qCurveTo", (left, _lerp(left, right, 0.5))))
+                balanced.append(("qCurveTo", (right, endpoint)))
+            else:
+                balanced.append((kind, points))
+            current = qr._require_point(points[-1], "reference", "qCurveTo endpoint")
+        operations = balanced
+    if [len(points) for _, points in operations] != [2] * extra + [native + 1]:
+        raise AssertionError("prefix subdivision must allocate the Text point structure")
     if ("qCurveTo", (start, start)) in operations:
         raise AssertionError("extra Display spans must not collapse to the start")
     if not qr._same_filled_path(_closed(start, [operation]), _closed(start, operations)):
@@ -90,6 +112,10 @@ def pad_reference_operation(
         return _native_pad(start, operation, prefix_count, placement)
     if prefix_count == 0:
         return [operation]
+    if prefix_count < len(operation[1]) - 1:
+        # No exact subdivision can put fewer one-control spans ahead of a tail
+        # that keeps every implied native control, so keep the stationary pads.
+        return _native_pad(start, operation, prefix_count, placement)
     return _subdivided_prefix(start, operation, prefix_count)
 
 
