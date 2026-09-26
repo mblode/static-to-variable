@@ -1,5 +1,12 @@
 # static-to-variable
 
+## 0.6.2
+
+### Patch Changes
+
+- d75faf4: Subdivide extra Text quadratic spans along the protected Display curve instead of collapsing them to stationary start prefixes, so intermediate optical sizes stay smooth and compiled Display stays native.
+- 3f3af96: Keep subdivided Display prefix spans point-compatible with the Text masters. A multi-control protected span now receives exactly the Text allocation of one-control extra spans plus its native control count, and keeps stationary pads when no exact subdivision fits, so fontmake no longer rejects the masters as incompatible.
+
 ## 0.6.1
 
 ### Patch Changes
