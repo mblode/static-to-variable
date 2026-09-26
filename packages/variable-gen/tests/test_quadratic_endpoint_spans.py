@@ -176,3 +176,62 @@ def test_existing_seam_cannot_be_silently_resplit():
             extra_spans=8,
             split_fraction=0.25,
         )
+
+
+def _cubic_point(curve, t):
+    (ax, ay), (bx, by), (cx, cy), (dx, dy) = curve
+    u = 1 - t
+    return (
+        u**3 * ax + 3 * u * u * t * bx + 3 * u * t * t * cx + t**3 * dx,
+        u**3 * ay + 3 * u * u * t * by + 3 * u * t * t * cy + t**3 * dy,
+    )
+
+
+@pytest.mark.parametrize("fraction", [0.25, 0.9, 0.99])
+def test_start_capacity_seam_is_an_authored_parameter_in_contour_order(fraction):
+    result = partition_startpoint_spans(
+        [CURVE],
+        PROTECTED,
+        _reference_count_spline,
+        1e-7,
+        extra_spans=1,
+        protected_start=CURVE[0],
+        split_fraction=fraction,
+    )
+    # Extra capacity covers [0, fraction]; the native count covers the rest.
+    assert result.protected == (("qCurveTo", (CURVE[0],) * 2), PROTECTED)
+    assert result.authored[0][1][-1] == pytest.approx(_cubic_point(CURVE, fraction))
+    assert [len(points) for _, points in result.authored] == [2, 3]
+    assert result.authored[-1][1][-1] == CURVE[-1]
+
+
+def test_start_capacity_default_seam_is_unchanged():
+    arguments = ([CURVE], PROTECTED, _reference_count_spline, 1e-7)
+    options = {"extra_spans": 8, "protected_start": CURVE[0]}
+    assert partition_startpoint_spans(*arguments, **options) == partition_startpoint_spans(
+        *arguments, **options, split_fraction=0.5
+    )
+
+
+@pytest.mark.parametrize("fraction", [0, 1, True, float("nan"), "0.25"])
+def test_start_capacity_rejects_invalid_seam(fraction):
+    with pytest.raises(ValueError, match="split fraction"):
+        partition_startpoint_spans(
+            [CURVE],
+            PROTECTED,
+            _reference_count_spline,
+            0.1,
+            extra_spans=8,
+            protected_start=CURVE[0],
+            split_fraction=fraction,
+        )
+
+
+@pytest.mark.parametrize("fraction", [0.9, 0.99])
+def test_end_capacity_near_the_stationary_endpoint_keeps_native_stream(fraction):
+    result = partition_endpoint_spans(
+        [CURVE], PROTECTED, _reference_count_spline, 1, extra_spans=1, split_fraction=fraction
+    )
+    assert result.protected == (PROTECTED, ("qCurveTo", (PROTECTED[1][-1],) * 2))
+    assert result.authored[0][1][-1] == pytest.approx(_cubic_point(CURVE, fraction))
+    assert result.authored[-1][1][-1] == CURVE[-1]

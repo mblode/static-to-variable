@@ -1626,3 +1626,145 @@ def test_open_authored_contour_fails_before_quadratic_conversion(tmp_path: Path)
         )
 
     assert [_recording(font["curve"]).value for font in fonts] == before
+
+
+def _endpoint_v7_recipe(**change):
+    recipe = {
+        "schemaVersion": 7,
+        "placement": quadratic_reference.SEMANTIC_PARTITION,
+        "glyph": "curve",
+        "glyphRowsSha256": "a" * 64,
+        "defaultSubdivisions": 1,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "straightExtensionWeights": [],
+        "endpointSpans": {"1": 1, "3": 8},
+        "endpointSpanStarts": [3],
+        "endpointSplitFractions": {"1": 0.99},
+    }
+    recipe.update(change)
+    return recipe
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {},
+        {"endpointSpanStarts": []},
+        {"endpointSplitFractions": {"1": 0.99, "3": 0.25}},
+    ],
+)
+def test_endpoint_v7_metadata_accepts_bounded_per_operation_seams(change):
+    fonts = _source_set()
+    recipe = _endpoint_v7_recipe(**change)
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    assert quadratic_reference._semantic_partition_metadata(
+        fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+    ) == {"curve": recipe}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"endpointSplitFractions": {}},
+        {"endpointSplitFractions": {"2": 0.5}},
+        {"endpointSplitFractions": {"01": 0.5}},
+        {"endpointSplitFractions": {"1": 0}},
+        {"endpointSplitFractions": {"1": 1}},
+        {"endpointSplitFractions": {"1": True}},
+        {"endpointSplitFractions": {"1": float("nan")}},
+        {"endpointSplitFractions": {"1": "0.5"}},
+        {"endpointSplitFractions": [0.5]},
+        {"endpointSpanStarts": [2]},
+        {"endpointSpanStarts": [3, 3]},
+        {"endpointSpanStarts": [True]},
+        {"splitFraction": 0.5},
+        {"semanticSlots": [1]},
+        {"defaultSubdivisions": 2},
+    ],
+)
+def test_endpoint_v7_metadata_rejects_unbound_or_unbounded_seams(change):
+    fonts = _source_set()
+    recipe = _endpoint_v7_recipe(**change)
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    with pytest.raises(PipelineError, match="semantic partition metadata"):
+        quadratic_reference._semantic_partition_metadata(
+            fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+        )
+
+
+def test_endpoint_v7_metadata_requires_its_seam_key():
+    fonts = _source_set()
+    recipe = _endpoint_v7_recipe()
+    del recipe["endpointSplitFractions"]
+    for font in fonts:
+        font["curve"].lib[quadratic_reference.SEMANTIC_PARTITION_KEY] = recipe
+    with pytest.raises(PipelineError, match="semantic partition metadata"):
+        quadratic_reference._semantic_partition_metadata(
+            fonts, {"curve": quadratic_reference.SEMANTIC_PARTITION}
+        )
+
+
+@pytest.mark.parametrize("at_start", [False, True])
+def test_endpoint_v7_seam_moves_text_capacity_only_where_display_is_stationary(at_start):
+    def recording(*operations):
+        pen = RecordingPen()
+        pen.value = list(operations)
+        return pen
+
+    curve = ((100, 80), (0, 80), (0, 0))
+    authored = recording(
+        ("moveTo", ((0, 0),)),
+        ("lineTo", ((100, 0),)),
+        ("curveTo", curve),
+        ("closePath", ()),
+    )
+    protected = recording(
+        ("moveTo", ((0, 0),)),
+        ("lineTo", ((100, 0),)),
+        ("qCurveTo", ((50, 120), (0, 0))),
+        ("closePath", ()),
+    )
+    recipe = {
+        "defaultSubdivisions": 1,
+        "subdivisionOverrides": {},
+        "semanticSlots": [],
+        "endpointSpans": {"1": 1},
+        "endpointSpanStarts": [1] if at_start else [],
+        "endpointSplitFractions": {"1": 0.1 if at_start else 0.9},
+    }
+    contours, expanded, maximum = quadratic_reference._piecewise_contours(
+        "curve",
+        [authored, authored, authored],
+        (((1, 1, 1, 1),),) * 3,
+        {1: protected, 2: protected},
+        1,
+        40,
+        quadratic_reference.SEMANTIC_PARTITION,
+        recipe,
+    )
+    assert (expanded, maximum) == (1, 2)
+    assert len({tuple((op, len(points)) for op, points in value[0]) for value in contours}) == 1
+    start = (100, 0)
+    seam = _bezier_point((start, *curve), 0.1 if at_start else 0.9)
+    text = contours[0][0]
+    assert text[2][1][-1] == pytest.approx(seam)
+    for index in (1, 2):
+        # Protected Display keeps its native stream; the extra span is stationary.
+        if at_start:
+            assert contours[index][0][2] == ("qCurveTo", (start,) * 2)
+            assert contours[index][0][3] == protected.value[2]
+        else:
+            assert contours[index][0][2] == protected.value[2]
+            assert contours[index][0][3] == ("qCurveTo", ((0, 0),) * 2)
+
+
+def _bezier_point(curve, t):
+    (ax, ay), (bx, by), (cx, cy), (dx, dy) = curve
+    u = 1 - t
+    return (
+        u**3 * ax + 3 * u * u * t * bx + 3 * u * t * t * cx + t**3 * dx,
+        u**3 * ay + 3 * u * u * t * by + 3 * u * t * t * cy + t**3 * dy,
+    )

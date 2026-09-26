@@ -36,11 +36,14 @@ def partition_startpoint_spans(
     *,
     extra_spans: int,
     protected_start: Point,
+    split_fraction: float = 0.5,
 ) -> SemanticPartition:
     """Fit extra capacity before the intact native operation, by exact reversal.
 
     This preserves every protected point, with collapsed duplicates only at its
     start. The caller must authenticate that start's sparse native delta.
+    ``split_fraction`` is the authored parameter, in contour order, where the
+    extra capacity ends and the native capacity begins.
     """
     if len(authored_curves) not in (1, 2) or any(len(c) != 4 for c in authored_curves):
         raise ValueError("endpoint spans require one or two authored cubics")
@@ -53,6 +56,13 @@ def partition_startpoint_spans(
         fitter,
         tolerance,
         extra_spans=extra_spans,
+        split_fraction=(
+            1 - split_fraction
+            if isinstance(split_fraction, (int, float))
+            and not isinstance(split_fraction, bool)
+            and split_fraction != 0.5
+            else split_fraction
+        ),
     )
 
     def reverse_operations(operations: tuple[Operation, ...], start: Point):
