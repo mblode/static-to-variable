@@ -20,7 +20,7 @@ as blocking defects, while malformed, incompatible, or non-finite input raises
 ``ValueError`` so an audit cannot silently pass it.
 
 No acceptance threshold is universal.  Callers must provide one in font units.
-Glide's proposed 0.9-unit value remains provisional until calibrated against
+A proposed 0.9-unit value remains provisional until calibrated against
 rendered evidence.
 """
 

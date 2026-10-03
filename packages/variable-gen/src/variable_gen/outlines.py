@@ -91,7 +91,7 @@ def signature(contours):
 #: later interpolation all assume; sub-unit coordinates are an artefact of the
 #: reconstruction's arc-length resampling, not a drawing decision.
 #:
-#: Measured on Glide's 742 roman glyphs at one master before enabling it:
+#: Measured on an in-house family's 742 roman glyphs at one master before enabling it:
 #: fractional coordinates 64.6% -> 0.0%, median curvature roughness +1.5%,
 #: zero segments collapsed below half a unit, and zero glyphs whose segment
 #: structure changed. Rounding is per-point, so point counts and therefore

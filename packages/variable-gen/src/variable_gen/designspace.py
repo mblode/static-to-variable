@@ -256,7 +256,7 @@ def build_designspace(
             topology_contract_master_names=quadratic_topology_master_names,
             # Configured master names are Glyphs style names (for example
             # ``Text Regular``); designspace source names include the family
-            # prefix (for example ``Glide Text Regular``).
+            # prefix (for example ``Example Text Regular``).
             source_master_names=tuple(source.styleName for source in ds.sources),
             source_locations=tuple(dict(source.location) for source in ds.sources),
             source_axis_names={axis.tag: axis.name for axis in ds.axes},

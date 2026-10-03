@@ -33,7 +33,7 @@ CI runs `verify:node` and `verify:python` in parallel, then keeps the packaged C
 - `packages/cli` is the published `static-to-variable` npm package. It orchestrates the engine; build and repair logic belongs in `packages/variable-gen`.
 - `packages/variable-gen` is the private Python engine. Run it through `uv run`, not global Python.
 - `apps/web` is the marketing site and showcase. Follow @apps/web/AGENTS.md when editing it.
-- Glide's licensed donors and project config live in the sibling private `../static-to-variable-glide` repository. Never copy donor fonts or generated sources here.
+- Licensed donor fonts and project config for any in-house family live in a sibling private repository. Never copy donor fonts or generated sources here.
 
 ## Font-pipeline gotchas
 

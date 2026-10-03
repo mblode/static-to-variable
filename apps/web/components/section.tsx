@@ -32,7 +32,7 @@ interface SectionHeadingProps {
   action?: ReactNode;
 }
 
-/** Eyebrow + headline + lede — convene’s SectionHeading, adapted to Glide. */
+/** Eyebrow + headline + lede — convene’s SectionHeading, adapted to this site. */
 export function SectionHeading({
   children,
   className,

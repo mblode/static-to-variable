@@ -1,6 +1,6 @@
 # Minimal example
 
-A tiny, self-contained project that builds a variable font from three static [Inter](https://github.com/rsms/inter) weights — the generic smoke test that `static-to-variable` works on a non-Glide font, from scratch, with no pre-existing `.glyphs` source.
+A tiny, self-contained project that builds a variable font from three static [Inter](https://github.com/rsms/inter) weights — the generic smoke test that `static-to-variable` works on any font, from scratch, with no pre-existing `.glyphs` source.
 
 - `donors/` — Inter Thin/Regular/Black, subset to basic Latin (OFL-1.1, see `donors/OFL.txt`). These are the only committed binaries in the repo.
 - `stv.config.json` — a v3 config with paths relative to this directory.
