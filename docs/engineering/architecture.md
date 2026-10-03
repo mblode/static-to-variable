@@ -8,7 +8,7 @@
 2. `packages/variable-gen` owns font reconstruction, compilation, OpenType finishing, validation, and release output.
 3. `apps/web` demonstrates the tool and committed showcase artifacts; it is not part of font compilation.
 
-The private sibling `static-to-variable-glide` owns Glide's licensed donor inputs, durable drawing steps, project config, proofs, and release policy. The public engine must stay family-agnostic.
+A private sibling repository owns the licensed donor inputs, durable drawing steps, project config, proofs, and release policy for any in-house family built on this engine. The public engine must stay family-agnostic.
 
 ## Pipeline flow
 

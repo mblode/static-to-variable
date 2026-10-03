@@ -136,7 +136,7 @@ def _two_control_reference_font(path: Path) -> None:
 def test_odd_prefix_on_two_control_display_span_compiles_compatible_masters(
     tmp_path: Path,
 ) -> None:
-    """Regression: Glide Roman pi/odieresis and Italic r*.ss03 failed fontmake compatibility."""
+    """Regression: Roman pi/odieresis and Italic r*.ss03 failed fontmake compatibility."""
     reference_path = tmp_path / "reference.ttf"
     _two_control_reference_font(reference_path)
     fonts = _source_set()

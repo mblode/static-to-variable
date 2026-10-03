@@ -22,9 +22,9 @@ packages/cli/skills/
 cabinet/
 /fonts/
 
-# Leftover nest from when the private Glide build lived here. The checkout is
-# now the sibling repo github.com/mblode/static-to-variable-glide.
-/glide/
+# Leftover nest from when a private donor build lived here. The checkout now
+# lives in a separate private repository.
+/donor/
 
 # Generated pipeline outputs.
 master_ufo/

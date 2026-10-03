@@ -13,7 +13,7 @@ The published docs are MDX pages configured by `docs/docs.json`. Engineering gui
 - Bold interface labels; wrap commands, paths, fields, and code identifiers in backticks.
 - Update `docs.json` when navigation or branding changes.
 - Keep implementation and contributor detail in `docs/engineering` or `CONTRIBUTING.md`, then link to it rather than duplicating it in product pages.
-- Do not publish licensed donor paths or private Glide pipeline details.
+- Do not publish licensed donor paths or private in-house pipeline details.
 
 ## References
 

@@ -90,7 +90,7 @@ MIN_RUN_PTS = 1  # min interior points per inter-corner run
 # What defeated it is `reconstruct_plan` in rebuild.py, one level up. Optical
 # rows are reconstructed INDEPENDENTLY and then required to share an identical
 # point structure (`_row_signature_details`), because opsz has to interpolate
-# too. Glide's Text cabinet is a separate drawing from the UI/Display one for
+# too. The Text cabinet is a separate drawing from the UI/Display one for
 # 121 glyphs -- all the round lowercase, a c d e g m o p q r s t and their
 # accented forms. Insertion is faithful to whichever drawing it is handed, so
 # those rows come out with different node counts and the build stops. The
@@ -163,7 +163,7 @@ MIN_RUN_PTS = 1  # min interior points per inter-corner run
 # What defeated it is `reconstruct_plan` in rebuild.py, one level up. Optical
 # rows are reconstructed INDEPENDENTLY and then required to share an identical
 # point structure (`_row_signature_details`), because opsz has to interpolate
-# too. Glide's Text cabinet is a separate drawing from the UI/Display one for
+# too. The Text cabinet is a separate drawing from the UI/Display one for
 # 121 glyphs -- all the round lowercase, a c d e g m o p q r s t and their
 # accented forms. Insertion is faithful to whichever drawing it is handed, so
 # those rows come out with different node counts and the build stops. The
@@ -2013,7 +2013,7 @@ def _contours_self_intersect(contours) -> bool:
                 abs(segment_a - segment_b) <= 1 or {segment_a, segment_b} == {0, ring_len - 1}
             ):
                 continue
-            # Match check-glide-outlines / audit_support: collinear and near
+            # Match check-outlines / audit_support: collinear and near
             # grazes count. The stricter "proper cross" gate missed ExtraBlack
             # bowl/stem folds on d after the contrast transform.
             if segments_intersect(a0, a1, b0, b1):
@@ -2512,7 +2512,7 @@ def _restore_compatible_curves(outlines_by_pos, originals_by_pos=None):
         # Arc-order quarters (0, n/4, n/2, 3n/4) are stable but arbitrary: they
         # land wherever the resampler happened to step, so a bowl comes out with
         # its nodes off the extremes and every extremum buried mid-segment. That
-        # is the measured defect -- Glide's `o` carries nodes at (286.5, 460.3)
+        # is the measured defect -- an `o` from an early test family carried nodes at (286.5, 460.3)
         # where the donor puts them on the axis extremes, and 415 glyphs have at
         # least one extremum with no node on it.
         #

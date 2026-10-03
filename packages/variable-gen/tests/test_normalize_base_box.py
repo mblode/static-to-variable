@@ -3,7 +3,7 @@
 `normalize` exists to fix a letter that floats off the baseline or falls short
 of the default cap. Measuring the whole layer reads a floating accent's height
 as the letter's, and the rule then squashes the letter to make ACCENT tops
-agree -- which is what shipped Glide's dieresis family 4-5% short at ExtraBlack.
+agree -- which is what shipped one in-house family's dieresis 4-5% short at ExtraBlack.
 """
 
 from __future__ import annotations

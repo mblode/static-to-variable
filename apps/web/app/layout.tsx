@@ -1,25 +1,20 @@
 import type { Metadata } from "next";
 
 import "./globals.css";
-import localFont from "next/font/local";
+import { Geist_Mono, Inter } from "next/font/google";
 
 import { ogSiteName, productName, siteUrl, twitterCreator } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
-const glide = localFont({
-  src: [
-    { path: "./fonts/glide-variable.woff2", style: "normal" },
-    { path: "./fonts/glide-variable-italic.woff2", style: "italic" },
-  ],
-  variable: "--font-glide",
-  weight: "100 950",
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
   display: "swap",
 });
 
-const glideMono = localFont({
-  src: "./fonts/glide-mono.woff2",
-  variable: "--font-glide-mono",
-  weight: "400",
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
   display: "swap",
 });
 
@@ -75,7 +70,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html
-      className={cn("dark font-sans", glide.variable, glideMono.variable)}
+      className={cn("dark font-sans", inter.variable, geistMono.variable)}
       lang="en"
     >
       <head>
